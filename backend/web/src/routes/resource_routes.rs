@@ -13,6 +13,7 @@ pub fn resources_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/cities", get(list_cities))
         .route("/cities/by-province/{province_id}", get(get_by_province))
+        .route("/city/by-province/{province_id}", get(get_by_province))
         .route("/city/{id}", get(get_city_by_id))
         .route("/province", get(list_provinces))
         .route("/province/{id}", get(get_province_by_id))
