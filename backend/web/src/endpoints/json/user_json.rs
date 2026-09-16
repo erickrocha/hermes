@@ -9,9 +9,10 @@ pub struct UserJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name:Option<String>,
+    pub name: Option<String>,
     pub email: String,
-    pub password: String,
+    #[serde(default, skip_serializing)]
+    pub password: Option<String>,
     pub enabled: bool,
     #[serde(default)]
     pub first_login: bool,

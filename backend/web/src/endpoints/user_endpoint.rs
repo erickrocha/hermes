@@ -1,16 +1,16 @@
+use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
+use crate::endpoints::json::change_password_request::ChangePasswordRequest;
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::change_password_request::ChangePasswordRequest;
 use crate::endpoints::json::user_json::UserJson;
 use crate::infrastructure::mapper::{Mapper, UserMapper};
-use crate::AppState;
+use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::user_gateway::UserGateway;
@@ -40,12 +40,24 @@ pub async fn add(
 
     match current_user.role {
         Role::SysAdmin => {
-            // SysAdmin can create users for any tenant or no tenant
+            if domain.role == Role::SysAdmin {
+                domain.tenant_id = None;
+                domain.first_login = false;
+            } else if domain.role == Role::TenantOwner && domain.tenant_id.is_some() {
+                domain.first_login = true;
+            } else {
+                return Err(ExceptionResponse::BadRequest(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            }
         }
         Role::TenantOwner => {
             // TenantOwner can only create users for their own tenant
             if let Some(tenant_id) = current_user.tenant_id {
                 domain.tenant_id = Some(tenant_id);
+                domain.role = Role::TenantOwner;
+                domain.first_login = true;
             } else {
                 return Err(ExceptionResponse::Forbidden(
                     locale,
@@ -131,9 +143,7 @@ pub async fn get_by_id(
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_id(id).await {
         Ok(user) => {
-            if current_user.role == Role::TenantOwner
-                && user.tenant_id != current_user.tenant_id
-            {
+            if current_user.role == Role::TenantOwner && user.tenant_id != current_user.tenant_id {
                 return Err(ExceptionResponse::Forbidden(
                     locale,
                     ErrorKey::RequiredHeaderValueMissing,
@@ -176,6 +186,13 @@ pub async fn update(
 
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
+    if current_user.id == Some(id) && !domain.enabled {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
     // Check permissions: SysAdmin or self-update allowed, otherwise TenantOwner restricted to same tenant
     if current_user.role != Role::SysAdmin && current_user.id != Some(id) {
         if current_user.role == Role::TenantOwner {
@@ -189,12 +206,27 @@ pub async fn update(
                 ));
             }
             domain.tenant_id = current_user.tenant_id;
+            domain.role = Role::TenantOwner;
         } else {
             return Err(ExceptionResponse::Forbidden(
                 locale,
                 ErrorKey::RequiredHeaderValueMissing,
             ));
         }
+    }
+
+    if current_user.role == Role::SysAdmin {
+        if domain.role == Role::SysAdmin {
+            domain.tenant_id = None;
+        } else if domain.role != Role::TenantOwner || domain.tenant_id.is_none() {
+            return Err(ExceptionResponse::BadRequest(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        }
+    } else if current_user.role == Role::TenantOwner {
+        domain.tenant_id = current_user.tenant_id;
+        domain.role = Role::TenantOwner;
     }
 
     match use_case.update(id, domain).await {
@@ -218,7 +250,8 @@ pub async fn update(
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn change_password(state: State<AppState>,
+pub async fn change_password(
+    state: State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Json(payload): Json<ChangePasswordRequest>,

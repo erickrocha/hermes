@@ -7,7 +7,9 @@ mod routes;
 use crate::endpoints::welcome_endpoint::welcome;
 use crate::routes::authentication_routes::auth_routes;
 use crate::routes::business_plan_routes::business_plan_routes;
+use crate::routes::resource_routes::resources_routes;
 use crate::routes::tenant_routes::tenant_routes;
+use crate::routes::user_routes::user_routes;
 use axum::Router;
 use axum::http::{Method, header};
 use axum::routing::get;
@@ -19,7 +21,6 @@ use tower_http::cors::{Any, CorsLayer};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
-use crate::routes::resource_routes::resources_routes;
 
 struct SecurityAddon;
 
@@ -57,6 +58,7 @@ impl Modify for SecurityAddon {
 		endpoints::business_plan_endpoint::update,
 		endpoints::business_plan_endpoint::delete,
 		endpoints::user_endpoint::get_by_id,
+		endpoints::user_endpoint::add,
 		endpoints::user_endpoint::list_all,
 		endpoints::user_endpoint::update,
 		endpoints::user_endpoint::change_password,
@@ -137,6 +139,8 @@ async fn start() -> anyhow::Result<()> {
 
     migration_result?;
 
+    business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection).await;
+
     let state = AppState {
         conn: Arc::new(connection),
     };
@@ -168,9 +172,10 @@ async fn start() -> anyhow::Result<()> {
         // Public routes (no authentication)
         .merge(welcome_route())
         .merge(auth_routes(state.clone()))
-        .merge( resources_routes(state.clone()))
+        .merge(resources_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/business-plan", business_plan_routes(state.clone()))
+        .nest("/user", user_routes(state.clone()))
         .layer(cors)
         .with_state(state);
 

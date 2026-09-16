@@ -1,3 +1,4 @@
+use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::error_response_json::{
@@ -7,20 +8,18 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::tenant_plan_json::TenantPlanJson;
 use crate::infrastructure::mapper::{Mapper, TenantMapper, TenantPlanMapper};
-use crate::AppState;
+use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
-use axum::Json;
-use business::gateway::tenant_gateway::TenantGateway;
 use business::domain::enums::Role;
 use business::domain::user::User;
-use business::use_cases::tenant_use_case::TenantUseCase;
-use business::use_cases::tenant_plan_use_case::TenantPlanUseCase;
+use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::tenant_plan_gateway::TenantPlanGateway;
+use business::use_cases::tenant_plan_use_case::TenantPlanUseCase;
+use business::use_cases::tenant_use_case::TenantUseCase;
 
 fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
-    user.tenant_id == Some(tenant_id)
-        || (user.role == Role::SysAdmin && user.tenant_id.is_none())
+    user.tenant_id == Some(tenant_id) || (user.role == Role::SysAdmin && user.tenant_id.is_none())
 }
 
 #[utoipa::path(
@@ -44,7 +43,10 @@ pub async fn add(
     Json(payload): Json<TenantJson>,
 ) -> HttpResponse<(StatusCode, Json<TenantJson>)> {
     if current_user.role != Role::SysAdmin || current_user.tenant_id.is_some() {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
     }
     let domain = TenantMapper::domain(payload);
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
@@ -80,12 +82,18 @@ pub async fn get_by_id(
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<TenantJson>> {
     if !can_access_tenant(&current_user, id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        ));
     }
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_id(id).await {
         Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
-        Err(_) => Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)),
+        Err(_) => Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        )),
     }
 }
 
@@ -113,9 +121,17 @@ pub async fn get_by_uuid(
 ) -> HttpResponse<Json<TenantJson>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_uuid(uuid).await {
-        Ok(tenant) if can_access_tenant(&current_user, tenant.id.unwrap_or_default()) => Ok(Json(TenantMapper::json(tenant))),
-        Ok(_) => Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)),
-        Err(_) => Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)),
+        Ok(tenant) if can_access_tenant(&current_user, tenant.id.unwrap_or_default()) => {
+            Ok(Json(TenantMapper::json(tenant)))
+        }
+        Ok(_) => Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        )),
+        Err(_) => Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        )),
     }
 }
 
@@ -177,7 +193,10 @@ pub async fn update(
     Json(payload): Json<TenantJson>,
 ) -> HttpResponse<Json<TenantJson>> {
     if !can_access_tenant(&current_user, id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        ));
     }
     let domain = TenantMapper::domain(payload);
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
@@ -185,7 +204,10 @@ pub async fn update(
         Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
         Err(err) => {
             if err.message.contains("not found") {
-                Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound))
+                Err(ExceptionResponse::NotFound(
+                    locale,
+                    ErrorKey::TenantNotFound,
+                ))
             } else {
                 Err(ExceptionResponse::BadRequest(
                     locale,
@@ -221,10 +243,13 @@ pub async fn add_plan(
     Path(id): Path<i64>,
     Json(payload): Json<TenantPlanJson>,
 ) -> HttpResponse<Json<TenantPlanJson>> {
-    if !can_access_tenant(&current_user, id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+    if current_user.role != Role::SysAdmin || current_user.tenant_id.is_some() {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
     }
-    
+
     let mut domain = TenantPlanMapper::domain(payload);
     // Ensure the tenant ID matches the path parameter
     domain.tenant_id = id;
@@ -262,7 +287,10 @@ pub async fn get_active_plan(
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<Option<TenantPlanJson>>> {
     if !can_access_tenant(&current_user, id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::TenantNotFound,
+        ));
     }
 
     let use_case = TenantPlanUseCase::new(TenantPlanGateway::new(state.conn.as_ref().clone()));

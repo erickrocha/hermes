@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 async-std = { workspace = true }
+uuid = { workspace = true }
 
 [dependencies.sea-orm-migration]
 version = "2.0.3"

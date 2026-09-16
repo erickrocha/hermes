@@ -1,5 +1,5 @@
-use fluent_templates::{static_loader, Loader};
-use unic_langid::{langid, LanguageIdentifier};
+use fluent_templates::{Loader, static_loader};
+use unic_langid::{LanguageIdentifier, langid};
 
 static_loader! {
     static LOCALES = {
@@ -54,14 +54,7 @@ pub enum ErrorKey {
     BusinessPlanForbidden,
     BusinessPlanNotFound,
     BusinessPlanInvalid,
-    SysAdminDashboardForbidden,
-    SysAdminDashboardLoadFailed,
-    PaymentChargeNotFound,
-    PaymentChargeForbidden,
-    PaymentTaxIdRequired,
-    PaymentAttemptNotFound,
-    PaymentProviderUnavailable,
-    PaymentMethodUnavailable,
+    BusinessPlanInUse,
 }
 
 impl ErrorKey {
@@ -80,14 +73,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanForbidden => "BusinessPlanForbidden",
             ErrorKey::BusinessPlanNotFound => "BusinessPlanNotFound",
             ErrorKey::BusinessPlanInvalid => "BusinessPlanInvalid",
-            ErrorKey::SysAdminDashboardForbidden => "SysAdminDashboardForbidden",
-            ErrorKey::SysAdminDashboardLoadFailed => "SysAdminDashboardLoadFailed",
-            ErrorKey::PaymentChargeNotFound => "PaymentChargeNotFound",
-            ErrorKey::PaymentChargeForbidden => "PaymentChargeForbidden",
-            ErrorKey::PaymentTaxIdRequired => "PaymentTaxIdRequired",
-            ErrorKey::PaymentAttemptNotFound => "PaymentAttemptNotFound",
-            ErrorKey::PaymentProviderUnavailable => "PaymentProviderUnavailable",
-            ErrorKey::PaymentMethodUnavailable => "PaymentMethodUnavailable",
+            ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
         }
     }
 
@@ -106,14 +92,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanForbidden => "business-plan-forbidden",
             ErrorKey::BusinessPlanNotFound => "business-plan-not-found",
             ErrorKey::BusinessPlanInvalid => "business-plan-invalid",
-            ErrorKey::SysAdminDashboardForbidden => "sysadmin-dashboard-forbidden",
-            ErrorKey::SysAdminDashboardLoadFailed => "sysadmin-dashboard-load-failed",
-            ErrorKey::PaymentChargeNotFound => "payment-charge-not-found",
-            ErrorKey::PaymentChargeForbidden => "payment-charge-forbidden",
-            ErrorKey::PaymentTaxIdRequired => "payment-tax-id-required",
-            ErrorKey::PaymentAttemptNotFound => "payment-attempt-not-found",
-            ErrorKey::PaymentProviderUnavailable => "payment-provider-unavailable",
-            ErrorKey::PaymentMethodUnavailable => "payment-method-unavailable",
+            ErrorKey::BusinessPlanInUse => "business-plan-in-use",
         }
     }
 }

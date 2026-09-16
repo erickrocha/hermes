@@ -48,6 +48,7 @@ tenant-update-failed = Falha ao atualizar tenant
 business-plan-forbidden = Apenas o administrador do sistema pode gerenciar planos de negócios
 business-plan-not-found = Plano de negócios não encontrado
 business-plan-invalid = Dados inválidos para o plano de negócios
+business-plan-in-use = Este plano está vinculado a um tenant e não pode ser excluído
 sysadmin-dashboard-forbidden = Apenas o administrador do sistema pode acessar este dashboard
 sysadmin-dashboard-load-failed = Não foi possível carregar o dashboard do administrador do sistema
 payment-charge-not-found = Cobrança não encontrada

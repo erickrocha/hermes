@@ -1,3 +1,4 @@
+use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::business_plan_json::{
@@ -6,10 +7,9 @@ use crate::endpoints::json::business_plan_json::{
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
 };
-use crate::AppState;
+use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use business::domain::business_plan::BusinessPlan;
 use business::domain::business_plan_tier::BusinessPlanTier;
 use business::domain::enums::Role;
@@ -19,7 +19,10 @@ use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 
 fn authorize(user: &User, locale: Locale) -> Result<(), ExceptionResponse> {
     if user.role != Role::SysAdmin || user.tenant_id.is_some() {
-        return Err(ExceptionResponse::Forbidden(locale,ErrorKey::BusinessPlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::BusinessPlanForbidden,
+        ));
     }
     Ok(())
 }
@@ -104,6 +107,8 @@ fn update_domain(payload: UpdateBusinessPlanJson) -> BusinessPlan {
 fn map_error(locale: Locale, message: &str) -> ExceptionResponse {
     if message.contains("not found") {
         ExceptionResponse::NotFound(locale, ErrorKey::BusinessPlanNotFound)
+    } else if message.contains("still assigned") {
+        ExceptionResponse::Conflict(locale, ErrorKey::BusinessPlanInUse)
     } else {
         ExceptionResponse::BadRequest(locale, ErrorKey::BusinessPlanInvalid)
     }
@@ -257,7 +262,9 @@ pub async fn update(
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn delete(State(state): State<AppState>,Extension(locale): Extension<Locale>,
+pub async fn delete(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {

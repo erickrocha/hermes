@@ -280,11 +280,7 @@ impl UserUseCase {
                 return Some(existing_sysadmin);
             }
 
-            log::info!(
-                "[UserUseCase::seed_sysadmin] Updating SysAdmin user {} -> {}",
-                existing_sysadmin.email,
-                sysadmin_email
-            );
+            log::info!("[UserUseCase::seed_sysadmin] Updating SysAdmin user {} -> {}",existing_sysadmin.email,sysadmin_email);
 
             let updated_sysadmin = User {
                 id: existing_sysadmin.id,
@@ -338,5 +334,4 @@ impl UserUseCase {
         created
     }
 }
-
 

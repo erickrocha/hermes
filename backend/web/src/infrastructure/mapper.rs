@@ -1,18 +1,18 @@
 use std::str::FromStr;
 
-use business::domain::access_token::AccessToken;
-use business::domain::enums::Role;
-use business::domain::tenant::Tenant;
-use business::domain::tenant_plan::TenantPlan;
-use business::domain::user::User;
-use business::domain::province::Province;
-use business::domain::city::City;
 use crate::endpoints::json::access_token_json::AccessTokenJson;
 use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::tenant_plan_json::TenantPlanJson;
 use crate::endpoints::json::user_json::UserJson;
+use business::domain::access_token::AccessToken;
+use business::domain::city::City;
+use business::domain::enums::Role;
+use business::domain::province::Province;
+use business::domain::tenant::Tenant;
+use business::domain::tenant_plan::TenantPlan;
+use business::domain::user::User;
 
 pub trait Mapper<T, U> {
     fn json(t: T) -> U;
@@ -69,7 +69,7 @@ impl Mapper<User, UserJson> for UserMapper {
             uuid: user.uuid,
             name: user.name,
             email: user.email,
-            password: user.password,
+            password: None,
             enabled: user.enabled,
             first_login: user.first_login,
             role: user.role.to_string(),
@@ -87,7 +87,7 @@ impl Mapper<User, UserJson> for UserMapper {
             uuid: u.uuid,
             email: u.email,
             name: u.name,
-            password: u.password,
+            password: u.password.unwrap_or_default(),
             enabled: u.enabled,
             first_login: u.first_login,
             role: Role::from_str(&u.role).unwrap(),
@@ -100,10 +100,12 @@ impl Mapper<User, UserJson> for UserMapper {
     }
 }
 
-pub struct TenantMapper{}
+pub struct TenantMapper {}
 
 fn optional_text(value: Option<String>) -> Option<String> {
-    value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn canonical_address(canonical: Option<String>, alias: Option<String>) -> Option<String> {
@@ -246,15 +248,20 @@ impl Mapper<TenantPlan, TenantPlanJson> for TenantPlanMapper {
     }
 }
 
-
 #[cfg(test)]
 mod address_mapping_tests {
     use super::{canonical_address, country_code, optional_text};
 
     #[test]
     fn canonical_address_wins_and_legacy_alias_fills_missing_value() {
-        assert_eq!(canonical_address(Some("  Campinas ".into()), Some("São Paulo".into())), Some("Campinas".into()));
-        assert_eq!(canonical_address(Some("  ".into()), Some(" São Paulo ".into())), Some("São Paulo".into()));
+        assert_eq!(
+            canonical_address(Some("  Campinas ".into()), Some("São Paulo".into())),
+            Some("Campinas".into())
+        );
+        assert_eq!(
+            canonical_address(Some("  ".into()), Some(" São Paulo ".into())),
+            Some("São Paulo".into())
+        );
     }
 
     #[test]
