@@ -11,6 +11,7 @@ path = "src/lib.rs"
 chrono = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }
+tokio = {workspace = true}
 
 [dependencies.sea-orm]
 version = "2.0.3"

@@ -13,11 +13,10 @@ utoipa = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 
-argon2 = "0.6.0"
-hex = "0.4.3"
-jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+bcrypt = "0.19.3"
 log = "0.4.34"
-sha2 = "0.11.0"
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+base64 = "0.23.1"
 
 
 [dependencies.sea-orm]

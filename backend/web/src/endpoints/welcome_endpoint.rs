@@ -1,3 +1,5 @@
+use axum::response::{IntoResponse, Redirect};
+
 #[utoipa::path(
   get,
   path = "/",
@@ -5,6 +7,6 @@
     (status = 200, description = "Welcome message", body = String)
   )
 )]
-pub async fn welcome() -> String {
-    "Hermes application!".to_string()
+pub async fn welcome() -> impl IntoResponse {
+  Redirect::to("/swagger-ui/index.html")
 }
