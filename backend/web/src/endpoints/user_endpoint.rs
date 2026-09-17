@@ -150,21 +150,23 @@ pub async fn get_by_id(
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<UserJson>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_id(id).await {
-        Ok(user) => {
-            if current_user.role == Role::TenantOwner && user.tenant_id != current_user.tenant_id {
-                return Err(ExceptionResponse::Forbidden(
-                    locale,
-                    ErrorKey::RequiredHeaderValueMissing,
-                ));
-            }
-            Ok(Json(UserMapper::json(user)))
-        }
-        Err(_) => Err(ExceptionResponse::NotFound(
+    let user = use_case
+        .find_by_id(id)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing))?;
+
+    // EPIC-IA-05-S01/HRMS-117: a tenant user has no user-administration
+    // rights at all -- this used to check only whether a TenantOwner's
+    // tenant matched, leaving a TenantUser (or a TenantOwner probing a
+    // foreign tenant) free to read any account by id.
+    if !can_administer_user(&current_user, user.id, user.tenant_id) {
+        return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::RequiredParameterMissing,
-        )),
+        ));
     }
+
+    Ok(Json(UserMapper::json(user)))
 }
 
 #[utoipa::path(
@@ -210,10 +212,15 @@ pub async fn update(
     // the tenant owner of that exact tenant -- nobody else may touch this
     // record at all (a tenant user editing anyone, including themselves via
     // this route rather than change-password, stops here too).
+    //
+    // Not found rather than forbidden (EPIC-IA-05-S04/HRMS-122's shape,
+    // stated for tenant records and extended here to user records for the
+    // same reason: a caller outside the boundary should not learn that the
+    // id exists at all).
     if !can_administer_user(&current_user, existing.id, existing.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(
+        return Err(ExceptionResponse::NotFound(
             locale,
-            ErrorKey::RequiredHeaderValueMissing,
+            ErrorKey::RequiredParameterMissing,
         ));
     }
 
