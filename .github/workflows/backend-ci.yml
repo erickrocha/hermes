@@ -1,0 +1,63 @@
+name: backend-ci
+
+# EPIC-XF-09-S02/S04 (HRMS-035, HRMS-037, AD-019, AD-020): the two
+# owner-ratified engineering standards made enforceable rather than
+# aspirational. A non-English persistence identifier, or a `business`
+# coverage regression, fails this workflow -- not a review comment.
+
+on:
+  push:
+    paths: ["backend/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/backend-ci.yml"]
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Test (all crates, including AD-019's naming check)
+        run: cargo test --workspace
+
+      - name: Test (database-free mock suite, AD-002/EPIC-XF-07)
+        run: cargo test -p business --features mock --test mock
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  coverage-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      # AD-020's gate is 90%. Measured at 24.50% lines the day this workflow
+      # was added (business/tests/mock.rs and the pure-function tests written
+      # across EPIC-XF-01/02/07/IA-04 cover the domain rules; the five
+      # CRUD-heavy use-case files -- user_use_case.rs, tenant_use_case.rs,
+      # authentication_use_case.rs, account_invite_use_case.rs, and the
+      # plain-passthrough gateway/*.rs files -- have none). Setting the
+      # enforced floor to 90% today would fail every build for a gap this
+      # workflow didn't create and can't close by existing. The floor below
+      # is the actual measured baseline: it can only go up from here, never
+      # down, and every point of the 90% - 24.50% gap that closes should
+      # raise this number in the same commit -- see
+      # EPIC-XF-09-S04 in 02-system_requirements/hermes/foundation_implementation_plan.md
+      # for how the guide wants that read.
+      - name: Coverage floor (ratchet toward AD-020's 90%, not there yet)
+        run: cargo llvm-cov --package business --fail-under-lines 24
