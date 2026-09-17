@@ -17,10 +17,10 @@ use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 
-fn authorize(user: &User, locale: Locale) -> Result<(), ExceptionResponse> {
+fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
     if !can_manage_business_plan_catalogue(user) {
         return Err(ExceptionResponse::Forbidden(
-            locale,
+            locale.clone(),
             ErrorKey::BusinessPlanForbidden,
         ));
     }
@@ -133,7 +133,7 @@ pub async fn add(
     Extension(user): Extension<User>,
     Json(payload): Json<CreateBusinessPlanJson>,
 ) -> HttpResponse<(StatusCode, Json<BusinessPlanJson>)> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .create(domain(payload))
         .await
@@ -157,7 +157,7 @@ pub async fn list_all(
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
 ) -> HttpResponse<Json<Vec<BusinessPlanJson>>> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .find_all()
         .await
@@ -184,7 +184,7 @@ pub async fn get_by_id(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .find_by_id(id)
         .await
@@ -211,7 +211,7 @@ pub async fn get_by_uuid(
     Extension(user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .find_by_uuid(&uuid)
         .await
@@ -241,7 +241,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(payload): Json<UpdateBusinessPlanJson>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .update(id, update_domain(payload))
         .await
@@ -268,7 +268,7 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    authorize(&user, locale)?;
+    authorize(&user, &locale)?;
     use_case(&state)
         .delete(id)
         .await

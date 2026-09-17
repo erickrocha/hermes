@@ -14,7 +14,7 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
             .get(ACCEPT_LANGUAGE)
             .and_then(|value| value.to_str().ok()),
     );
-    req.extensions_mut().insert(locale);
+    req.extensions_mut().insert(locale.clone());
 
     if is_public_path(req.uri().path()) {
         return Ok(next.run(req).await);
@@ -24,7 +24,7 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
     let auth_header = match auth_header {
         Some(header) => header
             .to_str()
-            .map_err(|_| ExceptionResponse::Forbidden(locale, ErrorKey::AuthHeaderMissing))?,
+            .map_err(|_| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::AuthHeaderMissing))?,
         None => {
             return Err(ExceptionResponse::Forbidden(
                 locale,
@@ -46,10 +46,10 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
 
     let current_user = AuthenticationUseCase::validate(&state.conn, token.unwrap().to_string())
         .await
-        .map_err(|_| ExceptionResponse::Unauthorized(locale, ErrorKey::BadCredentials))?;
+        .map_err(|_| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
 
     if matches!(current_user.role, Role::TenantOwner | Role::TenantUser) && current_user.tenant_id.is_none() {
-        return Err(ExceptionResponse::Forbidden(locale,ErrorKey::InvalidParameterValue,));
+        return Err(ExceptionResponse::Forbidden(locale.clone(),ErrorKey::InvalidParameterValue,));
     }
 
     // EPIC-IA-06-S02 (HRMS-120): a user created with a caller-supplied

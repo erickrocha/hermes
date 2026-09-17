@@ -253,7 +253,7 @@ pub async fn add_plan(
     let plan = plan_use_case
         .find_by_id(payload.business_plan_id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::BusinessPlanNotFound))?;
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::BusinessPlanNotFound))?;
 
     let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     tenant_use_case

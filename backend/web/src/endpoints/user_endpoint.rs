@@ -153,7 +153,7 @@ pub async fn get_by_id(
     let user = use_case
         .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing))?;
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
     // EPIC-IA-05-S01/HRMS-117: a tenant user has no user-administration
     // rights at all -- this used to check only whether a TenantOwner's
@@ -206,7 +206,7 @@ pub async fn update(
     let existing = use_case
         .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing))?;
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
     // EPIC-IA-05-S01/HRMS-118: self, an unbound platform administrator, or
     // the tenant owner of that exact tenant -- nobody else may touch this
@@ -219,7 +219,7 @@ pub async fn update(
     // id exists at all).
     if !can_administer_user(&current_user, existing.id, existing.tenant_id) {
         return Err(ExceptionResponse::NotFound(
-            locale,
+            locale.clone(),
             ErrorKey::RequiredParameterMissing,
         ));
     }

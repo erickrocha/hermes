@@ -40,13 +40,13 @@ fn normalize_country_code(value: &str) -> Option<String> {
 )]
 pub async fn list_all(state: State<AppState>,Extension(locale): Extension<Locale>,Query(params): Query<ProvinceQueryParams>) -> HttpResponse<Json<Vec<ProvinceJson>>> {
     let country_code = normalize_country_code(&params.country_code)
-        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue))?;
 
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
     let list = use_case
         .find_by_country_code(country_code)
         .await
-        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::ReferenceDataUnavailable))?;
 
     // EPIC-RD-01-S04/HRMS-306 (D-9): a country with no seeded provinces is a
     // country we don't support yet, not a query that happens to be empty --
