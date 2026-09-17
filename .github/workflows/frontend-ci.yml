@@ -1,0 +1,39 @@
+name: frontend-ci
+
+# EPIC-BO-06-S01 (HRMS-414, PD-015): PD-015's postmortem is that a
+# role-conditional restriction once lived only in the console and was
+# bypassable with a bearer token and curl -- the fix on the server
+# (business::domain::authorization, enforced in the endpoints) is covered by
+# backend-ci.yml. This workflow is the other half: it fails a build the
+# moment a role added or a rule changed on the server stops matching what the
+# console offers, instead of surprising a user in production.
+
+on:
+  push:
+    paths: ["backoffice/**", ".github/workflows/frontend-ci.yml"]
+  pull_request:
+    paths: ["backoffice/**", ".github/workflows/frontend-ci.yml"]
+
+defaults:
+  run:
+    working-directory: backoffice
+
+jobs:
+  test-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backoffice/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test (role-conditional screens, session handling, price editing)
+        run: npm test
