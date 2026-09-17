@@ -223,7 +223,11 @@ export function UsersPage() {
 }
 
 export function UserEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!; const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, firstLogin: true, role: 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const { id } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!
+  // PD-019: a tenant owner creates tenant users in their own tenant only --
+  // a platform administrator creates tenants and tenant owners, never a
+  // tenant user directly (EPIC-IA-04).
+  const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, firstLogin: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
   useEffect(() => { dispatch(loadTenants()) }, [dispatch])
   useEffect(() => { if (!id) return; api.get<User>(`/user/${id}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
   useEffect(() => { if (!id && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants[0]?.id) setForm((value) => ({ ...value, tenantId: tenants[0].id })) }, [form.role, form.tenantId, id, session.role, tenants])

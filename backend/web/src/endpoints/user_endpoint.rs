@@ -11,9 +11,14 @@ use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use business::domain::authorization::{
+    can_administer_user, can_create_user_with_role, can_reassign_role, CreationTenant,
+};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::user_gateway::UserGateway;
+use business::use_cases::tenant_use_case::TenantUseCase;
 use business::use_cases::user_use_case::UserUseCase;
 
 #[utoipa::path(
@@ -38,38 +43,42 @@ pub async fn add(
 ) -> HttpResponse<(StatusCode, Json<UserJson>)> {
     let mut domain = UserMapper::domain(payload);
 
-    match current_user.role {
-        Role::SysAdmin => {
-            if domain.role == Role::SysAdmin {
-                domain.tenant_id = None;
-                domain.first_login = false;
-            } else if domain.role == Role::TenantOwner && domain.tenant_id.is_some() {
-                domain.first_login = true;
-            } else {
+    // PD-019's creation hierarchy (EPIC-IA-04): an unbound platform
+    // administrator creates administrators and tenant owners; a tenant
+    // owner creates tenant users in their own tenant only. See
+    // business::domain::authorization for why this is not the rule the
+    // code used to implement.
+    let Some(creation_tenant) = can_create_user_with_role(&current_user, &domain.role) else {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::RequiredHeaderValueMissing,
+        ));
+    };
+
+    match creation_tenant {
+        CreationTenant::Fixed(tenant_id) => {
+            domain.tenant_id = tenant_id;
+            // A new platform administrator (no tenant) needs no invitation
+            // step; a tenant user created into an existing tenant does
+            // (HRMS-120).
+            domain.first_login = tenant_id.is_some();
+        }
+        CreationTenant::CallerChosen => {
+            let Some(tenant_id) = domain.tenant_id else {
+                return Err(ExceptionResponse::BadRequest(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            };
+            let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+            if tenant_use_case.find_by_id(tenant_id).await.is_err() {
                 return Err(ExceptionResponse::BadRequest(
                     locale,
                     ErrorKey::InvalidParameterValue,
                 ));
             }
-        }
-        Role::TenantOwner => {
-            // TenantOwner can only create users for their own tenant
-            if let Some(tenant_id) = current_user.tenant_id {
-                domain.tenant_id = Some(tenant_id);
-                domain.role = Role::TenantOwner;
-                domain.first_login = true;
-            } else {
-                return Err(ExceptionResponse::Forbidden(
-                    locale,
-                    ErrorKey::RequiredHeaderValueMissing,
-                ));
-            }
-        }
-        _ => {
-            return Err(ExceptionResponse::Forbidden(
-                locale,
-                ErrorKey::RequiredHeaderValueMissing,
-            ));
+            domain.tenant_id = Some(tenant_id);
+            domain.first_login = true;
         }
     }
 
@@ -183,7 +192,6 @@ pub async fn update(
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<Json<UserJson>> {
     let mut domain = UserMapper::domain(payload);
-
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
     if current_user.id == Some(id) && !domain.enabled {
@@ -193,40 +201,40 @@ pub async fn update(
         ));
     }
 
-    // Check permissions: SysAdmin or self-update allowed, otherwise TenantOwner restricted to same tenant
-    if current_user.role != Role::SysAdmin && current_user.id != Some(id) {
-        if current_user.role == Role::TenantOwner {
-            let existing = use_case.find_by_id(id).await.map_err(|_| {
-                ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing)
-            })?;
-            if existing.tenant_id != current_user.tenant_id {
-                return Err(ExceptionResponse::Forbidden(
-                    locale,
-                    ErrorKey::RequiredHeaderValueMissing,
-                ));
-            }
-            domain.tenant_id = current_user.tenant_id;
-            domain.role = Role::TenantOwner;
-        } else {
-            return Err(ExceptionResponse::Forbidden(
-                locale,
-                ErrorKey::RequiredHeaderValueMissing,
-            ));
-        }
+    let existing = use_case
+        .find_by_id(id)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing))?;
+
+    // EPIC-IA-05-S01/HRMS-118: self, an unbound platform administrator, or
+    // the tenant owner of that exact tenant -- nobody else may touch this
+    // record at all (a tenant user editing anyone, including themselves via
+    // this route rather than change-password, stops here too).
+    if !can_administer_user(&current_user, existing.id, existing.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::RequiredHeaderValueMissing,
+        ));
     }
 
-    if current_user.role == Role::SysAdmin {
-        if domain.role == Role::SysAdmin {
-            domain.tenant_id = None;
-        } else if domain.role != Role::TenantOwner || domain.tenant_id.is_none() {
-            return Err(ExceptionResponse::BadRequest(
-                locale,
-                ErrorKey::InvalidParameterValue,
-            ));
+    // PD-019: reassigning the hierarchy is an unbound platform
+    // administrator's decision alone. Everyone else editing an account --
+    // including that account's own owner -- keeps its existing role and
+    // tenant; only the other fields in the payload take effect.
+    if can_reassign_role(&current_user, &domain.role, domain.tenant_id) {
+        if domain.role == Role::TenantOwner {
+            let tenant_id = domain.tenant_id.expect("can_reassign_role requires Some for TenantOwner");
+            let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+            if tenant_use_case.find_by_id(tenant_id).await.is_err() {
+                return Err(ExceptionResponse::BadRequest(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            }
         }
-    } else if current_user.role == Role::TenantOwner {
-        domain.tenant_id = current_user.tenant_id;
-        domain.role = Role::TenantOwner;
+    } else {
+        domain.role = existing.role.clone();
+        domain.tenant_id = existing.tenant_id;
     }
 
     match use_case.update(id, domain).await {

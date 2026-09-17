@@ -1,4 +1,4 @@
-export type Role = 'SysAdmin' | 'TenantOwner'
+export type Role = 'SysAdmin' | 'TenantOwner' | 'TenantUser'
 
 export interface Session {
   accessToken: string
