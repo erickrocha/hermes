@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Building2, ChevronDown, CreditCard, Gauge, Languages, LogOut, Menu, Settings, ShieldCheck, Users, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
 import { logout } from '../store'
+import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
@@ -18,6 +19,11 @@ export function Shell({ children }: { children: ReactNode }) {
   const dispatch = useDispatch<AppDispatch>()
   const navigate = useNavigate()
   const tenant = tenants.find((item) => item.id === session.tenantId)
+  const tenantName = tenant?.companyName || tenant?.businessName
+  // EPIC-BO-01-S02 (HRMS-408): the console takes the signed-in tenant's
+  // theme, derived here rather than at App-level because this is where the
+  // tenant record (loaded elsewhere into the store) is actually resolved.
+  useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
   const links = [
     { to: '/', label: t('dashboard'), icon: Gauge },

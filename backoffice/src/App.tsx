@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
+import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
 import { LoginPage, PasswordPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
@@ -21,6 +22,10 @@ export default function App() {
   const dispatch = useDispatch<AppDispatch>()
   const session = useSelector((state: RootState) => state.auth.session)
   useEffect(() => { const onLogout = () => dispatch(logout()); window.addEventListener('hermes:logout', onLogout); return () => window.removeEventListener('hermes:logout', onLogout) }, [dispatch])
+  // EPIC-BO-01-S02: a signed-out session (or one still on /login) never
+  // keeps a previous tenant's theme -- Shell is what applies one, and it
+  // isn't mounted here to un-apply it itself.
+  useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
     <Route path="/login" element={session ? <Navigate to={session.firstLogin ? '/first-access' : '/'} replace /> : <LoginPage />} />
     <Route path="/first-access" element={session ? <PasswordPage firstAccess /> : <Navigate to="/login" replace />} />

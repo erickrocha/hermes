@@ -1,3 +1,18 @@
+> **Archived (EPIC-BO-01-S04, HRMS-410, U-002).** This document was inherited under the title
+> "Design System — Hermes (Web)" but its body describes a different, earlier product: a pt-BR
+> nutrition-clinic SaaS ("clínicas de nutrição", patient macro chips, a `frontend/src/styles/`
+> tree that does not exist in this repository). Project Truth's own note is that retitling it to
+> "Hermes" without updating the body made the confusion *more* urgent, not less — someone building
+> a screen from this file would be building the wrong product's screen under the right name.
+>
+> It is kept here, unedited below this notice, only as a record of what the console's *current*
+> default palette happened to be copied from before the Transmega tenant theme existed
+> (`backoffice/src/theme.ts`, `backoffice/src/styles/main.scss`) — the actual, current source of
+> truth for both the vendor's own theme and any tenant's. Do not build a new screen from the
+> component/layout guidance below; it was never accepted for Hermes.
+>
+> ---
+
 # Design System — Hermes (Web)
 
 ## 1. Conceito Visual
