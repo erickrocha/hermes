@@ -16,12 +16,7 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
     );
     req.extensions_mut().insert(locale);
 
-    if req.uri().path().starts_with("/login")
-        || req.uri().path().starts_with("/signup")
-        || req.uri().path().starts_with("/refresh")
-        || req.uri().path().starts_with("/accept-invite")
-        || (req.method() == axum::http::Method::GET && req.uri().path() == "/legal/documents")
-    {
+    if is_public_path(req.uri().path()) {
         return Ok(next.run(req).await);
     }
 
@@ -85,10 +80,41 @@ fn allowed_before_password_is_set(method: &axum::http::Method, path: &str) -> bo
     method == axum::http::Method::PUT && path == "/user/change-password"
 }
 
+/// EPIC-XF-03-S01/S02/S03 (HRMS-018, HRMS-019, HRMS-020, D-6, U-013): the
+/// authenticated surface is the default; this is the whole exception list,
+/// matched exactly rather than by prefix (`/login-anything` is not public).
+/// `/signup` and `GET /legal/documents` were removed rather than fixed
+/// forward -- the owner confirmed both were leftovers with no route behind
+/// them (D-6, U-013) -- so this set now matches the router in
+/// `routes/authentication_routes.rs` exactly (HRMS-018).
+fn is_public_path(path: &str) -> bool {
+    matches!(path, "/login" | "/refresh" | "/accept-invite")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::allowed_before_password_is_set;
+    use super::{allowed_before_password_is_set, is_public_path};
     use axum::http::Method;
+
+    #[test]
+    fn public_paths_match_the_router_exactly() {
+        assert!(is_public_path("/login"));
+        assert!(is_public_path("/refresh"));
+        assert!(is_public_path("/accept-invite"));
+    }
+
+    #[test]
+    fn matches_exactly_not_by_prefix() {
+        assert!(!is_public_path("/login-anything"));
+        assert!(!is_public_path("/loginx"));
+        assert!(!is_public_path("/refreshed"));
+    }
+
+    #[test]
+    fn signup_and_legal_documents_are_not_public_they_were_leftovers() {
+        assert!(!is_public_path("/signup"));
+        assert!(!is_public_path("/legal/documents"));
+    }
 
     #[test]
     fn allows_only_put_change_password() {

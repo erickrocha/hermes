@@ -44,6 +44,9 @@ impl Modify for SecurityAddon {
 #[openapi(
 	modifiers(&SecurityAddon),
 	paths(
+		endpoints::auth_endpoint::sign_in,
+		endpoints::auth_endpoint::refresh_token,
+		endpoints::auth_endpoint::accept_invite,
 		endpoints::tenant_endpoint::add,
 		endpoints::tenant_endpoint::get_by_id,
 		endpoints::tenant_endpoint::get_by_uuid,
@@ -72,6 +75,7 @@ impl Modify for SecurityAddon {
 		schemas(
 			endpoints::json::user_json::UserJson,
 			endpoints::json::login_request::LoginRequest,
+			endpoints::auth_endpoint::AcceptInviteJson,
 			endpoints::json::change_password_request::ChangePasswordRequest,
 			endpoints::json::refresh_token_request::RefreshTokenRequest,
 			endpoints::json::access_token_json::AccessTokenJson,
@@ -197,5 +201,58 @@ pub fn main() {
     if let Err(err) = start() {
         log::error!("Startup failed: {err}");
         std::process::exit(1);
+    }
+}
+
+/// EPIC-XF-05-S03 (HRMS-029, D-10): every path this test lists is copied by
+/// hand from the actual route registrations in `routes/*.rs` -- axum 0.8
+/// exposes no cheap way to list a live `Router`'s registered paths, so this
+/// is not introspecting the router itself, and keeping the list in sync
+/// when a route file changes is still a human responsibility. What the
+/// test buys is that the two sides that are checkable -- the OpenAPI
+/// document `utoipa` generates from `#[utoipa::path]` annotations, and this
+/// hand-maintained mirror of the router -- are compared for exact
+/// agreement on every build, instead of silently drifting the way `/city`
+/// vs `/cities` did for two of three city operations.
+#[cfg(test)]
+mod openapi_contract_tests {
+    use super::ApiDoc;
+    use std::collections::BTreeSet;
+    use utoipa::OpenApi as _;
+
+    fn actually_registered_paths() -> BTreeSet<&'static str> {
+        [
+            "/login",
+            "/refresh",
+            "/accept-invite",
+            "/province",
+            "/province/{id}",
+            "/cities",
+            "/cities/by-province/{province_id}",
+            "/city/{id}",
+            "/tenant",
+            "/tenant/{id}",
+            "/tenant/uuid/{uuid}",
+            "/tenant/{id}/plan",
+            "/business-plan",
+            "/business-plan/{id}",
+            "/business-plan/uuid/{uuid}",
+            "/user",
+            "/user/{id}",
+            "/user/change-password",
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn documented_paths_match_the_registered_routes() {
+        let openapi = ApiDoc::openapi();
+        let documented: BTreeSet<&str> = openapi.paths.paths.keys().map(String::as_str).collect();
+        let registered = actually_registered_paths();
+        assert_eq!(
+            documented, registered,
+            "OpenAPI documentation and routes/*.rs have drifted apart (D-10) -- update whichever side is now wrong"
+        );
     }
 }

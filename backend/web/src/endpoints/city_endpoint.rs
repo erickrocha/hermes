@@ -15,7 +15,7 @@ use business::use_cases::city_use_case::CityUseCase;
 #[utoipa::path(
     get,
     tag = "City",
-    path = "/city",
+    path = "/cities",
     responses(
         (status = 200, description = "List of all cities", body = Vec<CityJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -39,9 +39,9 @@ pub async fn list_all(
 #[utoipa::path(
     get,
     tag = "City",
-    path = "/city/by-province/{province_id}",
+    path = "/cities/by-province/{province_id}",
     params(
-        ("province_id" = i64, Path, description = "Province ID")
+        ("province_id" = i32, Path, description = "Province ID")
     ),
     responses(
         (status = 200, description = "List of cities for the specified province", body = Vec<CityJson>),
