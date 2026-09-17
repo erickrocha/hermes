@@ -1,11 +1,31 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
+use crate::commons::tax_id::{self, TaxIdOutcome};
 use crate::domain::business_error::BusinessError;
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use crate::gateway::tenant_gateway::TenantGateway;
 
+/// EPIC-TP-01-S04 (HRMS-203, PD-022): country is now a required part of a
+/// tenant's record, not optional -- both tax-identifier validation
+/// (EPIC-TP-02) and address reference data (EPIC-RD-01) are selected by it,
+/// so a tenant without one can't be either.
 fn valid_country_code(value: &Option<String>) -> bool {
-    value.as_ref().is_none_or(|code| code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
+    value.as_ref().is_some_and(|code| code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
+}
+
+/// EPIC-TP-02 (HRMS-207...211, PD-022): validates and normalises `tax_id`
+/// against whichever country the tenant is being saved with. A country with
+/// no registered validator (S05) is accepted as given -- expanding into a
+/// new market must not be blocked on writing that country's validator
+/// first, and must not have another country's rules silently applied to it.
+fn validate_tax_id(country_code: &str, tax_id: &str) -> Result<String, BusinessError> {
+    match tax_id::validate_and_normalize(country_code, tax_id) {
+        TaxIdOutcome::Valid(normalized) => Ok(normalized),
+        TaxIdOutcome::Invalid => Err(BusinessError::new(format!(
+            "Tax identifier is not a valid document for country {country_code}"
+        ))),
+        TaxIdOutcome::Unsupported => Ok(tax_id.trim().to_string()),
+    }
 }
 
 pub struct TenantUseCase {
@@ -28,10 +48,13 @@ impl TenantUseCase {
         if !valid_country_code(&tenant.country_code) {
             return Err(BusinessError::new("Country code must contain two letters".to_string()));
         }
+        // valid_country_code above guarantees Some at this point.
+        let country_code = tenant.country_code.clone().unwrap();
+        let tax_id = validate_tax_id(&country_code, &tenant.tax_id)?;
 
         // A tenant's plan is set only through `set_plan` (HRMS-224, PD-021),
         // never at creation, regardless of what the caller sent.
-        let tenant = Tenant { business_plan_id: None, ..tenant };
+        let tenant = Tenant { business_plan_id: None, tax_id, ..tenant };
 
         let entity = self
             .gateway
@@ -130,13 +153,16 @@ impl TenantUseCase {
         if tenant.payment_grace_days.is_some_and(|days| days < 0) {
             return Err(BusinessError::new("Payment grace days cannot be negative".to_string()));
         }
+        // valid_country_code above guarantees Some at this point.
+        let country_code = tenant.country_code.clone().unwrap();
+        let tax_id = validate_tax_id(&country_code, &tenant.tax_id)?;
 
         let updated_tenant = Tenant {
             id: Some(id),
             uuid: existing.uuid,
             company_name: tenant.company_name,
             business_name:  tenant.business_name,
-            tax_id: tenant.tax_id,
+            tax_id,
             email: tenant.email,
             phone: tenant.phone,
             website: tenant.website,
@@ -201,5 +227,46 @@ impl TenantUseCase {
             })?;
 
         Ok(TenantEntityMapper::from_active_model(entity))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{valid_country_code, validate_tax_id};
+
+    #[test]
+    fn country_code_is_now_required_not_optional() {
+        // EPIC-TP-01-S04: this is the behaviour change from the prior
+        // is_none_or -- None used to be valid, and no longer is.
+        assert!(!valid_country_code(&None));
+    }
+
+    #[test]
+    fn country_code_must_be_exactly_two_ascii_letters() {
+        assert!(valid_country_code(&Some("BR".to_string())));
+        assert!(valid_country_code(&Some("US".to_string())));
+        assert!(!valid_country_code(&Some("BRA".to_string())));
+        assert!(!valid_country_code(&Some("B1".to_string())));
+        assert!(!valid_country_code(&Some(String::new())));
+    }
+
+    #[test]
+    fn validate_tax_id_normalizes_a_valid_brazilian_document() {
+        assert_eq!(
+            validate_tax_id("BR", "529.982.247-25").unwrap(),
+            "52998224725"
+        );
+    }
+
+    #[test]
+    fn validate_tax_id_rejects_an_invalid_brazilian_document() {
+        assert!(validate_tax_id("BR", "00000000000").is_err());
+    }
+
+    #[test]
+    fn validate_tax_id_accepts_an_unsupported_countrys_document_as_given() {
+        // EPIC-TP-02-S05: no validator for "US" yet -- accepted, not
+        // rejected, and not run through Brazil's rules either.
+        assert_eq!(validate_tax_id("US", "  12-3456789  ").unwrap(), "12-3456789");
     }
 }

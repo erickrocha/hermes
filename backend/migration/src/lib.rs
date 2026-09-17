@@ -11,6 +11,7 @@ mod m20260916_000006_create_province_table;
 mod m20260916_000007_create_city_table;
 mod m20260917_000001_tenant_business_plan_fk;
 mod m20260917_000002_data_load_br_provinces_and_cities;
+mod m20260917_000004_tenant_country_required_and_tax_id_unique;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260916_000008_data_load_us_provinces_and_cities::Migration),
             Box::new(m20260917_000001_tenant_business_plan_fk::Migration),
             Box::new(m20260917_000002_data_load_br_provinces_and_cities::Migration),
+            Box::new(m20260917_000004_tenant_country_required_and_tax_id_unique::Migration),
         ]
     }
 }
