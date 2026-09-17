@@ -2,6 +2,7 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
+use crate::domain::password_policy;
 use crate::domain::user::{User, UserEntityMapper};
 use crate::gateway::user_gateway::UserGateway;
 use sea_orm::DbConn;
@@ -31,6 +32,7 @@ impl UserUseCase {
             log::error!("[UserUseCase::create] {}", msg);
             return Err(BusinessError::new(msg));
         }
+        password_policy::validate_length(&user.password)?;
 
         let encrypted_password = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST)
             .map_err(|e| {
@@ -71,6 +73,7 @@ impl UserUseCase {
         let password = if user.password.trim().is_empty() {
             existing.password
         } else {
+            password_policy::validate_length(&user.password)?;
             bcrypt::hash(&user.password, bcrypt::DEFAULT_COST)
                 .map_err(|e| {
                     let msg = format!("Password encryption error: {}", e);
@@ -116,6 +119,7 @@ impl UserUseCase {
             log::error!("[UserUseCase::change_password] {}", msg);
             return Err(BusinessError::new(msg));
         }
+        password_policy::validate_length(&new_password)?;
 
         let existing = self.find_by_id(id).await?;
 

@@ -1,4 +1,5 @@
 use crate::domain::business_error::BusinessError;
+use crate::domain::password_policy;
 use crate::gateway::user_gateway::UserGateway;
 use chrono::{DateTime, Utc};
 use entity::user_entity;
@@ -11,9 +12,6 @@ use std::env;
 /// Validade do convite. Curta o bastante para limitar a janela de um link vazado,
 /// longa o bastante para o paciente abrir o e-mail no fim de semana.
 const INVITE_VALIDITY_DAYS: i64 = 7;
-
-/// Tamanho mínimo da senha escolhida pelo paciente.
-const MIN_PASSWORD_LEN: usize = 8;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct InviteClaims {
@@ -66,12 +64,7 @@ impl AccountInviteUseCase {
         token: &str,
         new_password: &str,
     ) -> Result<(), BusinessError> {
-        if new_password.chars().count() < MIN_PASSWORD_LEN {
-            return Err(BusinessError::new(format!(
-                "Password must be at least {} characters long",
-                MIN_PASSWORD_LEN
-            )));
-        }
+        password_policy::validate_length(new_password)?;
 
         // O e-mail sai do payload sem validar assinatura, só para localizar a conta:
         // a assinatura só pode ser conferida depois, porque a chave depende do hash
