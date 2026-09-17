@@ -2,22 +2,8 @@ import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { api, apiMessage, normalizeSession } from './api'
 import type { BusinessPlan, City, Province, Session, Tenant, TenantPlan, User } from './types'
 
-const loadStoredSession = (): Session | null => {
-  const stored = localStorage.getItem('hermes.session')
-  if (!stored) return null
-
-  try {
-    const session = normalizeSession(JSON.parse(stored) as Record<string, unknown>) as Session
-    if (!session.accessToken) throw new Error('Stored session has no access token')
-    localStorage.setItem('hermes.session', JSON.stringify(session))
-    return session
-  } catch {
-    localStorage.removeItem('hermes.session')
-    return null
-  }
-}
-
-const initialSession = loadStoredSession()
+const stored = localStorage.getItem('hermes.session')
+const initialSession = stored ? JSON.parse(stored) as Session : null
 
 export const login = createAsyncThunk('auth/login', async (credentials: { email: string; password: string }, { rejectWithValue }) => {
   try { const body = new URLSearchParams(credentials); const { data } = await api.post('/login', body, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }); return normalizeSession(data) as Session }
@@ -42,15 +28,12 @@ const initialData: DataState = { tenants: [], plans: [], users: [], provinces: [
 export const loadTenants = createAsyncThunk('data/tenants', async () => (await api.get<Tenant[]>('/tenant')).data)
 export const loadPlans = createAsyncThunk('data/plans', async () => (await api.get<BusinessPlan[]>('/business-plan')).data)
 export const loadUsers = createAsyncThunk('data/users', async () => (await api.get<User[]>('/user')).data)
-export const loadProvinces = createAsyncThunk('data/provinces', async (countryCode: string) => (await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data)
+export const loadProvinces = createAsyncThunk('data/provinces', async () => (await api.get<Province[]>('/province', { params: { country_code: 'BR' } })).data)
 export const loadCities = createAsyncThunk('data/cities', async (provinceId: number) => (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data)
 export const loadTenantPlan = createAsyncThunk('data/tenantPlan', async (tenantId: number) => ({ tenantId, plan: (await api.get<TenantPlan | null>(`/tenant/${tenantId}/plan`)).data }))
 
 const dataSlice = createSlice({
-  name: 'data', initialState: initialData, reducers: {
-    clearDataError: (state) => { state.error = '' },
-    clearCities: (state) => { state.cities = [] },
-  },
+  name: 'data', initialState: initialData, reducers: { clearDataError: (state) => { state.error = '' } },
   extraReducers: (builder) => {
     const listThunks = [loadTenants, loadPlans, loadUsers, loadProvinces, loadCities] as const
     listThunks.forEach((thunk) => {
@@ -60,7 +43,7 @@ const dataSlice = createSlice({
     builder.addCase(loadTenants.fulfilled, (s, a) => { s.loading = false; s.tenants = a.payload })
     builder.addCase(loadPlans.fulfilled, (s, a) => { s.loading = false; s.plans = a.payload })
     builder.addCase(loadUsers.fulfilled, (s, a) => { s.loading = false; s.users = a.payload })
-    builder.addCase(loadProvinces.fulfilled, (s, a) => { s.loading = false; s.provinces = a.payload; s.cities = [] })
+    builder.addCase(loadProvinces.fulfilled, (s, a) => { s.loading = false; s.provinces = a.payload })
     builder.addCase(loadCities.fulfilled, (s, a) => { s.loading = false; s.cities = a.payload })
     builder.addCase(loadTenantPlan.fulfilled, (s, a) => { s.tenantPlans[a.payload.tenantId] = a.payload.plan })
   },
@@ -68,6 +51,6 @@ const dataSlice = createSlice({
 
 export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer } })
 export const { logout, clearAuthError } = authSlice.actions
-export const { clearDataError, clearCities } = dataSlice.actions
+export const { clearDataError } = dataSlice.actions
 export type RootState = ReturnType<typeof store.getState>
 export type AppDispatch = typeof store.dispatch

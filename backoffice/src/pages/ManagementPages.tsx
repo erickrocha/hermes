@@ -1,233 +1,58 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Building2, CheckCircle2, CircleOff, CreditCard, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useDispatch, useSelector } from 'react-redux'
-import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, apiMessage } from '../api'
-import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
-import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
+import { loadCities, loadPlans, loadProvinces, loadTenantPlan, loadTenants, loadUsers } from '../store'
 import type { BusinessPlan, BusinessPlanTier, Tenant, TenantPlan, User } from '../types'
-import { Combobox } from '../components/Combobox'
-import { Confirm, Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
+import { Confirm, Empty, Form, Loading, Modal, PageHeader, SearchBox } from '../components/UI'
 
 const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'BRL' }).format(cents / 100)
 const today = () => new Date().toISOString().slice(0, 10)
-const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
-const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode, paymentGraceDays: 0 })
-const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today(), dailyAiQuota: 4, tiers: [] }
 
+const blankTenant: Tenant = { businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode: 'BR', paymentGraceDays: 0 }
 export function TenantsPage() {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState('')
-  useEffect(() => { dispatch(loadTenants()) }, [dispatch])
-  const filtered = tenants.filter((tenant) => `${tenant.businessName} ${tenant.companyName} ${tenant.taxId} ${tenant.email}`.toLowerCase().includes(search.toLowerCase()))
-  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={() => dispatch(loadTenants())}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="tenant-grid">{filtered.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span><small>#{tenant.id}</small></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.id && <Link to={`/tenants/${tenant.id}/edit`}><Pencil size={15} />{t('edit')}</Link>}{session.role === 'SysAdmin' && tenant.id && <Link to={`/tenants/${tenant.id}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div>}</>
+  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { tenants, plans, provinces, cities, tenantPlans, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
+  const [search, setSearch] = useState(''); const [editing, setEditing] = useState<Tenant | null>(null); const [subscription, setSubscription] = useState<Tenant | null>(null); const [error, setError] = useState(''); const [saving, setSaving] = useState(false)
+  useEffect(() => { dispatch(loadTenants()); dispatch(loadProvinces()); if (session.role === 'SysAdmin') dispatch(loadPlans()) }, [dispatch, session.role])
+  useEffect(() => { const province = provinces.find((item) => item.acronym === editing?.administrativeArea); if (province) dispatch(loadCities(province.id)) }, [dispatch, editing?.administrativeArea, provinces])
+  const filtered = tenants.filter((x) => `${x.businessName} ${x.companyName} ${x.taxId} ${x.email}`.toLowerCase().includes(search.toLowerCase()))
+  const save = async (e: FormEvent) => { e.preventDefault(); if (!editing) return; setSaving(true); setError(''); try { if (editing.id) await api.put(`/tenant/${editing.id}`, editing); else await api.post('/tenant', editing); setEditing(null); dispatch(loadTenants()) } catch (err) { setError(apiMessage(err, t('genericError'))) } finally { setSaving(false) } }
+  const openPlan = (tenant: Tenant) => { if (!tenant.id) return; setSubscription(tenant); dispatch(loadTenantPlan(tenant.id)) }
+  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={() => dispatch(loadTenants())}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <button className="btn primary" onClick={() => setEditing({ ...blankTenant })}><Plus size={17} />{t('newTenant')}</button>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="tenant-grid">{filtered.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span><small>#{tenant.id}</small></div><h3>{tenant.companyName || tenant.businessName}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer><button onClick={() => setEditing({ ...tenant })}><Pencil size={15} />{t('edit')}</button>{session.role === 'SysAdmin' && <button onClick={() => openPlan(tenant)}><CreditCard size={15} />{t('subscription')}</button>}</footer></article>)}</div>}
+    {editing && <Modal title={editing.id ? t('editTenant') : t('newTenant')} onClose={() => setEditing(null)} wide><Form onSubmit={save} error={error} saving={saving}><label>{t('businessName')}<input required value={editing.businessName} onChange={(e) => setEditing({ ...editing, businessName: e.target.value })} /></label><label>{t('companyName')}<input required value={editing.companyName || ''} onChange={(e) => setEditing({ ...editing, companyName: e.target.value })} /></label><label>{t('taxId')}<input required value={editing.taxId} onChange={(e) => setEditing({ ...editing, taxId: e.target.value })} /></label><label>{t('email')}<input type="email" value={editing.email || ''} onChange={(e) => setEditing({ ...editing, email: e.target.value })} /></label><label>{t('phone')}<input value={editing.phone || ''} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label><label>{t('website')}<input type="url" value={editing.website || ''} onChange={(e) => setEditing({ ...editing, website: e.target.value })} /></label><label className="span-2">{t('address')}<input value={editing.addressLine1 || ''} onChange={(e) => setEditing({ ...editing, addressLine1: e.target.value })} /></label><label>{t('address2')}<input value={editing.addressLine2 || ''} onChange={(e) => setEditing({ ...editing, addressLine2: e.target.value })} /></label><label>{t('province')}<select value={editing.administrativeArea || ''} onChange={(e) => { const province = provinces.find((item) => item.acronym === e.target.value); setEditing({ ...editing, administrativeArea: e.target.value, locality: '' }); if (province) dispatch(loadCities(province.id)) }}><option value="">—</option>{provinces.map((province) => <option key={province.id} value={province.acronym}>{province.name}</option>)}</select></label><label>{t('city')}<select value={editing.locality || ''} onChange={(e) => setEditing({ ...editing, locality: e.target.value })}><option value="">—</option>{cities.map((city) => <option key={city.id} value={city.name}>{city.name}</option>)}</select></label><label>{t('postalCode')}<input value={editing.postalCode || ''} onChange={(e) => setEditing({ ...editing, postalCode: e.target.value })} /></label><label>{t('graceDays')}<input type="number" min="0" value={editing.paymentGraceDays || 0} onChange={(e) => setEditing({ ...editing, paymentGraceDays: Number(e.target.value) })} /></label></Form></Modal>}
+    {subscription?.id && <SubscriptionModal tenant={subscription} plans={plans} value={tenantPlans[subscription.id]} onClose={() => setSubscription(null)} onSaved={() => { dispatch(loadTenantPlan(subscription.id!)); setSubscription(null) }} />}
+  </>
 }
 
-export function TenantEditorPage() {
-  const { id } = useParams()
-  const navigate = useNavigate()
-  const dispatch = useDispatch<AppDispatch>()
-  const { t, i18n } = useTranslation()
-  const { provinces, cities } = useSelector((s: RootState) => s.data)
-  const localeCountry = localeCountryCode(i18n.resolvedLanguage || i18n.language)
-  const [form, setForm] = useState<Tenant>(() => blankTenant(localeCountry))
-  const [loading, setLoading] = useState(Boolean(id))
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!id) {
-      dispatch(loadProvinces(form.countryCode || localeCountry))
-      return
-    }
-    setLoading(true)
-    api.get<Tenant>(`/tenant/${id}`)
-      .then(({ data }) => {
-        const country = data.countryCode || localeCountry
-        setForm({ ...data, countryCode: country })
-        dispatch(loadProvinces(country))
-      })
-      .catch(() => setError(t('loadError')))
-      .finally(() => setLoading(false))
-  }, [dispatch, id, localeCountry, t])
-
-  useEffect(() => {
-    if (!form.administrativeArea) {
-      dispatch(clearCities())
-      return
-    }
-    const province = provinces.find(
-      (item) => item.acronym === form.administrativeArea || item.name === form.administrativeArea
-    )
-    if (province) {
-      dispatch(loadCities(province.id))
-    }
-  }, [dispatch, form.administrativeArea, provinces])
-
-  const handleCountryChange = (selectedCountry: string) => {
-    if (form.countryCode === selectedCountry) return
-    setForm((prev) => ({
-      ...prev,
-      countryCode: selectedCountry,
-      administrativeArea: '',
-      locality: '',
-    }))
-    dispatch(clearCities())
-    dispatch(loadProvinces(selectedCountry))
-  }
-
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
-    setSaving(true)
-    setError('')
-    try {
-      if (id) await api.put(`/tenant/${id}`, form)
-      else await api.post('/tenant', form)
-      navigate('/tenants')
-    } catch (cause) {
-      setError(apiMessage(cause, t('genericError')))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (loading) return <Loading />
-
-  return (
-    <>
-      <PageHeader title={id ? t('editTenant') : t('newTenant')} />
-      <section className="page-form-card">
-        <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
-          <div className="span-2">
-            <label>{t('country')}</label>
-            <div className="radio-group" role="radiogroup" aria-label={t('country')}>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="BR"
-                  checked={(form.countryCode || 'BR') === 'BR'}
-                  onChange={() => handleCountryChange('BR')}
-                />
-                <span>BR · {t('brazil')}</span>
-              </label>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="US"
-                  checked={form.countryCode === 'US'}
-                  onChange={() => handleCountryChange('US')}
-                />
-                <span>US · {t('unitedStates')}</span>
-              </label>
-            </div>
-          </div>
-          <label>
-            {t('businessName')}
-            <input required value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} />
-          </label>
-          <label>
-            {t('companyName')}
-            <input required value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
-          </label>
-          <label>
-            {t('taxId')}
-            <input required value={form.taxId} onChange={(e) => setForm({ ...form, taxId: e.target.value })} />
-          </label>
-          <label>
-            {t('email')}
-            <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          </label>
-          <label>
-            {t('phone')}
-            <input value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          </label>
-          <label>
-            {t('website')}
-            <input type="url" value={form.website || ''} onChange={(e) => setForm({ ...form, website: e.target.value })} />
-          </label>
-          <label className="span-2">
-            {t('address')}
-            <input value={form.addressLine1 || ''} onChange={(e) => setForm({ ...form, addressLine1: e.target.value })} />
-          </label>
-          <label>
-            {t('address2')}
-            <input value={form.addressLine2 || ''} onChange={(e) => setForm({ ...form, addressLine2: e.target.value })} />
-          </label>
-          <label>
-            {t('province')}
-            <Combobox
-              filterable
-              value={form.administrativeArea || null}
-              options={provinces.map((province) => ({ value: province.acronym, label: `${province.name} (${province.acronym})` }))}
-              onChange={(value) => {
-                setForm((prev) => ({ ...prev, administrativeArea: value || '', locality: '' }))
-                if (!value) dispatch(clearCities())
-              }}
-            />
-          </label>
-          <label>
-            {t('city')}
-            <Combobox
-              filterable
-              disabled={!form.administrativeArea || !cities.length}
-              value={form.locality || null}
-              options={cities.map((city) => ({ value: city.name, label: city.name }))}
-              onChange={(value) => setForm((prev) => ({ ...prev, locality: value || '' }))}
-            />
-          </label>
-          <label>
-            {t('postalCode')}
-            <input value={form.postalCode || ''} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} />
-          </label>
-          <label>
-            {t('graceDays')}
-            <input type="number" min="0" value={form.paymentGraceDays || 0} onChange={(e) => setForm({ ...form, paymentGraceDays: Number(e.target.value) })} />
-          </label>
-        </Form>
-      </section>
-    </>
-  )
+function SubscriptionModal({ tenant, plans, value, onClose, onSaved }: { tenant: Tenant; plans: BusinessPlan[]; value?: TenantPlan | null; onClose: () => void; onSaved: () => void }) {
+  const { t } = useTranslation(); const [form, setForm] = useState<TenantPlan>({ id: value?.id, uuid: value?.uuid, tenantId: tenant.id!, businessPlanId: value?.businessPlanId || plans[0]?.id || 0, paymentDate: value?.paymentDate || today(), active: true }); const [error, setError] = useState(''); const [saving, setSaving] = useState(false)
+  useEffect(() => { if (value) setForm(value) }, [value])
+  const submit = async (e: FormEvent) => { e.preventDefault(); setSaving(true); try { await api.post(`/tenant/${tenant.id}/plan`, form); onSaved() } catch (err) { setError(apiMessage(err, t('genericError'))) } finally { setSaving(false) } }
+  return <Modal title={`${t('subscription')} · ${tenant.companyName || tenant.businessName}`} onClose={onClose}><Form onSubmit={submit} error={error} saving={saving}><label className="span-2">{t('plans')}<select value={form.businessPlanId} onChange={(e) => setForm({ ...form, businessPlanId: Number(e.target.value) })}>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(plan.priceInCents, 'pt-BR')}</option>)}</select></label><label className="span-2">{t('paymentDate')}<input type="date" required value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label></Form></Modal>
 }
 
-export function SubscriptionPage() {
-  const { id } = useParams(); const tenantId = Number(id); const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [form, setForm] = useState<TenantPlan>({ tenantId, businessPlanId: 0, paymentDate: today(), active: true }); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/${tenantId}`), api.get<BusinessPlan[]>('/business-plan'), api.get<TenantPlan>(`/tenant/${tenantId}/plan`).catch(() => null)]).then(([tenantResult, plansResult, planResult]) => { setTenant(tenantResult.data); setPlans(plansResult.data); setForm(planResult?.data || { tenantId, businessPlanId: plansResult.data[0]?.id || 0, paymentDate: today(), active: true }) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { await api.post(`/tenant/${tenantId}/plan`, form); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
-  if (loading) return <Loading />
-  return <><PageHeader title={`${t('subscription')} · ${tenant ? tenantName(tenant) : ''}`} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}><label className="span-2">{t('plans')}<Combobox filterable value={form.businessPlanId || null} options={plans.flatMap((plan) => plan.id ? [{ value: plan.id, label: `${plan.name} · ${money(plan.priceInCents, i18n.language)}` }] : [])} onChange={(value) => setForm({ ...form, businessPlanId: value || 0 })} /></label><label className="span-2">{t('paymentDate')}<input type="date" required value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label></Form></section></>
-}
-
+const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today(), dailyAiQuota: 4, tiers: [] }
 export function PlansPage() {
-  const { t, i18n } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { plans, loading } = useSelector((s: RootState) => s.data); const [search, setSearch] = useState(''); const [removing, setRemoving] = useState<BusinessPlan | null>(null); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadPlans()) }, [dispatch]); const filtered = plans.filter((plan) => plan.name.toLowerCase().includes(search.toLowerCase()))
-  const remove = async () => { if (!removing?.id) return; try { await api.delete(`/business-plan/${removing.id}`); setRemoving(null); dispatch(loadPlans()) } catch (cause) { setError(apiMessage(cause, t('genericError'))); setRemoving(null) } }
-  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={() => dispatch(loadPlans())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/plans/new"><Plus size={17} />{t('newPlan')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !plans.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('planName')}</th><th>{t('basePrice')}</th><th>{t('includedUsers')}</th><th>{t('periodDays')}</th><th>{t('aiQuota')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((plan) => <tr key={plan.id}><td><b>{plan.name}</b><small>{plan.tiers.length} {t('tiers').toLowerCase()}</small></td><td>{money(plan.priceInCents, i18n.language)}</td><td>{plan.availableUsers}</td><td>{plan.periodDays}</td><td>{plan.dailyAiQuota}</td><td><div className="row-actions">{plan.id && <Link to={`/plans/${plan.id}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(plan)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div></div>}{removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
-}
-
-export function PlanEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const [form, setForm] = useState<BusinessPlan>({ ...blankPlan, tiers: [] }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { if (!id) return; api.get<BusinessPlan>(`/business-plan/${id}`).then(({ data }) => setForm(data)).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { if (id) await api.put(`/business-plan/${id}`, form); else await api.post('/business-plan', form); navigate('/plans') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
-  if (loading) return <Loading />
-  return <><PageHeader title={id ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="1" value={form.priceInCents} onChange={(e) => setForm({ ...form, priceInCents: Number(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={form.availableUsers} onChange={(e) => setForm({ ...form, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label><label>{t('aiQuota')}<input type="number" min="1" value={form.dailyAiQuota} onChange={(e) => setForm({ ...form, dailyAiQuota: Number(e.target.value) })} /></label><div className="span-2 tier-editor"><div className="tier-title"><b>{t('tiers')}</b><button type="button" className="btn tertiary" onClick={() => setForm({ ...form, tiers: [...form.tiers, { upToUsers: 0, pricePerUserInCents: 0 }] })}><Plus size={15} />{t('addTier')}</button></div>{form.tiers.map((tier: BusinessPlanTier, index: number) => <div className="tier-row" key={tier.id ?? index}><label>{t('upToUsers')}<input type="number" min="0" value={tier.upToUsers} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, upToUsers: Number(e.target.value) }; setForm({ ...form, tiers }) }} /></label><label>{t('pricePerUser')}<input type="number" min="0" value={tier.pricePerUserInCents} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, pricePerUserInCents: Number(e.target.value) }; setForm({ ...form, tiers }) }} /></label><button type="button" onClick={() => setForm({ ...form, tiers: form.tiers.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={16} /></button></div>)}</div></Form></section></>
+  const { t, i18n } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { plans, loading } = useSelector((s: RootState) => s.data); const [search, setSearch] = useState(''); const [editing, setEditing] = useState<BusinessPlan | null>(null); const [removing, setRemoving] = useState<BusinessPlan | null>(null); const [error, setError] = useState(''); const [saving, setSaving] = useState(false)
+  useEffect(() => { dispatch(loadPlans()) }, [dispatch]); const filtered = plans.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
+  const save = async (e: FormEvent) => { e.preventDefault(); if (!editing) return; setSaving(true); setError(''); try { if (editing.id) await api.put(`/business-plan/${editing.id}`, editing); else await api.post('/business-plan', editing); setEditing(null); dispatch(loadPlans()) } catch (err) { setError(apiMessage(err, t('genericError'))) } finally { setSaving(false) } }
+  const remove = async () => { if (!removing?.id) return; try { await api.delete(`/business-plan/${removing.id}`); setRemoving(null); dispatch(loadPlans()) } catch (err) { setError(apiMessage(err, t('genericError'))); setRemoving(null) } }
+  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={() => dispatch(loadPlans())}><RefreshCw size={16} />{t('refresh')}</button><button className="btn primary" onClick={() => setEditing({ ...blankPlan })}><Plus size={17} />{t('newPlan')}</button></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !plans.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('planName')}</th><th>{t('basePrice')}</th><th>{t('includedUsers')}</th><th>{t('periodDays')}</th><th>{t('aiQuota')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((plan) => <tr key={plan.id}><td><b>{plan.name}</b><small>{plan.tiers.length} {t('tiers').toLowerCase()}</small></td><td>{money(plan.priceInCents, i18n.language)}</td><td>{plan.availableUsers}</td><td>{plan.periodDays}</td><td>{plan.dailyAiQuota}</td><td><div className="row-actions"><button onClick={() => setEditing(structuredClone(plan))}><Pencil size={16} /></button><button className="danger-text" onClick={() => setRemoving(plan)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
+    {editing && <Modal title={editing.id ? t('editPlan') : t('newPlan')} onClose={() => setEditing(null)} wide><Form onSubmit={save} error={error} saving={saving}><label className="span-2">{t('planName')}<input required value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="1" value={editing.priceInCents} onChange={(e) => setEditing({ ...editing, priceInCents: Number(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={editing.availableUsers} onChange={(e) => setEditing({ ...editing, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={editing.periodDays} onChange={(e) => setEditing({ ...editing, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={editing.paymentDate} onChange={(e) => setEditing({ ...editing, paymentDate: e.target.value })} /></label><label>{t('aiQuota')}<input type="number" min="1" value={editing.dailyAiQuota} onChange={(e) => setEditing({ ...editing, dailyAiQuota: Number(e.target.value) })} /></label><div className="span-2 tier-editor"><div className="tier-title"><b>{t('tiers')}</b><button type="button" className="btn tertiary" onClick={() => setEditing({ ...editing, tiers: [...editing.tiers, { upToUsers: 0, pricePerUserInCents: 0 }] })}><Plus size={15} />{t('addTier')}</button></div>{editing.tiers.map((tier: BusinessPlanTier, index: number) => <div className="tier-row" key={tier.id ?? index}><label>{t('upToUsers')}<input type="number" min="0" value={tier.upToUsers} onChange={(e) => { const tiers = [...editing.tiers]; tiers[index] = { ...tier, upToUsers: Number(e.target.value) }; setEditing({ ...editing, tiers }) }} /></label><label>{t('pricePerUser')}<input type="number" min="0" value={tier.pricePerUserInCents} onChange={(e) => { const tiers = [...editing.tiers]; tiers[index] = { ...tier, pricePerUserInCents: Number(e.target.value) }; setEditing({ ...editing, tiers }) }} /></label><button type="button" onClick={() => setEditing({ ...editing, tiers: editing.tiers.filter((_, i) => i !== index) })}><Trash2 size={16} /></button></div>)}</div></Form></Modal>}
+    {removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}
+  </>
 }
 
 export function UsersPage() {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { users, tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState(''); const [confirming, setConfirming] = useState<User | null>(null); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadUsers()); dispatch(loadTenants()) }, [dispatch]); const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email}`.toLowerCase().includes(search.toLowerCase())), [users, search]); const getTenantName = (tenantId?: number | null) => tenants.find((tenant) => tenant.id === tenantId)?.companyName || tenants.find((tenant) => tenant.id === tenantId)?.businessName || t('global')
-  const toggle = async () => { if (!confirming?.id) return; if (confirming.id === session.userId) { setError(t('selfDeactivate')); setConfirming(null); return } try { await api.put(`/user/${confirming.id}`, { ...confirming, password: undefined, enabled: !confirming.enabled }); setConfirming(null); dispatch(loadUsers()) } catch (cause) { setError(apiMessage(cause, t('genericError'))) } }
-  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={() => dispatch(loadUsers())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !users.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('role')}</th><th>{t('tenant')}</th><th>{t('status')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><td><b>{user.name || '—'}</b><small>{user.email}</small></td><td><span className="badge blue">{user.role}</span></td><td>{getTenantName(user.tenantId)}</td><td><span className={`badge ${user.enabled ? 'green' : 'gray'}`}>{user.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{user.enabled ? t('active') : t('inactive')}</span></td><td><div className="row-actions">{user.id && <Link to={`/users/${user.id}/edit`}><Pencil size={16} /></Link>}<button className={user.enabled ? 'danger-text' : 'success-text'} disabled={user.id === session.userId} onClick={() => setConfirming(user)}>{user.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div></td></tr>)}</tbody></table></div></div>}{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
-}
-
-export function UserEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!; const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, firstLogin: true, role: 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadTenants()) }, [dispatch])
-  useEffect(() => { if (!id) return; api.get<User>(`/user/${id}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
-  useEffect(() => { if (!id && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants[0]?.id) setForm((value) => ({ ...value, tenantId: tenants[0].id })) }, [form.role, form.tenantId, id, session.role, tenants])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); const payload = { ...form }; if (!payload.password) delete payload.password; try { if (id) await api.put(`/user/${id}`, payload); else await api.post('/user', payload); navigate('/users') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
-  if (loading) return <Loading />
-  return <><PageHeader title={id ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label className="span-2">{id ? t('newPassword') : t('temporaryPassword')}<input type="password" required={!id} value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>{session.role === 'SysAdmin' && <><label>{t('role')}<Combobox value={form.role} options={[{ value: 'TenantOwner', label: 'TenantOwner' }, { value: 'SysAdmin', label: 'SysAdmin' }]} onChange={(value) => value && setForm({ ...form, role: value as User['role'], tenantId: value === 'SysAdmin' ? null : form.tenantId || tenants[0]?.id })} /></label><label>{t('tenant')}<Combobox filterable disabled={form.role === 'SysAdmin'} value={form.tenantId || null} options={tenants.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={(value) => setForm({ ...form, tenantId: value })} /></label></>}<label className="checkbox span-2"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />{t('active')}</label></Form></section></>
+  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { users, tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState(''); const [editing, setEditing] = useState<User | null>(null); const [confirming, setConfirming] = useState<User | null>(null); const [error, setError] = useState(''); const [saving, setSaving] = useState(false)
+  useEffect(() => { dispatch(loadUsers()); dispatch(loadTenants()) }, [dispatch]); const filtered = useMemo(() => users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase())), [users, search]); const tenantName = (id?: number | null) => tenants.find((x) => x.id === id)?.companyName || tenants.find((x) => x.id === id)?.businessName || t('global')
+  const blank: User = { name: '', email: '', password: '', enabled: true, firstLogin: true, role: 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : tenants[0]?.id }
+  const save = async (e: FormEvent) => { e.preventDefault(); if (!editing) return; setSaving(true); setError(''); const payload = { ...editing }; if (!payload.password) delete payload.password; try { if (editing.id) await api.put(`/user/${editing.id}`, payload); else await api.post('/user', payload); setEditing(null); dispatch(loadUsers()) } catch (err) { setError(apiMessage(err, t('genericError'))) } finally { setSaving(false) } }
+  const toggle = async () => { if (!confirming?.id) return; if (confirming.id === session.userId) { setError(t('selfDeactivate')); setConfirming(null); return } try { await api.put(`/user/${confirming.id}`, { ...confirming, password: undefined, enabled: !confirming.enabled }); setConfirming(null); dispatch(loadUsers()) } catch (err) { setError(apiMessage(err, t('genericError'))) } }
+  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={() => dispatch(loadUsers())}><RefreshCw size={16} />{t('refresh')}</button><button className="btn primary" onClick={() => setEditing(blank)}><Plus size={17} />{t('newUser')}</button></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !users.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('role')}</th><th>{t('tenant')}</th><th>{t('status')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><td><b>{user.name || '—'}</b><small>{user.email}</small></td><td><span className="badge blue">{user.role}</span></td><td>{tenantName(user.tenantId)}</td><td><span className={`badge ${user.enabled ? 'green' : 'gray'}`}>{user.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{user.enabled ? t('active') : t('inactive')}</span></td><td><div className="row-actions"><button onClick={() => setEditing({ ...user, password: '' })}><Pencil size={16} /></button><button className={user.enabled ? 'danger-text' : 'success-text'} disabled={user.id === session.userId} onClick={() => setConfirming(user)}>{user.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div></td></tr>)}</tbody></table></div></div>}
+    {editing && <Modal title={editing.id ? t('editUser') : t('newUser')} onClose={() => setEditing(null)}><Form onSubmit={save} error={error} saving={saving}><label className="span-2">{t('name')}<input required value={editing.name || ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} /></label><label className="span-2">{editing.id ? t('newPassword') : t('temporaryPassword')}<input type="password" required={!editing.id} value={editing.password || ''} onChange={(e) => setEditing({ ...editing, password: e.target.value })} /></label>{session.role === 'SysAdmin' && <><label>{t('role')}<select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value as User['role'], tenantId: e.target.value === 'SysAdmin' ? null : editing.tenantId || tenants[0]?.id })}><option value="TenantOwner">TenantOwner</option><option value="SysAdmin">SysAdmin</option></select></label><label>{t('tenant')}<select disabled={editing.role === 'SysAdmin'} value={editing.tenantId || ''} onChange={(e) => setEditing({ ...editing, tenantId: Number(e.target.value) })}>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.companyName || tenant.businessName}</option>)}</select></label></>}<label className="checkbox span-2"><input type="checkbox" checked={editing.enabled} onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })} />{t('active')}</label></Form></Modal>}
+    {confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}
+  </>
 }

@@ -9,7 +9,5 @@ describe('normalizeSession', () => {
   it('supports legacy snake_case keys', () => {
     const session = normalizeSession({ access_token: 'token', user_id: 1, tenant_id: null, first_login: false, role: 'SysAdmin' })
     expect(session).toMatchObject({ accessToken: 'token', userId: 1, tenantId: null, role: 'SysAdmin' })
-    expect(session.name).toBe('')
-    expect(session.email).toBe('')
   })
 })

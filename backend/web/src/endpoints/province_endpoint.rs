@@ -14,7 +14,6 @@ use crate::endpoints::json::province_json::ProvinceJson;
 #[serde(rename_all = "camelCase")]
 pub struct ProvinceQueryParams {
     /// ISO 3166-1 alpha-2 country code.
-    #[serde(alias = "country_code")]
     pub country_code: String,
 }
 

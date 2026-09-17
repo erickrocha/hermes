@@ -5,7 +5,6 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
 import { logout } from '../store'
-import { Breadcrumbs } from './UI'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
 
@@ -18,7 +17,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const dispatch = useDispatch<AppDispatch>()
   const navigate = useNavigate()
   const tenant = tenants.find((item) => item.id === session.tenantId)
-  const userLabel = session.name || session.email || t('user')
   const links = [
     { to: '/', label: t('dashboard'), icon: Gauge },
     { to: '/tenants', label: t('tenants'), icon: Building2 },
@@ -40,12 +38,12 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="topbar-actions">
           <button className="language-button" onClick={() => i18n.changeLanguage(i18n.language.startsWith('pt') ? 'en' : 'pt-BR')} title={t('language')}><Languages size={18} /><span>{i18n.language.startsWith('pt') ? 'PT' : 'EN'}</span></button>
           <div className="user-menu-wrap">
-            <button className="user-trigger" onClick={() => setUserMenu(!userMenu)}><span className="avatar">{userLabel.slice(0, 1).toUpperCase()}</span><span className="user-copy"><b>{userLabel}</b><small>{session.email || ''}</small></span><ChevronDown size={16} /></button>
+            <button className="user-trigger" onClick={() => setUserMenu(!userMenu)}><span className="avatar">{(session.name || session.email).slice(0, 1).toUpperCase()}</span><span className="user-copy"><b>{session.name || session.email}</b><small>{session.email}</small></span><ChevronDown size={16} /></button>
             {userMenu && <div className="user-popover"><button onClick={() => { navigate('/settings'); setUserMenu(false) }}><Settings size={17} />{t('settings')}</button><button className="danger-text" onClick={leave}><LogOut size={17} />{t('logout')}</button></div>}
           </div>
         </div>
       </header>
-      <main className="content"><Breadcrumbs />{children}</main>
+      <main className="content">{children}</main>
     </div>
   </div>
 }

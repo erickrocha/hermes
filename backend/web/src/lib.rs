@@ -18,7 +18,6 @@ use migration::{Migrator, MigratorTrait};
 use std::env;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing_subscriber::EnvFilter;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
@@ -104,10 +103,9 @@ fn welcome_route() -> Router<AppState> {
 
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
+    // env::set_var("RUST_LOG", "debug");
+    tracing_subscriber::fmt::init();
     dotenvy::dotenv().ok();
-    let log_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(log_filter).init();
-
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let host = env::var("HOST").expect("HOST is not set in .env file");
     let port = env::var("PORT").expect("PORT is not set in .env file");
@@ -135,7 +133,7 @@ async fn start() -> anyhow::Result<()> {
     let migration_result = Migrator::up(&connection, None).await;
 
     connection
-        .execute_unprepared("SELECT RELEASE_LOCK('socialfit_migrations')")
+        .execute_unprepared("SELECT RELEASE_LOCK('hermes_migrations')")
         .await
         .ok();
 

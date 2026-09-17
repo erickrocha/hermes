@@ -1,4 +1,4 @@
-# Design System — SocialFit (Web)
+# Design System — Hermes (Web)
 
 ## 1. Conceito Visual
 SaaS de gestão para clínicas de nutrição: visual limpo, confiável e "tech" sem ser
@@ -133,7 +133,7 @@ Texto e CTA são sempre azuis.
 
 ## 7. Logo / Marca
 - Símbolo abstrato em `--accent-primary` (currentColor) ao lado do wordmark.
-- Wordmark "SocialFit" em caixa baixa, sem tracking, cor de heading.
+- Wordmark "Hermes" em caixa baixa, sem tracking, cor de heading.
 - Subtítulo institucional (nome da clínica ativa) em caixa alta, tamanho
   pequeno (`0.65rem`), tracking bem amplo (`0.2em`), cor de texto secundário —
   usado no topbar para indicar o tenant ativo.

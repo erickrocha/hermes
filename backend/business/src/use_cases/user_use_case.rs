@@ -266,7 +266,7 @@ impl UserUseCase {
     pub async fn seed_sysadmin(db: &DbConn) -> Option<User> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
-        let sysadmin_email = env::var("SYSADMIN_EMAIL").unwrap_or_else(|_| "admin@afrodite.com".to_string());
+        let sysadmin_email = env::var("SYSADMIN_EMAIL").unwrap_or_else(|_| "admin@hermes.com".to_string());
         let sysadmin_password = env::var("SYSADMIN_PASSWORD").unwrap_or_else(|_| "admin".to_string());
 
         if sysadmin_email.trim().is_empty() || sysadmin_password.trim().is_empty() {
