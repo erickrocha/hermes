@@ -57,3 +57,5 @@ payment-tax-id-required = Informe o CPF ou CNPJ para pagar esta cobrança
 payment-attempt-not-found = Tentativa de pagamento não encontrada
 payment-provider-unavailable = O provedor de pagamento está indisponível, tente novamente em instantes
 payment-method-unavailable = Esta clínica não oferece essa forma de pagamento
+country-not-supported = Ainda não há dados de referência disponíveis para este país
+reference-data-unavailable = Os dados de referência estão temporariamente indisponíveis

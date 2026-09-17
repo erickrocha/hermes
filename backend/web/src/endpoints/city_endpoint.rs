@@ -26,12 +26,14 @@ use business::use_cases::city_use_case::CityUseCase;
 )]
 pub async fn list_all(
     state: State<AppState>,
+    Extension(locale): Extension<Locale>,
 ) -> HttpResponse<Json<Vec<CityJson>>> {
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_all().await {
-        Ok(list) => Ok(Json(CityMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let list = use_case
+        .find_all()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+    Ok(Json(CityMapper::json_vec(list)))
 }
 
 #[utoipa::path(
@@ -51,13 +53,15 @@ pub async fn list_all(
 )]
 pub async fn get_by_province(
     state: State<AppState>,
+    Extension(locale): Extension<Locale>,
     Path(province_id): Path<i32>,
 ) -> HttpResponse<Json<Vec<CityJson>>> {
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_province_id(province_id).await {
-        Ok(list) => Ok(Json(CityMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let list = use_case
+        .find_by_province_id(province_id)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+    Ok(Json(CityMapper::json_vec(list)))
 }
 
 #[utoipa::path(

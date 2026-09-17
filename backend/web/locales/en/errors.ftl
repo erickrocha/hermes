@@ -57,3 +57,5 @@ payment-tax-id-required = A CPF or CNPJ is required to pay this charge
 payment-attempt-not-found = Payment attempt not found
 payment-provider-unavailable = The payment provider is unavailable, try again shortly
 payment-method-unavailable = This clinic does not offer that payment method
+country-not-supported = No reference data is available yet for this country
+reference-data-unavailable = Reference data is temporarily unavailable

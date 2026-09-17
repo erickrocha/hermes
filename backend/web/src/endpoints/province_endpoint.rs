@@ -33,6 +33,7 @@ fn normalize_country_code(value: &str) -> Option<String> {
         (status = 400, description = "Missing or invalid country code", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 404, description = "No reference data seeded for this country", body = NotFoundErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -42,10 +43,20 @@ pub async fn list_all(state: State<AppState>,Extension(locale): Extension<Locale
         .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_country_code(country_code).await {
-        Ok(list) => Ok(Json(ProvinceMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
+    let list = use_case
+        .find_by_country_code(country_code)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+
+    // EPIC-RD-01-S04/HRMS-306 (D-9): a country with no seeded provinces is a
+    // country we don't support yet, not a query that happens to be empty --
+    // the caller needs to be able to tell those apart rather than see a
+    // silent empty dropdown either way.
+    if list.is_empty() {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::CountryNotSupported));
     }
+
+    Ok(Json(ProvinceMapper::json_vec(list)))
 }
 
 #[utoipa::path(

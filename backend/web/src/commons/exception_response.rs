@@ -16,6 +16,8 @@ pub enum ExceptionResponse {
     NotFound(Locale, ErrorKey),
 
     Conflict(Locale, ErrorKey),
+
+    InternalServerError(Locale, ErrorKey),
 }
 
 impl IntoResponse for ExceptionResponse {
@@ -35,6 +37,9 @@ impl IntoResponse for ExceptionResponse {
             }
             ExceptionResponse::Conflict(locale, key) => {
                 (axum::http::StatusCode::CONFLICT, locale, key)
+            }
+            ExceptionResponse::InternalServerError(locale, key) => {
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, locale, key)
             }
         };
 

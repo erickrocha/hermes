@@ -55,6 +55,8 @@ pub enum ErrorKey {
     BusinessPlanNotFound,
     BusinessPlanInvalid,
     BusinessPlanInUse,
+    CountryNotSupported,
+    ReferenceDataUnavailable,
 }
 
 impl ErrorKey {
@@ -74,6 +76,8 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "BusinessPlanNotFound",
             ErrorKey::BusinessPlanInvalid => "BusinessPlanInvalid",
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
+            ErrorKey::CountryNotSupported => "CountryNotSupported",
+            ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
         }
     }
 
@@ -93,6 +97,8 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "business-plan-not-found",
             ErrorKey::BusinessPlanInvalid => "business-plan-invalid",
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
+            ErrorKey::CountryNotSupported => "country-not-supported",
+            ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
         }
     }
 }
