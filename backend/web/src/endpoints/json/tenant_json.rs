@@ -24,6 +24,10 @@ pub struct TenantJson {
     /// Days a customer keeps app access after a charge falls due. Omitting it
     /// on an update keeps the clinic's current value.
     pub payment_grace_days: Option<i32>,
+    /// The tenant's current plan. Read-only here — set only through
+    /// `POST /tenant/{id}/plan` (PD-021); ignored on create/update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub business_plan_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::NaiveDateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,4 +36,13 @@ pub struct TenantJson {
     pub updated_at: Option<chrono::NaiveDateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_by: Option<String>,
+}
+
+/// Request body for `POST /tenant/{id}/plan` (HRMS-224). Replaces the old
+/// `TenantPlanJson`, which carried a `paymentDate`/`active` pair that no
+/// longer exists — PD-021 keeps no plan history.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTenantPlanJson {
+    pub business_plan_id: i64,
 }

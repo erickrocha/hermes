@@ -1,6 +1,6 @@
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { api, apiMessage, normalizeSession } from './api'
-import type { BusinessPlan, City, Province, Session, Tenant, TenantPlan, User } from './types'
+import type { BusinessPlan, City, Province, Session, Tenant, User } from './types'
 
 const loadStoredSession = (): Session | null => {
   const stored = localStorage.getItem('hermes.session')
@@ -37,14 +37,13 @@ const authSlice = createSlice({
     .addCase(changePassword.fulfilled, (state) => { if (state.session) { state.session.firstLogin = false; localStorage.setItem('hermes.session', JSON.stringify(state.session)) } }),
 })
 
-type DataState = { tenants: Tenant[]; plans: BusinessPlan[]; users: User[]; provinces: Province[]; cities: City[]; tenantPlans: Record<number, TenantPlan | null>; loading: boolean; error: string }
-const initialData: DataState = { tenants: [], plans: [], users: [], provinces: [], cities: [], tenantPlans: {}, loading: false, error: '' }
+type DataState = { tenants: Tenant[]; plans: BusinessPlan[]; users: User[]; provinces: Province[]; cities: City[]; loading: boolean; error: string }
+const initialData: DataState = { tenants: [], plans: [], users: [], provinces: [], cities: [], loading: false, error: '' }
 export const loadTenants = createAsyncThunk('data/tenants', async () => (await api.get<Tenant[]>('/tenant')).data)
 export const loadPlans = createAsyncThunk('data/plans', async () => (await api.get<BusinessPlan[]>('/business-plan')).data)
 export const loadUsers = createAsyncThunk('data/users', async () => (await api.get<User[]>('/user')).data)
 export const loadProvinces = createAsyncThunk('data/provinces', async (countryCode: string) => (await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data)
 export const loadCities = createAsyncThunk('data/cities', async (provinceId: number) => (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data)
-export const loadTenantPlan = createAsyncThunk('data/tenantPlan', async (tenantId: number) => ({ tenantId, plan: (await api.get<TenantPlan | null>(`/tenant/${tenantId}/plan`)).data }))
 
 const dataSlice = createSlice({
   name: 'data', initialState: initialData, reducers: {
@@ -62,7 +61,6 @@ const dataSlice = createSlice({
     builder.addCase(loadUsers.fulfilled, (s, a) => { s.loading = false; s.users = a.payload })
     builder.addCase(loadProvinces.fulfilled, (s, a) => { s.loading = false; s.provinces = a.payload; s.cities = [] })
     builder.addCase(loadCities.fulfilled, (s, a) => { s.loading = false; s.cities = a.payload })
-    builder.addCase(loadTenantPlan.fulfilled, (s, a) => { s.tenantPlans[a.payload.tenantId] = a.payload.plan })
   },
 })
 

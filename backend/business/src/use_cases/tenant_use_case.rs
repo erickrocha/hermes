@@ -29,6 +29,10 @@ impl TenantUseCase {
             return Err(BusinessError::new("Country code must contain two letters".to_string()));
         }
 
+        // A tenant's plan is set only through `set_plan` (HRMS-224, PD-021),
+        // never at creation, regardless of what the caller sent.
+        let tenant = Tenant { business_plan_id: None, ..tenant };
+
         let entity = self
             .gateway
             .persist(tenant)
@@ -145,6 +149,10 @@ impl TenantUseCase {
             // Omitting the field keeps the clinic's current grace rather than
             // silently resetting it to the column default.
             payment_grace_days: tenant.payment_grace_days.or(existing.payment_grace_days),
+            // A tenant's plan is set only through `set_plan` (HRMS-224,
+            // PD-021) — the general update path always keeps it as-is,
+            // regardless of what the caller sent.
+            business_plan_id: existing.business_plan_id,
             created_at: existing.created_at,
             created_by: existing.created_by,
             updated_at: None,
@@ -167,5 +175,31 @@ impl TenantUseCase {
     pub async fn persist(&self, tenant: Tenant) -> Option<Tenant> {
         log::info!("[TenantUseCase::persist] Executing persist tenant: {:?}", tenant.business_name);
         self.create(tenant).await.ok()
+    }
+
+    /// Sets the tenant's single current plan (HRMS-222, PD-021). The caller
+    /// (the `/tenant/{id}/plan` endpoint) is responsible for restricting this
+    /// to an unbound platform administrator and for validating that
+    /// `business_plan_id` refers to an existing plan (HRMS-224).
+    pub async fn set_plan(&self, tenant_id: i64, business_plan_id: i64) -> Result<Tenant, BusinessError> {
+        log::info!("[TenantUseCase::set_plan] Setting plan {} for tenant {}", business_plan_id, tenant_id);
+
+        let existing = self.find_by_id(tenant_id).await?;
+        let updated = Tenant {
+            business_plan_id: Some(business_plan_id),
+            ..existing
+        };
+
+        let entity = self
+            .gateway
+            .persist(updated)
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to set tenant plan: {}", e);
+                log::error!("[TenantUseCase::set_plan] {}", msg);
+                BusinessError::new(msg)
+            })?;
+
+        Ok(TenantEntityMapper::from_active_model(entity))
     }
 }

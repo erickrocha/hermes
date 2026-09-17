@@ -22,6 +22,9 @@ pub struct Tenant {
     pub country_code: Option<String>,
     /// Days a customer keeps app access after a charge falls due.
     pub payment_grace_days: Option<i32>,
+    /// The tenant's single current plan. Set only via `TenantUseCase::set_plan`
+    /// (PD-021) — `create`/`update` never take a caller-supplied value.
+    pub business_plan_id: Option<i64>,
     pub created_at: Option<NaiveDateTime>,
     pub updated_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
@@ -57,6 +60,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
                 Some(days) => Set(days),
                 None => NotSet,
             },
+            business_plan_id: Set(d.business_plan_id),
             created_at: NotSet,
             created_by: match d.created_by {
                 Some(cb) => Set(Some(cb)),
@@ -87,6 +91,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
             postal_code: e.postal_code,
             country_code: e.country_code,
             payment_grace_days: Some(e.payment_grace_days),
+            business_plan_id: e.business_plan_id,
             created_by: e.created_by,
             updated_by: e.updated_by,
             created_at: Some(e.created_at.naive_utc()),
@@ -114,6 +119,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
                 postal_code: e.postal_code.take().flatten(),
                 country_code: e.country_code.take().flatten(),
                 payment_grace_days: e.payment_grace_days.take(),
+                business_plan_id: e.business_plan_id.take().flatten(),
                 created_by: e.created_by.take().flatten(),
                 updated_by: e.updated_by.take().flatten(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),

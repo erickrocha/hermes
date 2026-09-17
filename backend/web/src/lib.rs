@@ -76,7 +76,7 @@ impl Modify for SecurityAddon {
 			endpoints::json::refresh_token_request::RefreshTokenRequest,
 			endpoints::json::access_token_json::AccessTokenJson,
 			endpoints::json::tenant_json::TenantJson,
-			endpoints::json::tenant_plan_json::TenantPlanJson,
+			endpoints::json::tenant_json::SetTenantPlanJson,
 			endpoints::json::business_plan_json::CreateBusinessPlanJson,
 			endpoints::json::business_plan_json::UpdateBusinessPlanJson,
 			endpoints::json::business_plan_json::BusinessPlanJson,

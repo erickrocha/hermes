@@ -5,17 +5,18 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::tenant_json::TenantJson;
-use crate::endpoints::json::tenant_plan_json::TenantPlanJson;
-use crate::infrastructure::mapper::{Mapper, TenantMapper, TenantPlanMapper};
+use crate::endpoints::business_plan_endpoint::response as business_plan_response;
+use crate::endpoints::json::business_plan_json::BusinessPlanJson;
+use crate::endpoints::json::tenant_json::{SetTenantPlanJson, TenantJson};
+use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::gateway::tenant_gateway::TenantGateway;
-use business::gateway::tenant_plan_gateway::TenantPlanGateway;
-use business::use_cases::tenant_plan_use_case::TenantPlanUseCase;
+use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
 
 fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
@@ -225,11 +226,11 @@ pub async fn update(
     params(
         ("id" = i32, Path, description = "Tenant ID")
     ),
-    request_body = TenantPlanJson,
+    request_body = SetTenantPlanJson,
     responses(
-        (status = 200, description = "Tenant plan updated", body = TenantPlanJson),
+        (status = 200, description = "Tenant plan set", body = BusinessPlanJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
-        (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
+        (status = 404, description = "Tenant or business plan not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -241,8 +242,9 @@ pub async fn add_plan(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
-    Json(payload): Json<TenantPlanJson>,
-) -> HttpResponse<Json<TenantPlanJson>> {
+    Json(payload): Json<SetTenantPlanJson>,
+) -> HttpResponse<Json<BusinessPlanJson>> {
+    // Only an unbound platform administrator may set a tenant's plan (HRMS-224).
     if current_user.role != Role::SysAdmin || current_user.tenant_id.is_some() {
         return Err(ExceptionResponse::Forbidden(
             locale,
@@ -250,18 +252,19 @@ pub async fn add_plan(
         ));
     }
 
-    let mut domain = TenantPlanMapper::domain(payload);
-    // Ensure the tenant ID matches the path parameter
-    domain.tenant_id = id;
+    let plan_use_case = BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()));
+    let plan = plan_use_case
+        .find_by_id(payload.business_plan_id)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::BusinessPlanNotFound))?;
 
-    let use_case = TenantPlanUseCase::new(TenantPlanGateway::new(state.conn.as_ref().clone()));
-    match use_case.create_or_update(domain).await {
-        Ok(tenant_plan) => Ok(Json(TenantPlanMapper::json(tenant_plan))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::TenantUpdateFailed,
-        )),
-    }
+    let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+    tenant_use_case
+        .set_plan(id, payload.business_plan_id)
+        .await
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::TenantUpdateFailed))?;
+
+    Ok(Json(business_plan_response(plan)))
 }
 
 #[utoipa::path(
@@ -272,7 +275,7 @@ pub async fn add_plan(
         ("id" = i32, Path, description = "Tenant ID")
     ),
     responses(
-        (status = 200, description = "Tenant active plan found", body = Option<TenantPlanJson>),
+        (status = 200, description = "Tenant's current plan, if one is set", body = Option<BusinessPlanJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
@@ -285,7 +288,7 @@ pub async fn get_active_plan(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
-) -> HttpResponse<Json<Option<TenantPlanJson>>> {
+) -> HttpResponse<Json<Option<BusinessPlanJson>>> {
     if !can_access_tenant(&current_user, id) {
         return Err(ExceptionResponse::NotFound(
             locale,
@@ -293,12 +296,19 @@ pub async fn get_active_plan(
         ));
     }
 
-    let use_case = TenantPlanUseCase::new(TenantPlanGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_active_by_tenant_id(id).await {
-        Ok(plan_opt) => Ok(Json(plan_opt.map(TenantPlanMapper::json))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::TenantNotFound,
-        )),
+    let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+    let tenant = tenant_use_case
+        .find_by_id(id)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound))?;
+
+    let Some(business_plan_id) = tenant.business_plan_id else {
+        return Ok(Json(None));
+    };
+
+    let plan_use_case = BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()));
+    match plan_use_case.find_by_id(business_plan_id).await {
+        Ok(plan) => Ok(Json(Some(business_plan_response(plan)))),
+        Err(_) => Ok(Json(None)),
     }
 }

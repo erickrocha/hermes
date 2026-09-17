@@ -30,6 +30,7 @@ export interface Tenant {
   postalCode?: string
   countryCode?: string
   paymentGraceDays?: number
+  businessPlanId?: number | null
 }
 
 export interface BusinessPlanTier { id?: number; upToUsers: number; pricePerUserInCents: number }
@@ -44,7 +45,6 @@ export interface BusinessPlan {
   dailyAiQuota: number
   tiers: BusinessPlanTier[]
 }
-export interface TenantPlan { id?: number; uuid?: string; tenantId: number; businessPlanId: number; paymentDate: string; active: boolean }
 export interface User {
   id?: number
   uuid?: string

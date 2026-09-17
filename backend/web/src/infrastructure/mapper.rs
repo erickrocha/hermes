@@ -4,14 +4,12 @@ use crate::endpoints::json::access_token_json::AccessTokenJson;
 use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::endpoints::json::tenant_json::TenantJson;
-use crate::endpoints::json::tenant_plan_json::TenantPlanJson;
 use crate::endpoints::json::user_json::UserJson;
 use business::domain::access_token::AccessToken;
 use business::domain::city::City;
 use business::domain::enums::Role;
 use business::domain::province::Province;
 use business::domain::tenant::Tenant;
-use business::domain::tenant_plan::TenantPlan;
 use business::domain::user::User;
 
 pub trait Mapper<T, U> {
@@ -140,6 +138,7 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             city,
             zipcode,
             payment_grace_days: t.payment_grace_days,
+            business_plan_id: t.business_plan_id,
             created_at: t.created_at,
             created_by: t.created_by,
             updated_at: t.updated_at,
@@ -167,6 +166,9 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             postal_code,
             country_code: country_code(u.country_code),
             payment_grace_days: u.payment_grace_days,
+            // Never taken from the request body — see HRMS-224 and
+            // `TenantUseCase::create`/`update`, which enforce this too.
+            business_plan_id: None,
             created_at: u.created_at,
             created_by: u.created_by,
             updated_at: u.updated_at,
@@ -215,35 +217,6 @@ impl Mapper<City, CityJson> for CityMapper {
             uuid: u.uuid,
             province_id: u.province_id,
             name: u.name,
-        }
-    }
-}
-
-pub struct TenantPlanMapper;
-impl Mapper<TenantPlan, TenantPlanJson> for TenantPlanMapper {
-    fn json(t: TenantPlan) -> TenantPlanJson {
-        TenantPlanJson {
-            id: t.id,
-            uuid: t.uuid,
-            tenant_id: t.tenant_id,
-            business_plan_id: t.business_plan_id,
-            payment_date: t.payment_date,
-            active: t.active,
-        }
-    }
-
-    fn domain(u: TenantPlanJson) -> TenantPlan {
-        TenantPlan {
-            id: u.id,
-            uuid: u.uuid,
-            tenant_id: u.tenant_id,
-            business_plan_id: u.business_plan_id,
-            payment_date: u.payment_date,
-            active: u.active,
-            created_at: None,
-            created_by: None,
-            updated_at: None,
-            updated_by: None,
         }
     }
 }

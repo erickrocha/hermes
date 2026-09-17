@@ -2,7 +2,6 @@ pub mod user_json;
 pub mod error_response_json;
 pub mod access_token_json;
 pub mod tenant_json;
-pub mod tenant_plan_json;
 pub mod city_json;
 pub mod province_json;
 pub mod change_password_request;

@@ -2,7 +2,7 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::domain::business_plan::{sort_tiers, BusinessPlan, BusinessPlanEntityMapper};
 use entity::business_plan_entity::Model as BusinessPlanEntity;
-use entity::{business_plan_entity, business_plan_tier_entity, tenant_plan_entity};
+use entity::{business_plan_entity, business_plan_tier_entity, tenant_entity};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait, TryIntoModel,
@@ -132,8 +132,8 @@ impl BusinessPlanGateway {
             return Ok(false);
         }
 
-        let in_use = tenant_plan_entity::Entity::find()
-            .filter(tenant_plan_entity::Column::BusinessPlanId.eq(id))
+        let in_use = tenant_entity::Entity::find()
+            .filter(tenant_entity::Column::BusinessPlanId.eq(id))
             .one(&self.db)
             .await?
             .is_some();

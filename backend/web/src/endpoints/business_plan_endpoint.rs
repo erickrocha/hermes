@@ -31,7 +31,7 @@ fn use_case(state: &AppState) -> BusinessPlanUseCase {
     BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()))
 }
 
-fn response(plan: BusinessPlan) -> BusinessPlanJson {
+pub(crate) fn response(plan: BusinessPlan) -> BusinessPlanJson {
     BusinessPlanJson {
         id: plan.id.expect("persisted business plan has an id"),
         uuid: plan.uuid.expect("persisted business plan has a uuid"),
