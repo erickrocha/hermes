@@ -12,16 +12,13 @@ use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use business::domain::authorization::{can_access_tenant, can_create_tenant, can_set_tenant_plan};
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
-
-fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
-    user.tenant_id == Some(tenant_id) || (user.role == Role::SysAdmin && user.tenant_id.is_none())
-}
 
 #[utoipa::path(
     post,
@@ -43,7 +40,7 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<TenantJson>,
 ) -> HttpResponse<(StatusCode, Json<TenantJson>)> {
-    if current_user.role != Role::SysAdmin || current_user.tenant_id.is_some() {
+    if !can_create_tenant(&current_user) {
         return Err(ExceptionResponse::Forbidden(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -245,7 +242,7 @@ pub async fn add_plan(
     Json(payload): Json<SetTenantPlanJson>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
     // Only an unbound platform administrator may set a tenant's plan (HRMS-224).
-    if current_user.role != Role::SysAdmin || current_user.tenant_id.is_some() {
+    if !can_set_tenant_plan(&current_user) {
         return Err(ExceptionResponse::Forbidden(
             locale,
             ErrorKey::InvalidParameterValue,

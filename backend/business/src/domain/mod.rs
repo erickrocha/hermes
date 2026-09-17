@@ -1,6 +1,7 @@
 pub mod tenant;
 pub mod user;
 pub mod enums;
+pub mod authorization;
 pub mod business_plan;
 pub mod business_plan_tier;
 pub mod business_error;

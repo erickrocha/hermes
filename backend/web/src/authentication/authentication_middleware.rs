@@ -4,6 +4,7 @@ use crate::AppState;
 use axum::extract::State;
 use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
+use business::domain::authorization::is_unbound_sys_admin;
 use business::domain::enums::Role;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 
@@ -60,7 +61,7 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
         id: current_user.id.unwrap_or(0),
         email: current_user.email.clone(),
         tenant_id: current_user.tenant_id,
-        enforce_tenant: current_user.tenant_id.is_some() || current_user.role != Role::SysAdmin,
+        enforce_tenant: !is_unbound_sys_admin(&current_user),
     };
     
     req.extensions_mut().insert(current_user);

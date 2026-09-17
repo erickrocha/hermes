@@ -10,15 +10,15 @@ use crate::endpoints::json::error_response_json::{
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use business::domain::authorization::can_manage_business_plan_catalogue;
 use business::domain::business_plan::BusinessPlan;
 use business::domain::business_plan_tier::BusinessPlanTier;
-use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 
 fn authorize(user: &User, locale: Locale) -> Result<(), ExceptionResponse> {
-    if user.role != Role::SysAdmin || user.tenant_id.is_some() {
+    if !can_manage_business_plan_catalogue(user) {
         return Err(ExceptionResponse::Forbidden(
             locale,
             ErrorKey::BusinessPlanForbidden,
