@@ -267,15 +267,21 @@ impl UserUseCase {
     /// Seeds the SysAdmin user from SYSADMIN_EMAIL/SYSADMIN_PASSWORD on every boot.
     /// Looks the existing SysAdmin up by role (not just by email) so that changing
     /// SYSADMIN_EMAIL updates the same user instead of leaving a stale one behind.
+    ///
+    /// EPIC-XF-04-S01 (HRMS-021): both variables are required, same as
+    /// `DATABASE_URL`/`ACCESS_TOKEN_SECRET`/`REFRESH_TOKEN_SECRET` in
+    /// `web::start`. Before this they defaulted to `admin@hermes.com`/
+    /// `admin` when absent -- the one setting in the whole service that
+    /// defaulted a secret instead of failing fast, and the one whose
+    /// default is public (it is right here in the source).
     pub async fn seed_sysadmin(db: &DbConn) -> Option<User> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
-        let sysadmin_email = env::var("SYSADMIN_EMAIL").unwrap_or_else(|_| "admin@hermes.com".to_string());
-        let sysadmin_password = env::var("SYSADMIN_PASSWORD").unwrap_or_else(|_| "admin".to_string());
+        let sysadmin_email = env::var("SYSADMIN_EMAIL").expect("SYSADMIN_EMAIL must be set");
+        let sysadmin_password = env::var("SYSADMIN_PASSWORD").expect("SYSADMIN_PASSWORD must be set");
 
         if sysadmin_email.trim().is_empty() || sysadmin_password.trim().is_empty() {
-            log::warn!("[UserUseCase::seed_sysadmin] SYSADMIN_EMAIL or SYSADMIN_PASSWORD empty; skipping SysAdmin seeding.");
-            return None;
+            panic!("SYSADMIN_EMAIL and SYSADMIN_PASSWORD must not be empty");
         }
 
         if let Some(existing_sysadmin) = Self::find_sysadmin(db).await {

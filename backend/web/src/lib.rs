@@ -187,9 +187,15 @@ async fn start() -> anyhow::Result<()> {
 }
 
 pub fn main() {
-    let result = start();
-
-    if let Some(err) = result.err() {
-        println!("Error: {err}");
+    // EPIC-XF-04-S03 (HRMS-023): a failed migration or an unavailable lock
+    // must abort start-up visibly. Before this, `start()`'s error was
+    // printed and `main` returned normally -- exit code 0, indistinguishable
+    // from a clean shutdown to any process supervisor deciding whether to
+    // restart the instance or roll back the deploy. No HTTP server ever
+    // bound (the failure happens before `axum::serve`), so no half-migrated
+    // instance served traffic either way; what was missing was the signal.
+    if let Err(err) = start() {
+        log::error!("Startup failed: {err}");
+        std::process::exit(1);
     }
 }
