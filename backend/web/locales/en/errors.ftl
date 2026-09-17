@@ -59,3 +59,4 @@ payment-provider-unavailable = The payment provider is unavailable, try again sh
 payment-method-unavailable = This clinic does not offer that payment method
 country-not-supported = No reference data is available yet for this country
 reference-data-unavailable = Reference data is temporarily unavailable
+password-change-required = You must set your own password before continuing

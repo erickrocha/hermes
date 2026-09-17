@@ -57,6 +57,7 @@ pub enum ErrorKey {
     BusinessPlanInUse,
     CountryNotSupported,
     ReferenceDataUnavailable,
+    PasswordChangeRequired,
 }
 
 impl ErrorKey {
@@ -78,6 +79,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
+            ErrorKey::PasswordChangeRequired => "PasswordChangeRequired",
         }
     }
 
@@ -99,6 +101,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
+            ErrorKey::PasswordChangeRequired => "password-change-required",
         }
     }
 }

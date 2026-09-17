@@ -59,3 +59,4 @@ payment-provider-unavailable = O provedor de pagamento está indisponível, tent
 payment-method-unavailable = Esta clínica não oferece essa forma de pagamento
 country-not-supported = Ainda não há dados de referência disponíveis para este país
 reference-data-unavailable = Os dados de referência estão temporariamente indisponíveis
+password-change-required = Você precisa definir sua própria senha antes de continuar
