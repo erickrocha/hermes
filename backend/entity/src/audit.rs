@@ -133,7 +133,58 @@ macro_rules! impl_tenant_auditable_before_save {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_with_user, tenant_scope, AuditUser, TenantScope};
+    use super::{enforce_tenant, run_with_user, tenant_scope, AuditUser, TenantActiveModel, TenantScope};
+
+    /// A minimal `TenantActiveModel` double, so `enforce_tenant`'s effect can
+    /// be asserted without a real SeaORM entity or a database.
+    struct FakeTenantModel {
+        tenant_id: Option<i64>,
+    }
+
+    impl TenantActiveModel for FakeTenantModel {
+        fn set_tenant_id(&mut self, tenant_id: Option<i64>) {
+            self.tenant_id = tenant_id;
+        }
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_stamps_the_requests_tenant_over_whatever_the_model_carried() {
+        let user = AuditUser {
+            id: 1,
+            email: "owner@example.com".to_string(),
+            tenant_id: Some(42),
+            enforce_tenant: true,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_with_user(Some(user), enforce_tenant(model)).await;
+        assert_eq!(stamped.tenant_id, Some(42));
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_clears_the_tenant_when_the_caller_is_denied() {
+        let user = AuditUser {
+            id: 1,
+            email: "orphan@example.com".to_string(),
+            tenant_id: None,
+            enforce_tenant: true,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_with_user(Some(user), enforce_tenant(model)).await;
+        assert_eq!(stamped.tenant_id, None);
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_leaves_an_unrestricted_writers_model_untouched() {
+        let user = AuditUser {
+            id: 1,
+            email: "admin@example.com".to_string(),
+            tenant_id: None,
+            enforce_tenant: false,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_with_user(Some(user), enforce_tenant(model)).await;
+        assert_eq!(stamped.tenant_id, Some(999));
+    }
 
     #[tokio::test]
     async fn derives_tenant_scope_from_authenticated_user() {
