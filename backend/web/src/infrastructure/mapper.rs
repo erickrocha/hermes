@@ -37,7 +37,6 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             user_id: access_token.user_id,
             role: access_token.role,
             tenant_id: access_token.tenant_id,
-            first_login: access_token.first_login,
         }
     }
 
@@ -53,7 +52,6 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             user_id: u.user_id,
             role: u.role,
             tenant_id: u.tenant_id,
-            first_login: u.first_login,
         }
     }
 }
@@ -69,7 +67,6 @@ impl Mapper<User, UserJson> for UserMapper {
             email: user.email,
             password: None,
             enabled: user.enabled,
-            first_login: user.first_login,
             role: user.role.to_string(),
             tenant_id: user.tenant_id,
             created_at: user.created_at,
@@ -87,7 +84,6 @@ impl Mapper<User, UserJson> for UserMapper {
             name: u.name,
             password: u.password.unwrap_or_default(),
             enabled: u.enabled,
-            first_login: u.first_login,
             role: Role::from_str(&u.role).unwrap(),
             tenant_id: u.tenant_id,
             created_at: u.created_at,
@@ -137,7 +133,6 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             province,
             city,
             zipcode,
-            payment_grace_days: t.payment_grace_days,
             business_plan_id: t.business_plan_id,
             created_at: t.created_at,
             created_by: t.created_by,
@@ -165,7 +160,6 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             administrative_area,
             postal_code,
             country_code: country_code(u.country_code),
-            payment_grace_days: u.payment_grace_days,
             // Never taken from the request body — see HRMS-224 and
             // `TenantUseCase::create`/`update`, which enforce this too.
             business_plan_id: None,

@@ -2,23 +2,7 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
 use chrono::{NaiveDate, NaiveDateTime};
 use entity::business_plan_entity::{ActiveModel, Model};
-use entity::business_plan_tier_entity;
 use sea_orm::{NotSet, Set, TryIntoModel};
-use crate::domain::business_plan_tier::{BusinessPlanTier, BusinessPlanTierEntityMapper};
-
-/// Ordena as faixas para o caminhamento de preço: a faixa sem teto
-/// (`up_to_users = 0`) tem de ser a última, as demais em ordem crescente.
-pub fn sort_tiers(tiers: &mut [business_plan_tier_entity::Model]) {
-    tiers.sort_by_key(|tier| {
-        if tier.up_to_users == 0 {
-            i32::MAX
-        } else {
-            tier.up_to_users
-        }
-    });
-}
-
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BusinessPlan {
@@ -33,7 +17,6 @@ pub struct BusinessPlan {
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
     pub updated_by: Option<String>,
-    pub tiers: Vec<BusinessPlanTier>,
 }
 
 pub struct BusinessPlanEntityMapper;
@@ -77,7 +60,6 @@ impl EntityMapper<BusinessPlan, Model, ActiveModel> for BusinessPlanEntityMapper
             created_by: model.created_by,
             updated_at: Some(model.updated_at.naive_utc()),
             updated_by: model.updated_by,
-            tiers: Vec::new(),
         }
     }
 
@@ -97,50 +79,6 @@ impl EntityMapper<BusinessPlan, Model, ActiveModel> for BusinessPlanEntityMapper
             created_by: model.created_by.take().flatten(),
             updated_at: model.updated_at.take().map(|value| value.naive_utc()),
             updated_by: model.updated_by.take().flatten(),
-            tiers: Vec::new(),
         }
-    }
-}
-
-impl BusinessPlanEntityMapper {
-    /// Constrói o domínio já com as faixas anexadas (ordenadas por `sort_tiers`).
-    pub fn from_model_with_tiers(
-        model: Model,
-        tiers: Vec<business_plan_tier_entity::Model>,
-    ) -> BusinessPlan {
-        let mut plan = <Self as EntityMapper<BusinessPlan, Model, ActiveModel>>::from_model(model);
-        plan.tiers = tiers
-            .into_iter()
-            .map(BusinessPlanTierEntityMapper::from_model)
-            .collect();
-        plan
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::sort_tiers;
-    use entity::business_plan_tier_entity;
-    use crate::commons::functions::string_to_bytes;
-
-    fn tier(id: i64, up_to_users: i32) -> business_plan_tier_entity::Model {
-        business_plan_tier_entity::Model {
-            id,
-            uuid: string_to_bytes("test_uuid"),
-            business_plan_id: 1,
-            up_to_users,
-            price_per_user_in_cents: 100,
-        }
-    }
-
-    #[test]
-    fn open_ended_tier_goes_last() {
-        // Ordem em que o MariaDB devolve com ORDER BY up_to_users ASC: NULL primeiro.
-        let mut tiers = vec![tier(3, 0), tier(1, 50), tier(2, 150)];
-        sort_tiers(&mut tiers);
-        assert_eq!(
-            tiers.iter().map(|t| t.up_to_users).collect::<Vec<_>>(),
-            vec![50, 150, 0]
-        );
     }
 }

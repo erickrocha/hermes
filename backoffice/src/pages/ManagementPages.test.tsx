@@ -29,7 +29,7 @@ describe('PlanEditorPage price editing', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
   it('shows a loaded plan price in currency units, not raw cents', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', tiers: [{ id: 1, upToUsers: 10, pricePerUserInCents: 500 }] } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
 
     render(
       <Provider store={store}>
@@ -41,11 +41,10 @@ describe('PlanEditorPage price editing', () => {
 
     const priceInput = await screen.findByDisplayValue('123.45')
     expect(priceInput).toBeInTheDocument()
-    expect(screen.getByDisplayValue('5.00')).toBeInTheDocument()
   })
 
   it('converts a typed currency amount back into cents on save', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', tiers: [] } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
 
     render(
@@ -64,8 +63,8 @@ describe('PlanEditorPage price editing', () => {
   })
 })
 
-const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null, firstLogin: false }
-const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42, firstLogin: false }
+const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null }
+const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42 }
 const oneTenant: Tenant = { id: 42, businessName: 'Transmega', companyName: 'Transmega', taxId: '52998224725', countryCode: 'BR' }
 
 // A minimal store shaped like RootState -- it doesn't need to react to the

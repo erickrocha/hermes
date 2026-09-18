@@ -13,6 +13,8 @@ utoipa = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 
+argon2 = "0.6.0"
+# PD-029: mantido só para verificar hashes legados; nada novo é gravado em bcrypt.
 bcrypt = "0.19.3"
 log = "0.4.34"
 jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }

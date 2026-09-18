@@ -19,7 +19,6 @@ pub struct Model {
     pub administrative_area: Option<String>,
     pub postal_code: Option<String>,
     pub country_code: Option<String>,
-    pub payment_grace_days: i32,
     pub business_plan_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,

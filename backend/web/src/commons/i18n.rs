@@ -44,13 +44,20 @@ impl Locale {
         Locale(langid!("en"))
     }
 
-    /// A request for `pt-BR` (or bare `pt`) matches a supported `pt-BR`
-    /// bundle; region is only compared when the request actually names one,
-    /// so a bare `pt` still finds `pt-BR` rather than falling through to
-    /// the `en` fallback.
+    /// Region is compared only when *both* sides name one. A bare `pt` finds
+    /// the `pt-BR` bundle, and a regional `es-AR` finds the region-less `es`
+    /// bundle.
+    ///
+    /// PD-031 surfaced the second half: the rule used to reject a request that
+    /// named a region against a bundle that did not, so every Latin American
+    /// browser sending `es-AR`, `es-MX` or `es-CO` fell through to English --
+    /// precisely the readers Spanish was added for. `pt-PT` vs `pt-BR` still
+    /// does not match: there both sides name a region, and they differ.
     fn negotiates(supported: &LanguageIdentifier, requested: &LanguageIdentifier) -> bool {
         supported.language == requested.language
-            && (requested.region.is_none() || supported.region == requested.region)
+            && (requested.region.is_none()
+                || supported.region.is_none()
+                || supported.region == requested.region)
     }
 
     pub fn language_id(&self) -> LanguageIdentifier {
@@ -76,7 +83,6 @@ pub enum ErrorKey {
     BusinessPlanInUse,
     CountryNotSupported,
     ReferenceDataUnavailable,
-    PasswordChangeRequired,
 }
 
 impl ErrorKey {
@@ -98,7 +104,6 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
-            ErrorKey::PasswordChangeRequired => "PasswordChangeRequired",
         }
     }
 
@@ -120,7 +125,6 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
-            ErrorKey::PasswordChangeRequired => "password-change-required",
         }
     }
 }
@@ -198,5 +202,23 @@ mod tests {
         assert_ne!(en, pt);
         assert!(!en.is_empty());
         assert!(!pt.is_empty());
+    }
+
+    #[test]
+    fn spanish_is_a_supported_bundle() {
+        // PD-031: es junta-se a en e pt-BR. Nada no código precisou mudar --
+        // o conjunto suportado é o que existe em `web/locales/`; este teste
+        // existe para que remover o bundle seja uma falha, não um silêncio.
+        assert_eq!(Locale::from_accept_language(Some("es")).language_id(), langid!("es"));
+        // Um bundle sem região atende qualquer região: es-AR/es-MX/es-CO são
+        // exatamente os leitores para quem o espanhol foi adicionado.
+        assert_eq!(Locale::from_accept_language(Some("es-AR")).language_id(), langid!("es"));
+        assert_eq!(Locale::from_accept_language(Some("es-MX")).language_id(), langid!("es"));
+    }
+
+    #[test]
+    fn a_differing_region_on_both_sides_still_does_not_match() {
+        // pt-PT não é atendido pelo bundle pt-BR; cai no fallback.
+        assert_eq!(Locale::from_accept_language(Some("pt-PT")).language_id(), langid!("en"));
     }
 }

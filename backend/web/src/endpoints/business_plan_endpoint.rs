@@ -2,7 +2,7 @@ use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::business_plan_json::{
-    BusinessPlanJson, BusinessPlanTierJson, CreateBusinessPlanJson, UpdateBusinessPlanJson,
+    BusinessPlanJson, CreateBusinessPlanJson, UpdateBusinessPlanJson,
 };
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
@@ -12,7 +12,6 @@ use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use business::domain::authorization::can_manage_business_plan_catalogue;
 use business::domain::business_plan::BusinessPlan;
-use business::domain::business_plan_tier::BusinessPlanTier;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
@@ -48,32 +47,10 @@ pub(crate) fn response(plan: BusinessPlan) -> BusinessPlanJson {
             .updated_at
             .expect("persisted business plan has updated_at"),
         updated_by: plan.updated_by,
-        tiers: plan
-            .tiers
-            .into_iter()
-            .map(|t| BusinessPlanTierJson {
-                id: t.id,
-                up_to_users: t.up_to_users,
-                price_per_user_in_cents: t.price_per_user_in_cents,
-            })
-            .collect(),
     }
 }
 
 fn domain(payload: CreateBusinessPlanJson) -> BusinessPlan {
-    let tiers = payload
-        .tiers
-        .unwrap_or_default()
-        .into_iter()
-        .map(|t| BusinessPlanTier {
-            id: t.id,
-            uuid: None,
-            business_plan_id: 0,
-            up_to_users: t.up_to_users,
-            price_per_user_in_cents: t.price_per_user_in_cents,
-        })
-        .collect();
-
     BusinessPlan {
         id: None,
         uuid: None,
@@ -86,7 +63,6 @@ fn domain(payload: CreateBusinessPlanJson) -> BusinessPlan {
         created_by: None,
         updated_at: None,
         updated_by: None,
-        tiers,
     }
 }
 
@@ -97,7 +73,6 @@ fn update_domain(payload: UpdateBusinessPlanJson) -> BusinessPlan {
         available_users: payload.available_users,
         period_days: payload.period_days,
         payment_date: payload.payment_date,
-        tiers: payload.tiers,
     })
 }
 

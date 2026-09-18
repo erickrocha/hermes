@@ -38,7 +38,7 @@ export const normalizeSession = (data: Record<string, unknown>) => ({
   accessToken: String(data.accessToken ?? data.access_token ?? ''), refreshToken: data.refreshToken ?? data.refresh_token,
   tokenType: String(data.tokenType ?? data.token_type ?? 'Bearer'), expireIn: Number(data.expireIn ?? data.expire_in ?? 0),
   email: String(data.email ?? ''), uuid: String(data.uuid ?? ''), name: String(data.name ?? ''), userId: Number(data.userId ?? data.user_id),
-  role: data.role, tenantId: data.tenantId ?? data.tenant_id ?? null, firstLogin: Boolean(data.firstLogin ?? data.first_login),
+  role: data.role, tenantId: data.tenantId ?? data.tenant_id ?? null,
 })
 
 export const apiMessage = (error: unknown, fallback: string) => {

@@ -34,7 +34,6 @@ const authSlice = createSlice({
     .addCase(login.pending, (state) => { state.loading = true; state.error = '' })
     .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
-    .addCase(changePassword.fulfilled, (state) => { if (state.session) { state.session.firstLogin = false; localStorage.setItem('hermes.session', JSON.stringify(state.session)) } }),
 })
 
 type DataState = { tenants: Tenant[]; plans: BusinessPlan[]; users: User[]; provinces: Province[]; cities: City[]; loading: boolean; error: string }

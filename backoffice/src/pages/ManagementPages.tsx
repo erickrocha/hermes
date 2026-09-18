@@ -7,7 +7,7 @@ import { api, apiMessage } from '../api'
 import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
 import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
-import type { BusinessPlan, BusinessPlanTier, Tenant, User } from '../types'
+import type { BusinessPlan, Tenant, User } from '../types'
 import { Combobox } from '../components/Combobox'
 import { Confirm, Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
 
@@ -20,8 +20,8 @@ export const centsToAmount = (cents: number) => (cents / 100).toFixed(2)
 export const amountToCents = (amount: string) => Math.round((Number.parseFloat(amount || '0') || 0) * 100)
 const today = () => new Date().toISOString().slice(0, 10)
 const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
-const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode, paymentGraceDays: 0 })
-const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today(), tiers: [] }
+const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode })
+const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today() }
 
 export function TenantsPage() {
   const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState('')
@@ -188,10 +188,6 @@ export function TenantEditorPage() {
             {t('postalCode')}
             <input value={form.postalCode || ''} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} />
           </label>
-          <label>
-            {t('graceDays')}
-            <input type="number" min="0" value={form.paymentGraceDays || 0} onChange={(e) => setForm({ ...form, paymentGraceDays: Number(e.target.value) })} />
-          </label>
         </Form>
       </section>
     </>
@@ -210,15 +206,15 @@ export function PlansPage() {
   const { t, i18n } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { plans, loading } = useSelector((s: RootState) => s.data); const [search, setSearch] = useState(''); const [removing, setRemoving] = useState<BusinessPlan | null>(null); const [error, setError] = useState('')
   useEffect(() => { dispatch(loadPlans()) }, [dispatch]); const filtered = plans.filter((plan) => plan.name.toLowerCase().includes(search.toLowerCase()))
   const remove = async () => { if (!removing?.id) return; try { await api.delete(`/business-plan/${removing.id}`); setRemoving(null); dispatch(loadPlans()) } catch (cause) { setError(apiMessage(cause, t('genericError'))); setRemoving(null) } }
-  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={() => dispatch(loadPlans())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/plans/new"><Plus size={17} />{t('newPlan')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !plans.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('planName')}</th><th>{t('basePrice')}</th><th>{t('includedUsers')}</th><th>{t('periodDays')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((plan) => <tr key={plan.id}><td><b>{plan.name}</b><small>{plan.tiers.length} {t('tiers').toLowerCase()}</small></td><td>{money(plan.priceInCents, i18n.language)}</td><td>{plan.availableUsers}</td><td>{plan.periodDays}</td><td><div className="row-actions">{plan.id && <Link to={`/plans/${plan.id}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(plan)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div></div>}{removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
+  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={() => dispatch(loadPlans())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/plans/new"><Plus size={17} />{t('newPlan')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !plans.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('planName')}</th><th>{t('basePrice')}</th><th>{t('includedUsers')}</th><th>{t('periodDays')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((plan) => <tr key={plan.id}><td><b>{plan.name}</b></td><td>{money(plan.priceInCents, i18n.language)}</td><td>{plan.availableUsers}</td><td>{plan.periodDays}</td><td><div className="row-actions">{plan.id && <Link to={`/plans/${plan.id}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(plan)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div></div>}{removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
 }
 
 export function PlanEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const [form, setForm] = useState<BusinessPlan>({ ...blankPlan, tiers: [] }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const { id } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const [form, setForm] = useState<BusinessPlan>({ ...blankPlan }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
   useEffect(() => { if (!id) return; api.get<BusinessPlan>(`/business-plan/${id}`).then(({ data }) => setForm(data)).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
   const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { if (id) await api.put(`/business-plan/${id}`, form); else await api.post('/business-plan', form); navigate('/plans') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
-  return <><PageHeader title={id ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="0.01" value={centsToAmount(form.priceInCents)} onChange={(e) => setForm({ ...form, priceInCents: amountToCents(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={form.availableUsers} onChange={(e) => setForm({ ...form, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label><div className="span-2 tier-editor"><div className="tier-title"><b>{t('tiers')}</b><button type="button" className="btn tertiary" onClick={() => setForm({ ...form, tiers: [...form.tiers, { upToUsers: 0, pricePerUserInCents: 0 }] })}><Plus size={15} />{t('addTier')}</button></div>{form.tiers.map((tier: BusinessPlanTier, index: number) => <div className="tier-row" key={tier.id ?? index}><label>{t('upToUsers')}<input type="number" min="0" value={tier.upToUsers} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, upToUsers: Number(e.target.value) }; setForm({ ...form, tiers }) }} /></label><label>{t('pricePerUser')}<input type="number" min="0" step="0.01" value={centsToAmount(tier.pricePerUserInCents)} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, pricePerUserInCents: amountToCents(e.target.value) }; setForm({ ...form, tiers }) }} /></label><button type="button" onClick={() => setForm({ ...form, tiers: form.tiers.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={16} /></button></div>)}</div></Form></section></>
+  return <><PageHeader title={id ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="0.01" value={centsToAmount(form.priceInCents)} onChange={(e) => setForm({ ...form, priceInCents: amountToCents(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={form.availableUsers} onChange={(e) => setForm({ ...form, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label></Form></section></>
 }
 
 export function UsersPage() {
@@ -233,7 +229,7 @@ export function UserEditorPage() {
   // PD-019: a tenant owner creates tenant users in their own tenant only --
   // a platform administrator creates tenants and tenant owners, never a
   // tenant user directly (EPIC-IA-04).
-  const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, firstLogin: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
   useEffect(() => { dispatch(loadTenants()) }, [dispatch])
   useEffect(() => { if (!id) return; api.get<User>(`/user/${id}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
   useEffect(() => { if (!id && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants[0]?.id) setForm((value) => ({ ...value, tenantId: tenants[0].id })) }, [form.role, form.tenantId, id, session.role, tenants])

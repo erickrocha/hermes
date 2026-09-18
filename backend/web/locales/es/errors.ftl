@@ -1,0 +1,16 @@
+auth-header-missing = No se permite un encabezado de autenticación vacío
+bad-credentials = Credenciales inválidas
+business-plan-forbidden = Solo el administrador del sistema puede gestionar los planes de negocio
+business-plan-in-use = Este plan está asignado a un inquilino y no se puede eliminar
+business-plan-invalid = Datos del plan de negocio inválidos
+business-plan-not-found = Plan de negocio no encontrado
+country-not-supported = Todavía no hay datos de referencia disponibles para este país
+invalid-current-password = La contraseña actual es incorrecta
+invalid-jwt-token = Token JWT inválido
+invalid-parameter-value = Valor de parámetro inválido
+reference-data-unavailable = Los datos de referencia no están disponibles temporalmente
+required-header-value-missing = Falta un valor de encabezado obligatorio
+required-parameter-missing = Falta un parámetro obligatorio
+tenant-created-failed = No se pudo crear el inquilino
+tenant-not-found = Inquilino no encontrado
+tenant-update-failed = No se pudo actualizar el inquilino

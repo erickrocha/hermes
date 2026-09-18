@@ -66,7 +66,7 @@ pub async fn add(
     ),
     responses(
         (status = 200, description = "Tenant found", body = TenantJson),
-        (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -104,7 +104,7 @@ pub async fn get_by_id(
     ),
     responses(
         (status = 200, description = "Tenant found", body = TenantJson),
-        (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -176,7 +176,7 @@ pub async fn list_all(
     responses(
         (status = 200, description = "Tenant updated", body = TenantJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
-        (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -275,7 +275,7 @@ pub async fn add_plan(
         (status = 200, description = "Tenant's current plan, if one is set", body = Option<BusinessPlanJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 404, description = "Tenant not found", body = NotFoundErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))

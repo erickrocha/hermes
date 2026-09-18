@@ -150,9 +150,6 @@ impl TenantUseCase {
         if !valid_country_code(&tenant.country_code) {
             return Err(BusinessError::new("Country code must contain two letters".to_string()));
         }
-        if tenant.payment_grace_days.is_some_and(|days| days < 0) {
-            return Err(BusinessError::new("Payment grace days cannot be negative".to_string()));
-        }
         // valid_country_code above guarantees Some at this point.
         let country_code = tenant.country_code.clone().unwrap();
         let tax_id = validate_tax_id(&country_code, &tenant.tax_id)?;
@@ -174,7 +171,6 @@ impl TenantUseCase {
             country_code: tenant.country_code,
             // Omitting the field keeps the clinic's current grace rather than
             // silently resetting it to the column default.
-            payment_grace_days: tenant.payment_grace_days.or(existing.payment_grace_days),
             // A tenant's plan is set only through `set_plan` (HRMS-224,
             // PD-021) — the general update path always keeps it as-is,
             // regardless of what the caller sent.

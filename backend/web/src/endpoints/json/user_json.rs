@@ -15,7 +15,6 @@ pub struct UserJson {
     pub password: Option<String>,
     pub enabled: bool,
     #[serde(default)]
-    pub first_login: bool,
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,

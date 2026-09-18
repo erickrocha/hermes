@@ -5,7 +5,7 @@ import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
 import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
-import { AcceptInvitePage, LoginPage, PasswordPage } from './pages/AuthPages'
+import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
 import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage } from './pages/ManagementPages'
 import { SettingsPage } from './pages/SettingsPage'
@@ -13,7 +13,6 @@ import { SettingsPage } from './pages/SettingsPage'
 function Protected({ children, sysAdmin = false }: { children: ReactNode; sysAdmin?: boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
   if (!session) return <Navigate to="/login" replace />
-  if (session.firstLogin) return <Navigate to="/first-access" replace />
   if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/" replace />
   return <Shell>{children}</Shell>
 }
@@ -27,9 +26,8 @@ export default function App() {
   // isn't mounted here to un-apply it itself.
   useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
-    <Route path="/login" element={session ? <Navigate to={session.firstLogin ? '/first-access' : '/'} replace /> : <LoginPage />} />
+    <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
     <Route path="/accept-invite" element={<AcceptInvitePage />} />
-    <Route path="/first-access" element={session ? <PasswordPage firstAccess /> : <Navigate to="/login" replace />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/tenants" element={<Protected><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />

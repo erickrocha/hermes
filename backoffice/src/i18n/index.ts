@@ -4,6 +4,7 @@ import LanguageDetector from 'i18next-browser-languagedetector'
 
 import pt from './locales/pt.json'
 import en from './locales/en.json'
+import es from './locales/es.json'
 
 i18n
   .use(LanguageDetector)
@@ -14,9 +15,13 @@ i18n
       'pt-BR': { translation: pt },
       en: { translation: en },
       'en-US': { translation: en },
+      // PD-031: es sem região atende es-AR/es-MX/es-CO -- o mesmo que a
+      // negociação do backend passou a fazer.
+      es: { translation: es },
     },
     fallbackLng: 'pt',
-    supportedLngs: ['pt', 'pt-BR', 'en', 'en-US'],
+    supportedLngs: ['pt', 'pt-BR', 'en', 'en-US', 'es'],
+    nonExplicitSupportedLngs: true,
     interpolation: {
       escapeValue: false,
     },
@@ -29,7 +34,9 @@ i18n
 
 const syncDocumentLanguage = (language?: string) => {
   if (typeof document !== 'undefined') {
-    document.documentElement.lang = language?.startsWith('en') ? 'en-US' : 'pt-BR'
+    if (language?.startsWith('en')) document.documentElement.lang = 'en-US'
+    else if (language?.startsWith('es')) document.documentElement.lang = 'es'
+    else document.documentElement.lang = 'pt-BR'
   }
 }
 

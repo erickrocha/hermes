@@ -13,7 +13,6 @@ pub struct AccessToken {
     pub user_id: i64,
     pub role: Role,
     pub tenant_id: Option<i64>,
-    pub first_login: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

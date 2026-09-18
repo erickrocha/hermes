@@ -63,7 +63,6 @@ fn every_current_entity_is_named_in_english() {
     assert_entity_is_english(entity::user_entity::Entity);
     assert_entity_is_english(entity::tenant_entity::Entity);
     assert_entity_is_english(entity::business_plan_entity::Entity);
-    assert_entity_is_english(entity::business_plan_tier_entity::Entity);
     assert_entity_is_english(entity::province_entity::Entity);
     assert_entity_is_english(entity::city_entity::Entity);
 }

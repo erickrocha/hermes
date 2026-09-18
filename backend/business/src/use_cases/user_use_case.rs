@@ -1,5 +1,6 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
+use crate::commons::password;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
 use crate::domain::password_policy;
@@ -34,12 +35,11 @@ impl UserUseCase {
         }
         password_policy::validate_length(&user.password)?;
 
-        let encrypted_password = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST)
-            .map_err(|e| {
-                let msg = format!("Password encryption error: {}", e);
-                log::error!("[UserUseCase::create] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let encrypted_password = password::hash(&user.password).map_err(|e| {
+            let msg = format!("Password encryption error: {:?}", e);
+            log::error!("[UserUseCase::create] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         let user_to_save = User {
             password: encrypted_password,
@@ -74,12 +74,11 @@ impl UserUseCase {
             existing.password
         } else {
             password_policy::validate_length(&user.password)?;
-            bcrypt::hash(&user.password, bcrypt::DEFAULT_COST)
-                .map_err(|e| {
-                    let msg = format!("Password encryption error: {}", e);
-                    log::error!("[UserUseCase::update] {}", msg);
-                    BusinessError::new(msg)
-                })?
+            password::hash(&user.password).map_err(|e| {
+                let msg = format!("Password encryption error: {:?}", e);
+                log::error!("[UserUseCase::update] {}", msg);
+                BusinessError::new(msg)
+            })?
         };
 
         let updated_user = User {
@@ -89,7 +88,6 @@ impl UserUseCase {
             name: user.name.or(existing.name),
             password,
             enabled: user.enabled,
-            first_login: user.first_login,
             tenant_id: user.tenant_id,
             role: user.role,
             created_at: existing.created_at,
@@ -123,23 +121,21 @@ impl UserUseCase {
 
         let existing = self.find_by_id(id).await?;
 
-        if !bcrypt::verify(&current_password, existing.password.as_str()).unwrap_or(false) {
+        if !password::verify(&current_password, existing.password.as_str()) {
             let msg = "Current password is incorrect".to_string();
             log::error!("[UserUseCase::change_password] {}", msg);
             return Err(BusinessError::new(msg));
         }
 
-        let encrypted_password = bcrypt::hash(&new_password, bcrypt::DEFAULT_COST)
-            .map_err(|e| {
-                let msg = format!("Password encryption error: {}", e);
-                log::error!("[UserUseCase::change_password] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let encrypted_password = password::hash(&new_password).map_err(|e| {
+            let msg = format!("Password encryption error: {:?}", e);
+            log::error!("[UserUseCase::change_password] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         let updated_user = User {
             password: encrypted_password,
             updated_at: None,
-            first_login: false,
             ..existing
         };
 
@@ -220,7 +216,7 @@ impl UserUseCase {
         }
 
         let user_with_password_encrypted = User {
-            password: bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).unwrap(),
+            password: password::hash(&user.password).expect("password hashing cannot fail"),
             ..user
         };
 
@@ -299,7 +295,6 @@ impl UserUseCase {
                 name: existing_sysadmin.name,
                 password: sysadmin_password,
                 enabled: true,
-                first_login: existing_sysadmin.first_login,
                 tenant_id: existing_sysadmin.tenant_id,
                 role: Role::SysAdmin,
                 created_at: existing_sysadmin.created_at,
@@ -326,7 +321,6 @@ impl UserUseCase {
             name: Some("System Administrator".to_string()),
             password: sysadmin_password,
             enabled: true,
-            first_login: false,
             tenant_id: None,
             role: Role::SysAdmin,
             created_at: Some(Utc::now().naive_utc()),

@@ -11,7 +11,7 @@ use crate::routes::resource_routes::resources_routes;
 use crate::routes::tenant_routes::tenant_routes;
 use crate::routes::user_routes::user_routes;
 use axum::Router;
-use axum::http::{Method, header};
+use axum::http::{HeaderValue, Method, header};
 use axum::routing::get;
 use business::sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
 use migration::{Migrator, MigratorTrait};
@@ -105,6 +105,38 @@ fn welcome_route() -> Router<AppState> {
     Router::new().route("/", get(welcome))
 }
 
+/// Origens permitidas em produção, de `CORS_ALLOWED_ORIGINS` (lista separada por vírgula).
+/// `None` = sem lista configurada, o chamador libera qualquer origem (só desenvolvimento).
+fn parse_allowed_origins(raw: Option<String>) -> Option<Vec<HeaderValue>> {
+    let origins: Vec<HeaderValue> = raw?
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .filter_map(|origin| origin.parse().ok())
+        .collect();
+    (!origins.is_empty()).then_some(origins)
+}
+
+fn cors_allowed_origins() -> Option<Vec<HeaderValue>> {
+    parse_allowed_origins(env::var("CORS_ALLOWED_ORIGINS").ok())
+}
+
+/// O explorador interativo é conveniência de desenvolvimento: fica fora de produção
+/// salvo opt-in explícito. O documento OpenAPI em si não depende disto.
+fn swagger_ui_is_enabled(app_env: Option<String>, override_flag: Option<String>) -> bool {
+    if let Some(flag) = override_flag {
+        return flag.trim().eq_ignore_ascii_case("true");
+    }
+    !matches!(
+        app_env.as_deref().map(str::trim),
+        Some(env) if env.eq_ignore_ascii_case("production")
+    )
+}
+
+fn swagger_ui_enabled() -> bool {
+    swagger_ui_is_enabled(env::var("APP_ENV").ok(), env::var("SWAGGER_UI_ENABLED").ok())
+}
+
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
     // env::set_var("RUST_LOG", "debug");
@@ -119,8 +151,93 @@ async fn start() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to database");
 
-    // Multiple instances can boot concurrently (App Runner scale-out, rolling deploys).
-    // Serialize migrations with a DB-level advisory lock so they don't race on the same DDL.
+    // PD-033: migrations are a deliberate deploy step, not a boot side effect.
+    // Booting no longer applies them -- it refuses to start when the schema is
+    // behind, which keeps HRM-072's "never serve on a bad schema" guarantee
+    // without letting an application restart rewrite the schema by surprise.
+    let pending = Migrator::get_pending_migrations(&connection).await?;
+    if !pending.is_empty() {
+        let names: Vec<String> = pending.iter().map(|m| m.name().to_string()).collect();
+        anyhow::bail!(
+            "Database schema is {} migration(s) behind: {}. Run `hermes_server migrate` \
+             as a deploy step before starting the server (PD-033).",
+            names.len(),
+            names.join(", ")
+        );
+    }
+
+    // D-05: o seed roda fora de qualquer requisição. Com deny-by-default isso
+    // é `Denied`, então o alcance de plataforma passa a ser pedido aqui,
+    // explicitamente, em vez de herdado por omissão.
+    entity::audit::run_as_platform(
+        business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection),
+    )
+    .await;
+
+    let state = AppState {
+        conn: Arc::new(connection),
+    };
+
+    log::info!("Starting server...");
+
+    let cors = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            header::ORIGIN,
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+        ]);
+
+    let cors = match cors_allowed_origins() {
+        Some(origins) => cors.allow_origin(origins),
+        None => cors.allow_origin(Any),
+    };
+
+    let mut app = Router::new();
+    if swagger_ui_enabled() {
+        app = app.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+    }
+    let app = app
+        // Public routes (no authentication)
+        .merge(welcome_route())
+        .merge(auth_routes(state.clone()))
+        .merge(resources_routes(state.clone()))
+        .nest("/tenant", tenant_routes(state.clone()))
+        .nest("/business-plan", business_plan_routes(state.clone()))
+        .nest("/user", user_routes(state.clone()))
+        .layer(cors)
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(&server_url).await?;
+    log::info!("Server started on address {}", server_url);
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// PD-033: o passo de deploy. Mantém o lock consultivo porque dois operadores
+/// (ou dois jobs de deploy) podem disparar isto ao mesmo tempo — o que saiu do
+/// boot foi a aplicação automática, não a necessidade de serializar o DDL.
+#[tokio::main]
+async fn migrate() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+    dotenvy::dotenv().ok();
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let connection = Database::connect(&db_url)
+        .await
+        .expect("Failed to connect to database");
+
     let backend = connection.get_database_backend();
     let lock_row = connection
         .query_one_raw(Statement::from_string(
@@ -142,55 +259,20 @@ async fn start() -> anyhow::Result<()> {
         .ok();
 
     migration_result?;
-
-    business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection).await;
-
-    let state = AppState {
-        conn: Arc::new(connection),
-    };
-
-    log::info!("Starting server...");
-
-    let cors = CorsLayer::new()
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-            Method::HEAD,
-        ])
-        .allow_origin(Any)
-        .allow_headers([
-            header::CONTENT_TYPE,
-            header::AUTHORIZATION,
-            header::ACCEPT,
-            header::ORIGIN,
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-        ]);
-
-    let app = Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        // Public routes (no authentication)
-        .merge(welcome_route())
-        .merge(auth_routes(state.clone()))
-        .merge(resources_routes(state.clone()))
-        .nest("/tenant", tenant_routes(state.clone()))
-        .nest("/business-plan", business_plan_routes(state.clone()))
-        .nest("/user", user_routes(state.clone()))
-        .layer(cors)
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(&server_url).await?;
-    log::info!("Server started on address {}", server_url);
-    axum::serve(listener, app).await?;
-
+    log::info!("Migrations applied.");
     Ok(())
 }
 
 pub fn main() {
+    // PD-033: `migrate` applies the schema; no argument starts the server.
+    if env::args().nth(1).as_deref() == Some("migrate") {
+        if let Err(err) = migrate() {
+            log::error!("Migration failed: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // EPIC-XF-04-S03 (HRMS-023): a failed migration or an unavailable lock
     // must abort start-up visibly. Before this, `start()`'s error was
     // printed and `main` returned normally -- exit code 0, indistinguishable
@@ -254,5 +336,47 @@ mod openapi_contract_tests {
             documented, registered,
             "OpenAPI documentation and routes/*.rs have drifted apart (D-10) -- update whichever side is now wrong"
         );
+    }
+}
+
+#[cfg(test)]
+mod environment_gates_tests {
+    use super::{parse_allowed_origins, swagger_ui_is_enabled};
+
+    #[test]
+    fn no_origin_list_means_unrestricted() {
+        assert!(parse_allowed_origins(None).is_none());
+        assert!(parse_allowed_origins(Some("  ,  ".to_string())).is_none());
+    }
+
+    #[test]
+    fn origin_list_is_split_and_trimmed() {
+        let origins = parse_allowed_origins(Some(
+            " https://app.hermes.io , https://admin.hermes.io ".to_string(),
+        ))
+        .expect("two valid origins");
+        assert_eq!(origins.len(), 2);
+        assert_eq!(origins[0], "https://app.hermes.io");
+        assert_eq!(origins[1], "https://admin.hermes.io");
+    }
+
+    #[test]
+    fn swagger_ui_is_off_in_production_and_on_elsewhere() {
+        assert!(!swagger_ui_is_enabled(Some("production".to_string()), None));
+        assert!(!swagger_ui_is_enabled(Some(" PRODUCTION ".to_string()), None));
+        assert!(swagger_ui_is_enabled(Some("staging".to_string()), None));
+        assert!(swagger_ui_is_enabled(None, None));
+    }
+
+    #[test]
+    fn explicit_flag_overrides_the_environment() {
+        assert!(swagger_ui_is_enabled(
+            Some("production".to_string()),
+            Some("true".to_string())
+        ));
+        assert!(!swagger_ui_is_enabled(
+            Some("staging".to_string()),
+            Some("false".to_string())
+        ));
     }
 }

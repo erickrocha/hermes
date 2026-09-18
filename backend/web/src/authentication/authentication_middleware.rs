@@ -52,17 +52,6 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
         return Err(ExceptionResponse::Forbidden(locale.clone(),ErrorKey::InvalidParameterValue,));
     }
 
-    // EPIC-IA-06-S02 (HRMS-120): a user created with a caller-supplied
-    // password (PD-019's TenantOwner-creates-TenantUser path, and any admin
-    // creation) must set their own before reaching anything else. Before
-    // this, `first_login` was carried in the token and enforced only by the
-    // backoffice's `/first-access` redirect -- a UX affordance a bearer
-    // token and curl bypass entirely, the exact gap PD-015 already closed
-    // for business-plan administration.
-    if current_user.first_login && !allowed_before_password_is_set(req.method(), req.uri().path()) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PasswordChangeRequired));
-    }
-
     let audit_user = entity::audit::AuditUser {
         id: current_user.id.unwrap_or(0),
         email: current_user.email.clone(),
@@ -72,12 +61,6 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
     
     req.extensions_mut().insert(current_user);
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
-}
-
-/// The one route a first-login user may reach: the endpoint that lets them
-/// stop being one.
-fn allowed_before_password_is_set(method: &axum::http::Method, path: &str) -> bool {
-    method == axum::http::Method::PUT && path == "/user/change-password"
 }
 
 /// EPIC-XF-03-S01/S02/S03 (HRMS-018, HRMS-019, HRMS-020, D-6, U-013): the
@@ -93,8 +76,7 @@ fn is_public_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_before_password_is_set, is_public_path};
-    use axum::http::Method;
+    use super::is_public_path;
 
     #[test]
     fn public_paths_match_the_router_exactly() {
@@ -114,23 +96,5 @@ mod tests {
     fn signup_and_legal_documents_are_not_public_they_were_leftovers() {
         assert!(!is_public_path("/signup"));
         assert!(!is_public_path("/legal/documents"));
-    }
-
-    #[test]
-    fn allows_only_put_change_password() {
-        assert!(allowed_before_password_is_set(&Method::PUT, "/user/change-password"));
-    }
-
-    #[test]
-    fn rejects_other_methods_on_the_same_path() {
-        assert!(!allowed_before_password_is_set(&Method::GET, "/user/change-password"));
-        assert!(!allowed_before_password_is_set(&Method::POST, "/user/change-password"));
-    }
-
-    #[test]
-    fn rejects_every_other_path() {
-        assert!(!allowed_before_password_is_set(&Method::PUT, "/user/1"));
-        assert!(!allowed_before_password_is_set(&Method::GET, "/tenant"));
-        assert!(!allowed_before_password_is_set(&Method::GET, "/business-plan"));
     }
 }

@@ -87,7 +87,6 @@ pub async fn add(
     // password the caller sent (if any) is discarded here, never hashed or
     // stored.
     domain.password = AccountInviteUseCase::unguessable_secret();
-    domain.first_login = true;
 
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
     let created = match use_case.create(domain).await {

@@ -8,9 +8,9 @@ import { api } from './api'
 import App from './App'
 import type { Session } from './types'
 
-const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null, firstLogin: false }
-const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42, firstLogin: false }
-const tenantUserSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'driver.coord@transmega.com', uuid: 'user-uuid', name: 'Coordinator', userId: 3, role: 'TenantUser', tenantId: 42, firstLogin: false }
+const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null }
+const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42 }
+const tenantUserSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'driver.coord@transmega.com', uuid: 'user-uuid', name: 'Coordinator', userId: 3, role: 'TenantUser', tenantId: 42 }
 
 function sessionStore(session: Session | null) {
   return configureStore({
@@ -71,8 +71,4 @@ describe('App route guards (EPIC-BO-02, EPIC-BO-04)', () => {
     expect(screen.getByRole('button', { name: /sign in|entrar/i })).toBeInTheDocument()
   })
 
-  it('sends a first-login session straight to setting a password, bypassing every other route', () => {
-    renderAt('/plans', { ...sysAdminSession, firstLogin: true })
-    expect(screen.queryByText(/plans|planos/i)).not.toBeInTheDocument()
-  })
 })

@@ -11,7 +11,6 @@ export interface Session {
   userId: number
   role: Role
   tenantId?: number | null
-  firstLogin: boolean
 }
 
 export interface Tenant {
@@ -29,11 +28,9 @@ export interface Tenant {
   administrativeArea?: string
   postalCode?: string
   countryCode?: string
-  paymentGraceDays?: number
   businessPlanId?: number | null
 }
 
-export interface BusinessPlanTier { id?: number; upToUsers: number; pricePerUserInCents: number }
 export interface BusinessPlan {
   id?: number
   uuid?: string
@@ -42,7 +39,6 @@ export interface BusinessPlan {
   availableUsers: number
   periodDays: number
   paymentDate: string
-  tiers: BusinessPlanTier[]
 }
 export interface User {
   id?: number
@@ -51,7 +47,6 @@ export interface User {
   email: string
   password?: string
   enabled: boolean
-  firstLogin: boolean
   role: Role
   tenantId?: number | null
 }

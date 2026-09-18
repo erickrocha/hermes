@@ -140,7 +140,6 @@ mod tests {
             name: None,
             password: String::new(),
             enabled: true,
-            first_login: false,
             tenant_id,
             role,
             created_at: None,

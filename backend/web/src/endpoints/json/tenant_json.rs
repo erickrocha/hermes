@@ -23,7 +23,6 @@ pub struct TenantJson {
     pub zipcode: Option<String>,
     /// Days a customer keeps app access after a charge falls due. Omitting it
     /// on an update keeps the clinic's current value.
-    pub payment_grace_days: Option<i32>,
     /// The tenant's current plan. Read-only here — set only through
     /// `POST /tenant/{id}/plan` (PD-021); ignored on create/update.
     #[serde(skip_serializing_if = "Option::is_none")]

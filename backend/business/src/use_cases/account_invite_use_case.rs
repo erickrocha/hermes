@@ -42,7 +42,7 @@ impl AccountInviteUseCase {
     /// se a clínica emitir um convite novo: o anterior morre junto.
     ///
     /// Takes the domain `User` returned by `UserUseCase::create` (its
-    /// `password` is already the bcrypt hash at that point, which is exactly
+    /// `password` is already the stored hash at that point, which is exactly
     /// what the signing key needs) rather than the raw entity model -- there
     /// is no reason for a use case to reach past its own crate's domain type
     /// for a field both already carry under the same name.
@@ -102,15 +102,24 @@ impl AccountInviteUseCase {
             return Err(BusinessError::new("Invalid invite".to_string()));
         }
 
-        let hashed = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)
+        let hashed = crate::commons::password::hash(new_password)
             .map_err(|e| BusinessError::new(format!("Failed to hash password: {}", e)))?;
 
         let mut active: user_entity::ActiveModel = user.clone().into();
         active.password = Set(hashed);
-        active.first_login = Set(false);
         active.enabled = Set(true);
-        active
-            .update(db)
+        // D-05: `/accept-invite` é rota pública — não há sessão, logo não há
+        // escopo, logo a gravação seria recusada. O convidado age sobre a
+        // própria conta, então a escrita roda com a identidade dele: quem tem
+        // tenant grava dentro do próprio tenant, e o audit trail continua
+        // apontando para a pessoa, não para "system".
+        let actor = entity::audit::AuditUser {
+            id: user.id,
+            email: user.email.clone(),
+            tenant_id: user.tenant_id,
+            enforce_tenant: user.tenant_id.is_some(),
+        };
+        entity::audit::run_with_user(Some(actor), active.update(db))
             .await
             .map_err(|e| BusinessError::new(format!("Failed to set password: {}", e)))?;
 
@@ -174,7 +183,6 @@ mod tests {
             name: Some("New Hire".to_string()),
             password: "$2b$12$abcdefghijklmnopqrstuv".to_string(),
             enabled: true,
-            first_login: true,
             tenant_id: Some(1),
             role: Role::TenantUser,
             created_at: None,
