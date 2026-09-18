@@ -1,5 +1,6 @@
 use crate::domain::business_error::BusinessError;
 use crate::domain::password_policy;
+use crate::domain::user::User;
 use crate::gateway::user_gateway::UserGateway;
 use chrono::{DateTime, Utc};
 use entity::user_entity;
@@ -39,7 +40,13 @@ impl AccountInviteUseCase {
     /// chave de assinatura inclui o hash atual da senha, então **assim que o
     /// paciente define a senha o token deixa de validar sozinho**. O mesmo vale
     /// se a clínica emitir um convite novo: o anterior morre junto.
-    pub fn issue(user: &user_entity::Model) -> Result<AccountInvite, BusinessError> {
+    ///
+    /// Takes the domain `User` returned by `UserUseCase::create` (its
+    /// `password` is already the bcrypt hash at that point, which is exactly
+    /// what the signing key needs) rather than the raw entity model -- there
+    /// is no reason for a use case to reach past its own crate's domain type
+    /// for a field both already carry under the same name.
+    pub fn issue(user: &User) -> Result<AccountInvite, BusinessError> {
         let expires_at = Utc::now() + chrono::Duration::days(INVITE_VALIDITY_DAYS);
         let claims = InviteClaims {
             sub: user.email.clone(),
@@ -137,5 +144,105 @@ impl AccountInviteUseCase {
         let base = env::var("ACCESS_TOKEN_SECRET")
             .map_err(|_| BusinessError::new("ACCESS_TOKEN_SECRET must be set".to_string()))?;
         Ok(format!("{}:invite:{}", base, password_hash))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AccountInviteUseCase, INVITE_VALIDITY_DAYS};
+    use crate::domain::enums::Role;
+    use crate::domain::user::User;
+    use chrono::Utc;
+
+    // EPIC-IA-07/D-07: `issue` had no test at all before this -- unreachable
+    // code doesn't get exercised by accident. `ACCESS_TOKEN_SECRET` is set
+    // here rather than relied on from the environment: nothing else in this
+    // crate's test suite reads it, so this is the only place it needs a
+    // value.
+    fn with_access_token_secret<T>(run: impl FnOnce() -> T) -> T {
+        // SAFETY: test-only, single-threaded within this function's call,
+        // and no other test in this crate reads this variable.
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", "test-secret") };
+        run()
+    }
+
+    fn invited_user() -> User {
+        User {
+            id: Some(1),
+            uuid: Some("11111111-1111-1111-1111-111111111111".to_string()),
+            email: "new.hire@transmega.com".to_string(),
+            name: Some("New Hire".to_string()),
+            password: "$2b$12$abcdefghijklmnopqrstuv".to_string(),
+            enabled: true,
+            first_login: true,
+            tenant_id: Some(1),
+            role: Role::TenantUser,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn issues_a_token_valid_for_exactly_the_documented_window() {
+        with_access_token_secret(|| {
+            let before = Utc::now();
+            let invite = AccountInviteUseCase::issue(&invited_user()).unwrap();
+            assert!(!invite.token.is_empty());
+            let expected = before + chrono::Duration::days(INVITE_VALIDITY_DAYS);
+            let drift = (invite.expires_at - expected).num_seconds().abs();
+            assert!(drift < 5, "expected ~{INVITE_VALIDITY_DAYS}d validity, drift was {drift}s");
+        });
+    }
+
+    #[test]
+    fn the_token_carries_the_invited_email_and_the_invite_type_claim() {
+        // HRMS-053: an invite token must be unusable as an access token and
+        // vice versa -- `accept()` enforces this by checking `typ`, so the
+        // claim actually needs to be there and readable, not just present
+        // in the type definition.
+        use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Claims {
+            sub: String,
+            typ: String,
+        }
+
+        with_access_token_secret(|| {
+            let user = invited_user();
+            let invite = AccountInviteUseCase::issue(&user).unwrap();
+            let key = format!(
+                "{}:invite:{}",
+                std::env::var("ACCESS_TOKEN_SECRET").unwrap(),
+                user.password
+            );
+            let decoded = decode::<Claims>(
+                &invite.token,
+                &DecodingKey::from_secret(key.as_bytes()),
+                &Validation::new(Algorithm::HS512),
+            )
+            .unwrap();
+            assert_eq!(decoded.claims.sub, user.email);
+            assert_eq!(decoded.claims.typ, "invite");
+        });
+    }
+
+    #[test]
+    fn a_password_hash_change_produces_a_differently_signed_token() {
+        // This is PD-003's actual mechanism: the signing key is derived from
+        // the password hash, so an invite issued before a password change
+        // cannot be mistaken for one issued after -- accept() is what
+        // rejects the *old* token against the *new* hash, but the
+        // precondition for that (different signature) starts here.
+        with_access_token_secret(|| {
+            let before_reset = invited_user();
+            let after_reset = User { password: "$2b$12$totally-different-hash".to_string(), ..invited_user() };
+            let first = AccountInviteUseCase::issue(&before_reset).unwrap();
+            let second = AccountInviteUseCase::issue(&after_reset).unwrap();
+            assert_ne!(first.token, second.token);
+        });
     }
 }

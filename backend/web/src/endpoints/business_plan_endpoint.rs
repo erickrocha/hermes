@@ -40,7 +40,6 @@ pub(crate) fn response(plan: BusinessPlan) -> BusinessPlanJson {
         available_users: plan.available_users,
         period_days: plan.period_days,
         payment_date: plan.payment_date,
-        daily_ai_quota: plan.daily_ai_quota,
         created_at: plan
             .created_at
             .expect("persisted business plan has created_at"),
@@ -83,7 +82,6 @@ fn domain(payload: CreateBusinessPlanJson) -> BusinessPlan {
         available_users: payload.available_users,
         period_days: payload.period_days,
         payment_date: payload.payment_date,
-        daily_ai_quota: payload.daily_ai_quota,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -99,7 +97,6 @@ fn update_domain(payload: UpdateBusinessPlanJson) -> BusinessPlan {
         available_users: payload.available_users,
         period_days: payload.period_days,
         payment_date: payload.payment_date,
-        daily_ai_quota: payload.daily_ai_quota,
         tiers: payload.tiers,
     })
 }

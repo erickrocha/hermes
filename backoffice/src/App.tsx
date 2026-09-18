@@ -5,7 +5,7 @@ import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
 import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
-import { LoginPage, PasswordPage } from './pages/AuthPages'
+import { AcceptInvitePage, LoginPage, PasswordPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
 import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage } from './pages/ManagementPages'
 import { SettingsPage } from './pages/SettingsPage'
@@ -28,6 +28,7 @@ export default function App() {
   useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
     <Route path="/login" element={session ? <Navigate to={session.firstLogin ? '/first-access' : '/'} replace /> : <LoginPage />} />
+    <Route path="/accept-invite" element={<AcceptInvitePage />} />
     <Route path="/first-access" element={session ? <PasswordPage firstAccess /> : <Navigate to="/login" replace />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/tenants" element={<Protected><TenantsPage /></Protected>} />

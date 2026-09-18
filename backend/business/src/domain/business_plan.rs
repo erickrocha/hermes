@@ -29,7 +29,6 @@ pub struct BusinessPlan {
     pub available_users: i32,
     pub period_days: i32,
     pub payment_date: NaiveDate,
-    pub daily_ai_quota: i32,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -52,11 +51,6 @@ impl EntityMapper<BusinessPlan, Model, ActiveModel> for BusinessPlanEntityMapper
             available_users: Set(plan.available_users),
             period_days: Set(plan.period_days),
             payment_date: Set(plan.payment_date),
-            daily_ai_quota: Set(if plan.daily_ai_quota <= 0 {
-                4
-            } else {
-                plan.daily_ai_quota
-            }),
             created_at: NotSet,
             created_by: plan
                 .created_by
@@ -79,7 +73,6 @@ impl EntityMapper<BusinessPlan, Model, ActiveModel> for BusinessPlanEntityMapper
             available_users: model.available_users,
             period_days: model.period_days,
             payment_date: model.payment_date,
-            daily_ai_quota: model.daily_ai_quota,
             created_at: Some(model.created_at.naive_utc()),
             created_by: model.created_by,
             updated_at: Some(model.updated_at.naive_utc()),
@@ -100,7 +93,6 @@ impl EntityMapper<BusinessPlan, Model, ActiveModel> for BusinessPlanEntityMapper
             available_users: model.available_users.take().unwrap_or_default(),
             period_days: model.period_days.take().unwrap_or_default(),
             payment_date: model.payment_date.take().unwrap_or_default(),
-            daily_ai_quota: model.daily_ai_quota.take().unwrap_or(4),
             created_at: model.created_at.take().map(|value| value.naive_utc()),
             created_by: model.created_by.take().flatten(),
             updated_at: model.updated_at.take().map(|value| value.naive_utc()),

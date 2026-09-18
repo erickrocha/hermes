@@ -34,9 +34,9 @@ every future table, not only ones that will eventually replace part of operacao-
 ## Running it locally
 
 1. Start the database: `docker compose -f infra/dev/docker-compose.yml up -d`.
-2. Copy `backend/.env.example` to `backend/.env` and fill in real values — every variable
-   listed is required; the service refuses to start if one is missing (see "Configuration"
-   below).
+2. Copy `backend/.env.example` to `backend/.env` and fill in real values — most variables
+   listed are required and the service refuses to start if one is missing; the account-invite
+   email settings are the one exception (see "Configuration" below).
 3. Run the API: `cargo run --manifest-path backend/Cargo.toml`. Migrations run automatically
    at start-up. Swagger UI is served at `/swagger-ui` once it's up.
 4. Run the console: see [`backoffice/README.md`](backoffice/README.md).
@@ -51,6 +51,12 @@ value aborts start-up rather than silently defaulting (`DATABASE_URL`, `HOST`, `
 
 The platform administrator account (`SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`) is provisioned, or
 re-pointed if the configured email changes, on every boot.
+
+**Account-invite email is the one non-fail-fast exception.** `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
+`SMTP_PASSWORD`/`SMTP_FROM`/`BACKOFFICE_BASE_URL` are read lazily by `POST /user`, not at boot.
+Without them, creating a user still works — the account and its 7-day invite token are created either
+way — the server just can't email the link, and says so loudly in the logs rather than silently
+dropping it. See `business/src/commons/email_sender.rs` for the reasoning.
 
 ## Verification
 

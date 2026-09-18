@@ -28,11 +28,6 @@ impl BusinessPlanUseCase {
                 "Period days must be greater than zero".to_string(),
             ));
         }
-        if plan.daily_ai_quota <= 0 {
-            return Err(BusinessError::new(
-                "Daily AI quota must be greater than zero".to_string(),
-            ));
-        }
         if plan.price_in_cents < 0 {
             return Err(BusinessError::new(
                 "Business plan prices cannot be negative".to_string(),
@@ -162,7 +157,6 @@ mod tests {
             available_users: 10,
             period_days: 30,
             payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap(),
-            daily_ai_quota: 4,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -204,10 +198,6 @@ mod tests {
 
         let mut plan = valid_plan();
         plan.period_days = 0;
-        assert!(BusinessPlanUseCase::validate(&mut plan).is_err());
-
-        let mut plan = valid_plan();
-        plan.daily_ai_quota = 0;
         assert!(BusinessPlanUseCase::validate(&mut plan).is_err());
     }
 

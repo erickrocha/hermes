@@ -29,7 +29,7 @@ describe('PlanEditorPage price editing', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
   it('shows a loaded plan price in currency units, not raw cents', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', dailyAiQuota: 4, tiers: [{ id: 1, upToUsers: 10, pricePerUserInCents: 500 }] } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', tiers: [{ id: 1, upToUsers: 10, pricePerUserInCents: 500 }] } } as never)
 
     render(
       <Provider store={store}>
@@ -45,7 +45,7 @@ describe('PlanEditorPage price editing', () => {
   })
 
   it('converts a typed currency amount back into cents on save', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', dailyAiQuota: 4, tiers: [] } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01', tiers: [] } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
 
     render(
@@ -112,12 +112,15 @@ describe('UserEditorPage role-conditional creation (EPIC-BO-02)', () => {
     )
     expect(screen.queryByText('TenantOwner')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    // EPIC-IA-07/D-07: no password field on creation -- the account is
+    // invite-only, never given a caller-set password.
+    expect(screen.queryByLabelText(/temporary password|senha tempor|new password|nova senha/i)).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText(/name|nome/i), { target: { value: 'New Driver Coordinator' } })
     fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'coordinator@transmega.com' } })
-    fireEvent.change(screen.getByLabelText(/temporary password|senha tempor/i), { target: { value: 'temp1234' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
 
     await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ role: 'TenantUser', tenantId: 42 })))
+    expect(post).not.toHaveBeenCalledWith('/user', expect.objectContaining({ password: expect.anything() }))
   })
 })

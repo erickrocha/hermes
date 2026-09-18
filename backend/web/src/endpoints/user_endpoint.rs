@@ -11,6 +11,7 @@ use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use business::commons::email_sender::EmailSender;
 use business::domain::authorization::{
     can_administer_user, can_create_user_with_role, can_reassign_role, CreationTenant,
 };
@@ -18,8 +19,10 @@ use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::user_gateway::UserGateway;
+use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
 use business::use_cases::user_use_case::UserUseCase;
+use std::env;
 
 #[utoipa::path(
     post,
@@ -58,10 +61,6 @@ pub async fn add(
     match creation_tenant {
         CreationTenant::Fixed(tenant_id) => {
             domain.tenant_id = tenant_id;
-            // A new platform administrator (no tenant) needs no invitation
-            // step; a tenant user created into an existing tenant does
-            // (HRMS-120).
-            domain.first_login = tenant_id.is_some();
         }
         CreationTenant::CallerChosen => {
             let Some(tenant_id) = domain.tenant_id else {
@@ -78,18 +77,79 @@ pub async fn add(
                 ));
             }
             domain.tenant_id = Some(tenant_id);
-            domain.first_login = true;
         }
     }
 
+    // EPIC-IA-07/D-07 (PD-002, HRM-050/HRMS-123): every account created
+    // through this endpoint -- administrator or tenant user alike -- is
+    // provisioned, never self-service. It is born with a secret nobody
+    // knows and the only way in is the invitation issued below; whatever
+    // password the caller sent (if any) is discarded here, never hashed or
+    // stored.
+    domain.password = AccountInviteUseCase::unguessable_secret();
+    domain.first_login = true;
+
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    match use_case.create(domain).await {
-        Ok(user) => Ok((StatusCode::CREATED, Json(UserMapper::json(user)))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+    let created = match use_case.create(domain).await {
+        Ok(user) => user,
+        Err(_) => {
+            return Err(ExceptionResponse::BadRequest(
+                locale,
+                ErrorKey::RequiredParameterMissing,
+            ));
+        }
+    };
+
+    issue_and_send_invite(&created);
+
+    Ok((StatusCode::CREATED, Json(UserMapper::json(created))))
+}
+
+/// Best-effort: a mail-server outage must not fail account creation (the
+/// account and its 7-day invite token already exist and are valid either
+/// way) -- but it must never fail *silently*. Every failure path logs the
+/// recipient and reason. See `business::commons::email_sender` for why this
+/// isn't fail-fast at boot the way `ACCESS_TOKEN_SECRET` is.
+fn issue_and_send_invite(user: &User) {
+    let invite = match AccountInviteUseCase::issue(user) {
+        Ok(invite) => invite,
+        Err(e) => {
+            log::error!(
+                "[user_endpoint::add] Failed to issue invite for {}: {}",
+                user.email,
+                e
+            );
+            return;
+        }
+    };
+
+    let base_url = env::var("BACKOFFICE_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+    let accept_url = format!("{base_url}/accept-invite?token={}", invite.token);
+    let email = user.email.clone();
+
+    // Detached: the caller (an admin creating a user) gets their 201 back
+    // without waiting on a mail server's round trip.
+    tokio::spawn(async move {
+        match EmailSender::from_env() {
+            Ok(sender) => {
+                if let Err(e) = sender.send_invite(&email, &accept_url).await {
+                    log::error!(
+                        "[user_endpoint::add] Failed to send invite email to {}: {}",
+                        email,
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!(
+                    "[user_endpoint::add] Cannot send invite email to {}: {}",
+                    email,
+                    e
+                );
+            }
+        }
+    });
 }
 
 #[utoipa::path(

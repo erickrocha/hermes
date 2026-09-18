@@ -42,7 +42,6 @@ export interface BusinessPlan {
   availableUsers: number
   periodDays: number
   paymentDate: string
-  dailyAiQuota: number
   tiers: BusinessPlanTier[]
 }
 export interface User {

@@ -12,7 +12,6 @@ pub struct Model {
     pub available_users: i32,
     pub period_days: i32,
     pub payment_date: Date,
-    pub daily_ai_quota: i32,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,
