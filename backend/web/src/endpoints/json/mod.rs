@@ -8,3 +8,5 @@ pub mod change_password_request;
 pub mod business_plan_json;
 pub mod login_request;
 pub mod refresh_token_request;
+pub mod page_json;
+pub mod reference_json;

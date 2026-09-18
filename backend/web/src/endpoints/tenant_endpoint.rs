@@ -1,6 +1,7 @@
 use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
@@ -10,7 +11,7 @@ use crate::endpoints::json::business_plan_json::BusinessPlanJson;
 use crate::endpoints::json::tenant_json::{SetTenantPlanJson, TenantJson};
 use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::authorization::{can_access_tenant, can_create_tenant, can_set_tenant_plan};
 use business::domain::enums::Role;
@@ -137,8 +138,9 @@ pub async fn get_by_uuid(
     get,
     tag = "Tenant",
     path = "/tenant",
+    params(PageQuery),
     responses(
-        (status = 200, description = "List of tenants", body = Vec<TenantJson>),
+        (status = 200, description = "A page of tenants (PD-028)", body = PageJson<TenantJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -147,21 +149,32 @@ pub async fn get_by_uuid(
 )]
 pub async fn list_all(
     state: State<AppState>,
+    Query(page_query): Query<PageQuery>,
     Extension(current_user): Extension<User>,
-) -> HttpResponse<Json<Vec<TenantJson>>> {
+) -> HttpResponse<Json<PageJson<TenantJson>>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+    let (page, page_size) = (page_query.page(), page_query.page_size());
+    let search = page_query.search();
+
+    // HRM-092: um caller preso a um tenant vê exatamente o seu, então a
+    // "página" dele tem no máximo uma linha — paginar não muda isso.
     if let Some(tenant_id) = current_user.tenant_id {
         return match use_case.find_by_id(tenant_id).await {
-            Ok(tenant) => Ok(Json(vec![TenantMapper::json(tenant)])),
-            Err(_) => Ok(Json(Vec::new())),
+            Ok(tenant) => Ok(Json(PageJson::new(vec![TenantMapper::json(tenant)], 0, page_size, 1))),
+            Err(_) => Ok(Json(PageJson::new(Vec::new(), 0, page_size, 0))),
         };
     }
     if current_user.role != Role::SysAdmin {
-        return Ok(Json(Vec::new()));
+        return Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)));
     }
-    match use_case.find_all().await {
-        Ok(tenants) => Ok(Json(TenantMapper::json_vec(tenants))),
-        Err(_) => Ok(Json(Vec::new())),
+    match use_case.find_page(page, page_size, search.as_deref()).await {
+        Ok((tenants, total)) => Ok(Json(PageJson::new(
+            TenantMapper::json_vec(tenants),
+            page,
+            page_size,
+            total,
+        ))),
+        Err(_) => Ok(Json(PageJson::new(Vec::new(), page, page_size, 0))),
     }
 }
 

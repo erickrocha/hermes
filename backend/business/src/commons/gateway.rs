@@ -1,4 +1,4 @@
-use sea_orm::{ColumnTrait, DbErr, DeleteMany, DeleteResult, EntityTrait, QueryFilter, Select};
+use sea_orm::{ColumnTrait, DbErr, DeleteMany, DeleteResult, EntityTrait, PaginatorTrait, QueryFilter, Select};
 use sea_orm::sea_query::Expr;
 use sea_orm::prelude::async_trait::async_trait;
 use entity::audit;
@@ -11,7 +11,9 @@ use entity::audit;
 // method that reads or deletes rows must also call `tenant_select`/
 // `tenant_delete` below, or the write-side stamping buys nothing on the read
 // side. There is deliberately no compiler or test enforcement pairing the
-// two yet (AD-015's own stated risk) — `UserGateway` is the reference
+// two in the compiler — but since D-09 there IS a test that pairs them:
+// `business/tests/tenant_scoping_rule.rs` fails if an entity carrying a
+// `tenant_id` skips either half. `UserGateway` is the reference
 // implementation to copy when a new tenant-owned table is added. Today
 // `user` is the only entity using the tenant macro; see D-7 in
 // `01-project_truth/hermes/04-unknowns/open-questions.md`.
@@ -35,6 +37,27 @@ where
         audit::TenantScope::Tenant(id) => query.filter(tenant_column.eq(id)),
         audit::TenantScope::Denied => query.filter(Expr::cust("1 = 0")),
     }
+}
+
+/// PD-028: uma página e a contagem total na mesma consulta paginada, para que
+/// a contagem não possa discordar das linhas devolvidas (duas consultas
+/// separadas veem estados diferentes sob escrita concorrente).
+///
+/// `page` é base zero, igual ao `pageIndex` do TanStack Table no console.
+pub async fn fetch_page<E, M>(
+    query: Select<E>,
+    db: &sea_orm::DbConn,
+    page: u64,
+    page_size: u64,
+) -> Result<(Vec<M>, u64), DbErr>
+where
+    E: EntityTrait<Model = M>,
+    M: sea_orm::FromQueryResult + Sized + Send + Sync,
+{
+    let paginator = query.paginate(db, page_size.max(1));
+    let total_items = paginator.num_items().await?;
+    let items = paginator.fetch_page(page).await?;
+    Ok((items, total_items))
 }
 
 pub fn tenant_delete<E, C>(query: DeleteMany<E>, tenant_column: C) -> DeleteMany<E>

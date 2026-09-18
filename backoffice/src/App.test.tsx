@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import './i18n'
 import { api } from './api'
 import App from './App'
+import { emptyPage } from './types'
 import type { Session } from './types'
 
 const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null }
@@ -16,7 +17,7 @@ function sessionStore(session: Session | null) {
   return configureStore({
     reducer: {
       auth: (state = { session, loading: false, error: '' }) => state,
-      data: (state = { tenants: [], plans: [], users: [], provinces: [], cities: [], loading: false, error: '' }) => state,
+      data: (state = { tenants: emptyPage(), plans: emptyPage(), users: emptyPage(), provinces: [], cities: [], loading: false, error: '' }) => state,
     },
   })
 }

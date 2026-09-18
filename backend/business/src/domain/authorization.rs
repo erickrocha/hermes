@@ -54,6 +54,14 @@ pub fn can_manage_business_plan_catalogue(user: &User) -> bool {
     is_unbound_sys_admin(user)
 }
 
+/// PD-027: reference data (provinces, cities) is platform-global, exactly like
+/// the business-plan catalogue, so the same rule governs it -- only an unbound
+/// platform administrator may write it. A tenant editing the country's city
+/// list would be editing every other tenant's address options.
+pub fn can_manage_reference_data(user: &User) -> bool {
+    is_unbound_sys_admin(user)
+}
+
 /// `POST /tenant/{id}/plan` -- only an unbound platform administrator may
 /// set a tenant's plan (HRMS-224, PD-019, PD-021).
 pub fn can_set_tenant_plan(user: &User) -> bool {
@@ -197,6 +205,7 @@ mod tests {
             assert_eq!(can_create_tenant(&actor), expected);
             assert_eq!(can_manage_business_plan_catalogue(&actor), expected);
             assert_eq!(can_set_tenant_plan(&actor), expected);
+            assert_eq!(can_manage_reference_data(&actor), expected);
         }
     }
 

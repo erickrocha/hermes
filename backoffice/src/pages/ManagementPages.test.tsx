@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '../i18n'
 import { api } from '../api'
 import { store } from '../store'
+import { emptyPage } from '../types'
 import type { Session, Tenant } from '../types'
 import { PlanEditorPage, UserEditorPage, amountToCents, centsToAmount } from './ManagementPages'
 
@@ -71,10 +72,11 @@ const oneTenant: Tenant = { id: 42, businessName: 'Transmega', companyName: 'Tra
 // thunks UserEditorPage dispatches (loadTenants), only to hold the session
 // and tenant list the page reads via useSelector.
 function sessionStore(session: Session, tenants: Tenant[] = []) {
+  const tenantPage = { ...emptyPage<Tenant>(), items: tenants, totalItems: tenants.length, totalPages: tenants.length ? 1 : 0 }
   return configureStore({
     reducer: {
       auth: (state = { session, loading: false, error: '' }) => state,
-      data: (state = { tenants, plans: [], users: [], provinces: [], cities: [], loading: false, error: '' }) => state,
+      data: (state = { tenants: tenantPage, plans: emptyPage(), users: emptyPage(), provinces: [], cities: [], loading: false, error: '' }) => state,
     },
   })
 }

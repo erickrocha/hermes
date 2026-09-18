@@ -4,11 +4,12 @@ use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::business_plan_json::{
     BusinessPlanJson, CreateBusinessPlanJson, UpdateBusinessPlanJson,
 };
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
 };
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::authorization::can_manage_business_plan_catalogue;
 use business::domain::business_plan::BusinessPlan;
@@ -117,8 +118,9 @@ pub async fn add(
     get,
     tag = "Business Plan",
     path = "/business-plan",
+    params(PageQuery),
     responses(
-        (status = 200, body = Vec<BusinessPlanJson>),
+        (status = 200, body = PageJson<BusinessPlanJson>),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson)
     ),
@@ -126,14 +128,24 @@ pub async fn add(
 )]
 pub async fn list_all(
     State(state): State<AppState>,
+    Query(page_query): Query<PageQuery>,
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
-) -> HttpResponse<Json<Vec<BusinessPlanJson>>> {
+) -> HttpResponse<Json<PageJson<BusinessPlanJson>>> {
     authorize(&user, &locale)?;
+    let (page, page_size) = (page_query.page(), page_query.page_size());
+    let search = page_query.search();
     use_case(&state)
-        .find_all()
+        .find_page(page, page_size, search.as_deref())
         .await
-        .map(|plans| Json(plans.into_iter().map(response).collect()))
+        .map(|(plans, total)| {
+            Json(PageJson::new(
+                plans.into_iter().map(response).collect(),
+                page,
+                page_size,
+                total,
+            ))
+        })
         .map_err(|error| map_error(locale, &error.message))
 }
 

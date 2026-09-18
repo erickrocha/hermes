@@ -115,6 +115,16 @@ impl TenantUseCase {
         }
     }
 
+    /// PD-028: uma página de tenants mais o total.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<Tenant>, u64), BusinessError> {
+        let (entities, total) = self.gateway.find_page(page, page_size, search).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[TenantUseCase::find_page] {}", msg);
+            BusinessError::new(msg)
+        })?;
+        Ok((TenantEntityMapper::from_models(entities), total))
+    }
+
     pub async fn find_all(&self) -> Result<Vec<Tenant>, BusinessError> {
         log::info!("[TenantUseCase::find_all] Executing find_all tenants");
 

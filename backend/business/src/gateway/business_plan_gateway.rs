@@ -1,4 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
+use crate::commons::gateway::fetch_page;
 use crate::commons::functions::string_to_bytes;
 use crate::domain::business_plan::{BusinessPlan, BusinessPlanEntityMapper};
 use entity::business_plan_entity::Model as BusinessPlanEntity;
@@ -33,6 +34,16 @@ impl BusinessPlanGateway {
             .filter(business_plan_entity::Column::Uuid.eq(string_to_bytes(uuid)))
             .one(&self.db)
             .await
+    }
+
+    /// PD-028.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<business_plan_entity::Model>, u64), DbErr> {
+        let mut query = business_plan_entity::Entity::find()
+            .order_by_desc(business_plan_entity::Column::Id);
+        if let Some(term) = search {
+            query = query.filter(business_plan_entity::Column::Name.contains(term));
+        }
+        fetch_page(query, &self.db, page, page_size).await
     }
 
     pub async fn find_all(&self) -> Result<Vec<business_plan_entity::Model>, DbErr> {

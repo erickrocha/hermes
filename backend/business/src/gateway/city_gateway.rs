@@ -1,6 +1,6 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::Gateway;
+use crate::commons::gateway::{fetch_page, Gateway};
 use crate::domain::city::{City, CityEntityMapper};
 use entity::city_entity;
 use entity::prelude::CityEntity as CityQuery;
@@ -14,6 +14,10 @@ pub struct CityGateway {
 impl CityGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
+    }
+
+    pub fn db(&self) -> &DbConn {
+        &self.db
     }
 
     pub async fn find_by_province_id(&self, province_id: i32) -> Result<Vec<city_entity::Model>, DbErr> {
@@ -56,6 +60,32 @@ impl Gateway<City, city_entity::Model, city_entity::ActiveModel> for CityGateway
         CityQuery::find()
             .order_by_asc(city_entity::Column::Name)
             .all(&self.db)
+            .await
+    }
+}
+
+impl CityGateway {
+    /// PD-028.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<city_entity::Model>, u64), DbErr> {
+        let mut query = CityQuery::find().order_by_asc(city_entity::Column::Name);
+        if let Some(term) = search {
+            query = query.filter(city_entity::Column::Name.contains(term));
+        }
+        fetch_page(query, &self.db, page, page_size).await
+    }
+}
+
+impl CityGateway {
+    /// Chave de negócio da importação: nome dentro da província.
+    pub async fn find_by_name(
+        &self,
+        province_id: i64,
+        name: &str,
+    ) -> Result<Option<city_entity::Model>, DbErr> {
+        CityQuery::find()
+            .filter(city_entity::Column::ProvinceId.eq(province_id))
+            .filter(city_entity::Column::Name.eq(name))
+            .one(&self.db)
             .await
     }
 }

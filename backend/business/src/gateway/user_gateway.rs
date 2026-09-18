@@ -1,11 +1,11 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{tenant_delete, tenant_select, Gateway};
+use crate::commons::gateway::{fetch_page, tenant_delete, tenant_select, Gateway};
 use crate::domain::user::{User, UserEntityMapper};
 use entity::prelude::UserEntity as UserQuery;
 use entity::user_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+use sea_orm::{Condition, ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
 
 pub struct UserGateway {
     db: DbConn,
@@ -53,6 +53,23 @@ impl Gateway<User, user_entity::Model, user_entity::ActiveModel> for UserGateway
 
     async fn find_all(&self) -> Result<Vec<user_entity::Model>, DbErr> {
         tenant_select(UserQuery::find(), user_entity::Column::TenantId).all(&self.db).await
+    }
+}
+
+impl UserGateway {
+    /// PD-028. Continua passando por `tenant_select`: paginar não pode ser um
+    /// caminho de leitura que escapa do escopo de tenant.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<user_entity::Model>, u64), DbErr> {
+        let mut query = tenant_select(UserQuery::find(), user_entity::Column::TenantId)
+            .order_by_desc(user_entity::Column::Id);
+        if let Some(term) = search {
+            query = query.filter(
+                Condition::any()
+                    .add(user_entity::Column::Name.contains(term))
+                    .add(user_entity::Column::Email.contains(term)),
+            );
+        }
+        fetch_page(query, &self.db, page, page_size).await
     }
 }
 

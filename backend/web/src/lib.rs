@@ -66,10 +66,15 @@ impl Modify for SecurityAddon {
 		endpoints::user_endpoint::update,
 		endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
+        endpoints::province_endpoint::list_page,
         endpoints::province_endpoint::get_by_id,
+        endpoints::province_endpoint::save,
+        endpoints::province_endpoint::import,
         endpoints::city_endpoint::list_all,
         endpoints::city_endpoint::get_by_province,
-        endpoints::city_endpoint::get_by_id
+        endpoints::city_endpoint::get_by_id,
+        endpoints::city_endpoint::save,
+        endpoints::city_endpoint::import
 	),
 	components(
 		schemas(
@@ -137,11 +142,25 @@ fn swagger_ui_enabled() -> bool {
     swagger_ui_is_enabled(env::var("APP_ENV").ok(), env::var("SWAGGER_UI_ENABLED").ok())
 }
 
+/// A missing `.env` is normal (production takes its environment from the
+/// platform). A *malformed* one is not: dotenvy stops at the first bad line and
+/// silently skips everything after it. `.ok()` used to hide that, and an
+/// unquoted `SMTP_FROM=Hermes <...>` meant every variable below it -- including
+/// `APP_ENV` and `CORS_ALLOWED_ORIGINS` -- was never loaded, so a production
+/// posture written in `.env` quietly fell back to Swagger on and CORS `*`.
+fn load_dotenv() -> anyhow::Result<()> {
+    match dotenvy::dotenv() {
+        Ok(_) => Ok(()),
+        Err(error) if error.not_found() => Ok(()),
+        Err(error) => anyhow::bail!("Refusing to start: .env is malformed ({error}). Quote values that contain spaces or <>."),
+    }
+}
+
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
     // env::set_var("RUST_LOG", "debug");
     tracing_subscriber::fmt::init();
-    dotenvy::dotenv().ok();
+    load_dotenv()?;
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let host = env::var("HOST").expect("HOST is not set in .env file");
     let port = env::var("PORT").expect("PORT is not set in .env file");
@@ -232,7 +251,7 @@ async fn start() -> anyhow::Result<()> {
 #[tokio::main]
 async fn migrate() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    dotenvy::dotenv().ok();
+    load_dotenv()?;
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let connection = Database::connect(&db_url)
         .await
@@ -302,35 +321,68 @@ mod openapi_contract_tests {
     use std::collections::BTreeSet;
     use utoipa::OpenApi as _;
 
-    fn actually_registered_paths() -> BTreeSet<&'static str> {
-        [
-            "/login",
-            "/refresh",
-            "/accept-invite",
-            "/province",
-            "/province/{id}",
-            "/cities",
-            "/cities/by-province/{province_id}",
-            "/city/{id}",
-            "/tenant",
-            "/tenant/{id}",
-            "/tenant/uuid/{uuid}",
-            "/tenant/{id}/plan",
-            "/business-plan",
-            "/business-plan/{id}",
-            "/business-plan/uuid/{uuid}",
-            "/user",
-            "/user/{id}",
-            "/user/change-password",
-        ]
-        .into_iter()
-        .collect()
+    /// Lê as rotas dos próprios `routes/*.rs` em vez de repetir a lista à mão.
+    ///
+    /// A versão anterior era um array digitado, e por isso o teste podia passar
+    /// **com** drift: cinco rotas de PD-027 entraram sem documentação e a suíte
+    /// seguiu verde, porque ninguém tinha atualizado nenhum dos dois lados.
+    /// Uma constante mantida à mão não prova nada sobre o router — que é
+    /// exatamente a crítica que o defeito D-10 fez a AD-006.
+    fn actually_registered_paths() -> BTreeSet<String> {
+        let routes_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");
+        let mut paths = BTreeSet::new();
+
+        for entry in std::fs::read_dir(&routes_dir).expect("routes directory is readable") {
+            let file = entry.expect("readable dir entry").path();
+            if file.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&file).expect("readable route file");
+            let (prefix, source) = nest_prefix(&source, &file);
+            for literal in route_literals(&source) {
+                // `.route("/")` dentro de um `nest` é a raiz do prefixo:
+                // `/tenant`, não `/tenant/`.
+                let full = format!("{prefix}{literal}");
+                let full = if !prefix.is_empty() && full.ends_with('/') {
+                    full.trim_end_matches('/').to_string()
+                } else {
+                    full
+                };
+                paths.insert(full);
+            }
+        }
+        paths
+    }
+
+    /// `.route("/x", ...)` e `.nest("/tenant", ...)` — só os literais.
+    fn route_literals(source: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for (index, _) in source.match_indices(".route(\"") {
+            let start = index + ".route(\"".len();
+            if let Some(end) = source[start..].find('"') {
+                found.push(source[start..start + end].to_string());
+            }
+        }
+        found
+    }
+
+    /// Os routers de recurso são montados sob um prefixo em `lib.rs`; o nome do
+    /// arquivo diz qual, para o caminho documentado bater com o servido.
+    fn nest_prefix<'a>(source: &'a str, file: &std::path::Path) -> (&'static str, &'a str) {
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        let prefix = match stem {
+            "tenant_routes" => "/tenant",
+            "business_plan_routes" => "/business-plan",
+            "user_routes" => "/user",
+            _ => "",
+        };
+        (prefix, source)
     }
 
     #[test]
     fn documented_paths_match_the_registered_routes() {
         let openapi = ApiDoc::openapi();
-        let documented: BTreeSet<&str> = openapi.paths.paths.keys().map(String::as_str).collect();
+        let documented: BTreeSet<String> = openapi.paths.paths.keys().cloned().collect();
         let registered = actually_registered_paths();
         assert_eq!(
             documented, registered,

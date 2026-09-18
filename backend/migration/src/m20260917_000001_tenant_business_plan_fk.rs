@@ -10,7 +10,13 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Tenant::Table)
-                    .add_column(ColumnDef::new(Tenant::BusinessPlanId).big_integer().null())
+                    // INT, não BIGINT: MariaDB exige tipos idênticos nos dois
+                    // lados de uma FK, e todas as chaves primárias deste schema
+                    // são INT (`pk_auto(..).integer()`). Com BIGINT aqui a
+                    // constraint falhava com errno 150 e a cadeia inteira de
+                    // migrações não subia em banco novo — nenhum ambiente podia
+                    // ser provisionado do zero.
+                    .add_column(ColumnDef::new(Tenant::BusinessPlanId).integer().null())
                     .add_foreign_key(
                         TableForeignKey::new()
                             .name("fk_tenant_business_plan")

@@ -64,6 +64,15 @@ impl BusinessPlanUseCase {
             .ok_or_else(|| BusinessError::new("Business plan not found".to_string()))
     }
 
+    /// PD-028.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<BusinessPlan>, u64), BusinessError> {
+        let (entities, total) = self.gateway.find_page(page, page_size, search).await.map_err(db_error)?;
+        Ok((
+            entities.into_iter().map(BusinessPlanEntityMapper::from_model).collect(),
+            total,
+        ))
+    }
+
     pub async fn find_all(&self) -> Result<Vec<BusinessPlan>, BusinessError> {
         self.gateway
             .find_all()

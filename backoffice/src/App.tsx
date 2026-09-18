@@ -9,6 +9,7 @@ import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
 import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage } from './pages/ManagementPages'
 import { SettingsPage } from './pages/SettingsPage'
+import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
 function Protected({ children, sysAdmin = false }: { children: ReactNode; sysAdmin?: boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
@@ -29,6 +30,7 @@ export default function App() {
     <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
     <Route path="/accept-invite" element={<AcceptInvitePage />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
+    <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
     <Route path="/tenants" element={<Protected><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:id/edit" element={<Protected><TenantEditorPage /></Protected>} />

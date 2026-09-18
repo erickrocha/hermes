@@ -6,6 +6,12 @@ use axum::Json;
 use axum::extract::Extension;
 use axum::extract::{Path, Query, State};
 use business::gateway::province_gateway::ProvinceGateway;
+use business::domain::authorization::can_manage_reference_data;
+use business::domain::province::{normalize_country_code, Province};
+use business::domain::user::User;
+use business::use_cases::reference_import::ImportOutcome;
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
+use crate::endpoints::json::reference_json::ImportResultJson;
 use business::use_cases::province_use_case::ProvinceUseCase;
 use crate::endpoints::json::error_response_json::{BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson, UnauthorizedErrorJson};
 use crate::endpoints::json::province_json::ProvinceJson;
@@ -15,12 +21,6 @@ use crate::endpoints::json::province_json::ProvinceJson;
 pub struct ProvinceQueryParams {
     /// ISO 3166-1 alpha-2 country code.
     pub country_code: String,
-}
-
-fn normalize_country_code(value: &str) -> Option<String> {
-    let normalized = value.trim().to_ascii_uppercase();
-    (normalized.len() == 2 && normalized.bytes().all(|byte| byte.is_ascii_alphabetic()))
-        .then_some(normalized)
 }
 
 #[utoipa::path(
@@ -102,4 +102,115 @@ mod tests {
             assert_eq!(normalize_country_code(invalid), None);
         }
     }
+}
+
+fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
+    if !can_manage_reference_data(user) {
+        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::BusinessPlanForbidden));
+    }
+    Ok(())
+}
+
+fn domain(json: ProvinceJson) -> Province {
+    Province {
+        id: json.id,
+        uuid: json.uuid,
+        acronym: json.acronym,
+        name: json.name,
+        country_code: json.country_code,
+    }
+}
+
+fn outcome(result: ImportOutcome) -> ImportResultJson {
+    ImportResultJson { created: result.created, updated: result.updated }
+}
+
+/// PD-027/PD-028: a página de administração de dados de referência. Distinta de
+/// `GET /province`, que filtra por país e devolve a lista inteira porque
+/// alimenta um seletor de endereço — paginar aquela seria truncar opções (D-9).
+#[utoipa::path(
+    get,
+    tag = "Province",
+    path = "/province/page",
+    params(PageQuery),
+    responses(
+        (status = 200, description = "A page of provinces", body = PageJson<ProvinceJson>),
+        (status = 401, body = UnauthorizedErrorJson),
+        (status = 403, body = ForbiddenErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_page(
+    state: State<AppState>,
+    Query(page_query): Query<PageQuery>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+) -> HttpResponse<Json<PageJson<ProvinceJson>>> {
+    authorize(&user, &locale)?;
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    let (page, page_size) = (page_query.page(), page_query.page_size());
+    let (items, total) = use_case
+        .find_page(page, page_size, page_query.search().as_deref())
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+    Ok(Json(PageJson::new(ProvinceMapper::json_vec(items), page, page_size, total)))
+}
+
+#[utoipa::path(
+    post,
+    tag = "Province",
+    path = "/province",
+    request_body = ProvinceJson,
+    responses(
+        (status = 200, description = "Province saved", body = ProvinceJson),
+        (status = 400, body = BadRequestErrorJson),
+        (status = 401, body = UnauthorizedErrorJson),
+        (status = 403, body = ForbiddenErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn save(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+    Json(payload): Json<ProvinceJson>,
+) -> HttpResponse<Json<ProvinceJson>> {
+    authorize(&user, &locale)?;
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    use_case
+        .save(domain(payload))
+        .await
+        .map(|saved| Json(ProvinceMapper::json(saved)))
+        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
+}
+
+/// PD-027: o console analisa o CSV, mostra as linhas editáveis e envia o que o
+/// operador confirmou — por isso isto recebe JSON e não um arquivo. A regra é
+/// tudo ou nada; um lote com qualquer linha inválida não grava nada.
+#[utoipa::path(
+    post,
+    tag = "Province",
+    path = "/province/import",
+    request_body = Vec<ProvinceJson>,
+    responses(
+        (status = 200, description = "Import applied", body = ImportResultJson),
+        (status = 400, description = "Nothing was written; the message names each rejected row", body = BadRequestErrorJson),
+        (status = 401, body = UnauthorizedErrorJson),
+        (status = 403, body = ForbiddenErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn import(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+    Json(payload): Json<Vec<ProvinceJson>>,
+) -> HttpResponse<Json<ImportResultJson>> {
+    authorize(&user, &locale)?;
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    use_case
+        .import(payload.into_iter().map(domain).collect())
+        .await
+        .map(|result| Json(outcome(result)))
+        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
 }

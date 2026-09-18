@@ -1,6 +1,7 @@
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { api, apiMessage, normalizeSession } from './api'
-import type { BusinessPlan, City, Province, Session, Tenant, User } from './types'
+import { emptyPage } from './types'
+import type { BusinessPlan, City, Page, PageRequest, Province, Session, Tenant, User } from './types'
 
 const loadStoredSession = (): Session | null => {
   const stored = localStorage.getItem('hermes.session')
@@ -36,11 +37,13 @@ const authSlice = createSlice({
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
 })
 
-type DataState = { tenants: Tenant[]; plans: BusinessPlan[]; users: User[]; provinces: Province[]; cities: City[]; loading: boolean; error: string }
-const initialData: DataState = { tenants: [], plans: [], users: [], provinces: [], cities: [], loading: false, error: '' }
-export const loadTenants = createAsyncThunk('data/tenants', async () => (await api.get<Tenant[]>('/tenant')).data)
-export const loadPlans = createAsyncThunk('data/plans', async () => (await api.get<BusinessPlan[]>('/business-plan')).data)
-export const loadUsers = createAsyncThunk('data/users', async () => (await api.get<User[]>('/user')).data)
+type DataState = { tenants: Page<Tenant>; plans: Page<BusinessPlan>; users: Page<User>; provinces: Province[]; cities: City[]; loading: boolean; error: string }
+const initialData: DataState = { tenants: emptyPage<Tenant>(), plans: emptyPage<BusinessPlan>(), users: emptyPage<User>(), provinces: [], cities: [], loading: false, error: '' }
+const pageParams = ({ page, pageSize, search }: PageRequest) => ({ params: { page, pageSize, search: search || undefined } })
+
+export const loadTenants = createAsyncThunk('data/tenants', async (request: PageRequest) => (await api.get<Page<Tenant>>('/tenant', pageParams(request))).data)
+export const loadPlans = createAsyncThunk('data/plans', async (request: PageRequest) => (await api.get<Page<BusinessPlan>>('/business-plan', pageParams(request))).data)
+export const loadUsers = createAsyncThunk('data/users', async (request: PageRequest) => (await api.get<Page<User>>('/user', pageParams(request))).data)
 export const loadProvinces = createAsyncThunk('data/provinces', async (countryCode: string) => (await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data)
 export const loadCities = createAsyncThunk('data/cities', async (provinceId: number) => (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data)
 

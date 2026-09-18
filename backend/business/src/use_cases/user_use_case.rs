@@ -175,6 +175,17 @@ impl UserUseCase {
         }
     }
 
+    /// PD-028: uma página de usuários mais o total. O escopo de tenant vem do
+    /// gateway (`tenant_select`), não de um filtro repetido aqui.
+    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<User>, u64), BusinessError> {
+        let (entities, total) = self.gateway.find_page(page, page_size, search).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[UserUseCase::find_page] {}", msg);
+            BusinessError::new(msg)
+        })?;
+        Ok((UserEntityMapper::from_models(entities), total))
+    }
+
     pub async fn find_all(&self) -> Result<Vec<User>, BusinessError> {
         log::info!("[UserUseCase::find_all] Executing find_all users");
 

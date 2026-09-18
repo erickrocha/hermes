@@ -2,6 +2,7 @@ use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::change_password_request::ChangePasswordRequest;
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
@@ -9,7 +10,7 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::user_json::UserJson;
 use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::commons::email_sender::EmailSender;
 use business::domain::authorization::{
@@ -155,8 +156,9 @@ fn issue_and_send_invite(user: &User) {
     get,
     tag = "User",
     path = "/user",
+    params(PageQuery),
     responses(
-        (status = 200, description = "List of users", body = Vec<UserJson>),
+        (status = 200, description = "A page of users (PD-028)", body = PageJson<UserJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -165,25 +167,29 @@ fn issue_and_send_invite(user: &User) {
 )]
 pub async fn list_all(
     state: State<AppState>,
+    Query(page_query): Query<PageQuery>,
     Extension(current_user): Extension<User>,
-) -> HttpResponse<Json<Vec<UserJson>>> {
+) -> HttpResponse<Json<PageJson<UserJson>>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
+    let (page, page_size) = (page_query.page(), page_query.page_size());
+    let search = page_query.search();
 
-    let users_result = match current_user.role {
-        Role::SysAdmin => use_case.find_all().await,
-        Role::TenantOwner => {
-            if let Some(tenant_id) = current_user.tenant_id {
-                use_case.find_all_by_tenant_id(tenant_id).await
-            } else {
-                Ok(Vec::new())
-            }
-        }
-        _ => Ok(Vec::new()),
+    // HRM-094/095: quem pode ver o quê não muda com a paginação. Um TenantOwner
+    // é filtrado pelo escopo do gateway (`tenant_select`), não por um segundo
+    // filtro aqui; um TenantUser continua sem administração de usuários.
+    let page_result = match current_user.role {
+        Role::SysAdmin | Role::TenantOwner => use_case.find_page(page, page_size, search.as_deref()).await,
+        _ => Ok((Vec::new(), 0)),
     };
 
-    match users_result {
-        Ok(users) => Ok(Json(UserMapper::json_vec(users))),
-        Err(_) => Ok(Json(Vec::new())),
+    match page_result {
+        Ok((users, total)) => Ok(Json(PageJson::new(
+            UserMapper::json_vec(users),
+            page,
+            page_size,
+            total,
+        ))),
+        Err(_) => Ok(Json(PageJson::new(Vec::new(), page, page_size, 0))),
     }
 }
 

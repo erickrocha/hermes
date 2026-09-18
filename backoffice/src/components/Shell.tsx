@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Building2, ChevronDown, CreditCard, Gauge, Languages, LogOut, Menu, Settings, ShieldCheck, Users, X } from 'lucide-react'
+import { Building2, ChevronDown, CreditCard, Gauge, Languages, LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
@@ -18,7 +18,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const tenants = useSelector((s: RootState) => s.data.tenants)
   const dispatch = useDispatch<AppDispatch>()
   const navigate = useNavigate()
-  const tenant = tenants.find((item) => item.id === session.tenantId)
+  const tenant = tenants.items.find((item) => item.id === session.tenantId)
   const tenantName = tenant?.companyName || tenant?.businessName
   // EPIC-BO-01-S02 (HRMS-408): the console takes the signed-in tenant's
   // theme, derived here rather than at App-level because this is where the
@@ -30,6 +30,9 @@ export function Shell({ children }: { children: ReactNode }) {
     { to: '/tenants', label: t('tenants'), icon: Building2 },
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     { to: '/users', label: t('users'), icon: Users },
+    // PD-027: dados de referência são globais da plataforma, como o catálogo
+    // de planos -- só o SysAdmin desacoplado de tenant administra.
+    ...(session.role === 'SysAdmin' ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),
   ]
   const leave = () => { dispatch(logout()); navigate('/login') }
   return <div className="app-shell">
