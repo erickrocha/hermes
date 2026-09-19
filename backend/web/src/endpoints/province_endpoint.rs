@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
-use crate::commons::i18n::{ErrorKey, Locale};
+use crate::commons::i18n::{translate_reference_data_error, ErrorKey, Locale};
 use crate::infrastructure::mapper::{Mapper, ProvinceMapper};
 use axum::Json;
 use axum::extract::Extension;
@@ -9,7 +9,7 @@ use business::gateway::province_gateway::ProvinceGateway;
 use business::domain::authorization::can_manage_reference_data;
 use business::domain::province::{normalize_country_code, Province};
 use business::domain::user::User;
-use business::use_cases::reference_import::ImportOutcome;
+use business::use_cases::reference_import::{ImportOutcome, ReferenceDataError};
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::reference_json::ImportResultJson;
 use business::use_cases::province_use_case::ProvinceUseCase;
@@ -79,9 +79,15 @@ pub async fn get_by_id(state: State<AppState>,Extension(locale): Extension<Local
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_id(id).await {
         Ok(res) => Ok(Json(ProvinceMapper::json(res))),
-        Err(_) => Err(ExceptionResponse::NotFound(
+        // DEF-RD-06: "required parameter missing" described the caller's
+        // request, which was fine; what was missing was the record.
+        Err(error) if error.is_not_found() => Err(ExceptionResponse::NotFound(
             locale,
-            ErrorKey::RequiredParameterMissing,
+            ErrorKey::ProvinceNotFound,
+        )),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::ReferenceDataUnavailable,
         )),
     }
 }
@@ -106,9 +112,23 @@ mod tests {
 
 fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
     if !can_manage_reference_data(user) {
-        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::BusinessPlanForbidden));
+        // DEF-RD-06: the refusal is about the role, not about the plan.
+        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::ReferenceDataForbidden));
     }
     Ok(())
+}
+
+/// DEF-RD-03/04: the same split the city endpoint makes -- a rejected file is
+/// a 400 the operator can act on, in their language; an unavailable database
+/// is a 500 that discloses nothing.
+fn reference_failure(locale: &Locale, error: ReferenceDataError) -> ExceptionResponse {
+    match error {
+        ReferenceDataError::Unavailable => ExceptionResponse::InternalServerError(
+            locale.clone(),
+            ErrorKey::ReferenceDataUnavailable,
+        ),
+        rejected => ExceptionResponse::BadRequestMessage(translate_reference_data_error(locale, &rejected)),
+    }
 }
 
 fn domain(json: ProvinceJson) -> Province {
@@ -181,7 +201,7 @@ pub async fn save(
         .save(domain(payload))
         .await
         .map(|saved| Json(ProvinceMapper::json(saved)))
-        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
+        .map_err(|error| reference_failure(&locale, error))
 }
 
 /// PD-027: o console analisa o CSV, mostra as linhas editáveis e envia o que o
@@ -212,5 +232,5 @@ pub async fn import(
         .import(payload.into_iter().map(domain).collect())
         .await
         .map(|result| Json(outcome(result)))
-        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
+        .map_err(|error| reference_failure(&locale, error))
 }

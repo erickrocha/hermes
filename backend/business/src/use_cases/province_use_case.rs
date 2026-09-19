@@ -2,9 +2,17 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::province::{normalize_country_code, Province, ProvinceEntityMapper};
-use crate::use_cases::reference_import::{find_duplicate_keys, rejected, ImportOutcome, ImportRejection};
-use sea_orm::ActiveModelTrait;
+use crate::use_cases::reference_import::{
+    find_duplicate_keys, fold_key, ImportOutcome, ImportRejection, ReferenceDataError,
+    RejectionReason,
+};
+use sea_orm::{ActiveModelTrait, TransactionTrait};
 use crate::gateway::province_gateway::ProvinceGateway;
+
+/// `province.name` is `varchar(255)` and `province.acronym` `varchar(10)`
+/// (migration `m20260916_000006`).
+const NAME_MAX: usize = 255;
+const ACRONYM_MAX: usize = 10;
 
 pub struct ProvinceUseCase {
     gateway: ProvinceGateway,
@@ -18,24 +26,32 @@ impl ProvinceUseCase {
     /// PD-027: valida e normaliza uma província antes de gravar. A mesma
     /// função serve o formulário e a importação, para que uma linha importada
     /// não possa entrar em um estado que o formulário recusaria.
-    pub fn validate(province: &mut Province) -> Result<(), String> {
+    pub fn validate(province: &mut Province) -> Result<(), RejectionReason> {
         province.name = province.name.trim().to_string();
         province.acronym = province.acronym.trim().to_ascii_uppercase();
         if province.name.is_empty() {
-            return Err("name is required".to_string());
+            return Err(RejectionReason::NameRequired);
+        }
+        // DEF-RD-03: the column limits, stated as rules rather than left to
+        // the database to report as a truncation error.
+        if province.name.chars().count() > NAME_MAX {
+            return Err(RejectionReason::NameTooLong);
         }
         if province.acronym.is_empty() {
-            return Err("acronym is required".to_string());
+            return Err(RejectionReason::AcronymRequired);
+        }
+        if province.acronym.chars().count() > ACRONYM_MAX {
+            return Err(RejectionReason::AcronymTooLong);
         }
         match normalize_country_code(&province.country_code) {
             Some(code) => province.country_code = code,
-            None => return Err("country code must be two ASCII letters".to_string()),
+            None => return Err(RejectionReason::CountryCodeInvalid),
         }
         Ok(())
     }
 
-    pub async fn save(&self, mut province: Province) -> Result<Province, BusinessError> {
-        Self::validate(&mut province).map_err(BusinessError::new)?;
+    pub async fn save(&self, mut province: Province) -> Result<Province, ReferenceDataError> {
+        Self::validate(&mut province).map_err(|reason| ReferenceDataError::one(0, reason))?;
 
         // A sigla é única dentro do país: gravar uma que já existe em outra
         // linha seria criar uma segunda verdade para o mesmo lugar.
@@ -45,21 +61,18 @@ impl ProvinceUseCase {
             .await
             && Some(existing.id) != province.id
         {
-                return Err(BusinessError::new(format!(
-                    "Province {} already exists for {}",
-                    province.acronym, province.country_code
-                )));
+            return Err(ReferenceDataError::one(0, RejectionReason::ProvinceAlreadyExists));
         }
 
         let saved = ProvinceEntityMapper::build_active_model(province)
             .save(self.gateway.db())
             .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
+            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::save", e))?;
         Ok(ProvinceEntityMapper::from_active_model(saved))
     }
 
     /// PD-027: tudo ou nada — ver `reference_import`.
-    pub async fn import(&self, rows: Vec<Province>) -> Result<ImportOutcome, BusinessError> {
+    pub async fn import(&self, rows: Vec<Province>) -> Result<ImportOutcome, ReferenceDataError> {
         let mut prepared = Vec::with_capacity(rows.len());
         let mut rejections = Vec::new();
 
@@ -72,15 +85,31 @@ impl ProvinceUseCase {
 
         // Positions are reported against the rows as the operator sent them;
         // `prepared` holds only the valid ones, so each keeps its original index.
-        let keys = prepared.iter().map(|(_, p)| (p.country_code.clone(), p.acronym.clone()));
+        // DEF-RD-02: folded, so "SP"/"sp" collide here exactly as they do in
+        // the unique index this check stands in front of.
+        let keys = prepared
+            .iter()
+            .map(|(_, p)| (p.country_code.clone(), fold_key(&p.acronym)));
         for position in find_duplicate_keys(keys) {
-            rejections.push(ImportRejection::new(prepared[position].0, "duplicate acronym within the file"));
+            rejections.push(ImportRejection::new(
+                prepared[position].0,
+                RejectionReason::DuplicateAcronymInFile,
+            ));
         }
 
         if !rejections.is_empty() {
             rejections.sort_by_key(|rejection| rejection.row);
-            return Err(rejected(rejections));
+            return Err(ReferenceDataError::Rejected(rejections));
         }
+
+        // PD-027 all-or-nothing (DEF-RD-01): a failure partway through the
+        // loop used to leave the rows before it committed.
+        let transaction = self
+            .gateway
+            .db()
+            .begin()
+            .await
+            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
 
         let mut outcome = ImportOutcome::default();
         for (_, mut row) in prepared {
@@ -88,7 +117,7 @@ impl ProvinceUseCase {
                 .gateway
                 .find_by_acronym(&row.country_code, &row.acronym)
                 .await
-                .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
+                .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
             match existing {
                 Some(found) => {
                     row.id = Some(found.id);
@@ -96,11 +125,16 @@ impl ProvinceUseCase {
                 }
                 None => outcome.created += 1,
             }
-            ProvinceEntityMapper::build_active_model(row)
-                .save(self.gateway.db())
-                .await
-                .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
+            if let Err(e) = ProvinceEntityMapper::build_active_model(row).save(&transaction).await {
+                let _ = transaction.rollback().await;
+                return Err(ReferenceDataError::unavailable("ProvinceUseCase::import", e));
+            }
         }
+
+        transaction
+            .commit()
+            .await
+            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
         Ok(outcome)
     }
 
@@ -127,7 +161,7 @@ impl ProvinceUseCase {
             None => {
                 let msg = format!("Province not found with id: {}", id);
                 log::error!("[ProvinceUseCase::find_by_id] {}", msg);
-                Err(BusinessError::new("Province not found".to_string()))
+                Err(BusinessError::not_found("Province not found".to_string()))
             }
         }
     }
@@ -145,7 +179,7 @@ impl ProvinceUseCase {
             None => {
                 let msg = format!("Province not found with uuid: {}", uuid);
                 log::error!("[ProvinceUseCase::find_by_uuid] {}", msg);
-                Err(BusinessError::new("Province not found".to_string()))
+                Err(BusinessError::not_found("Province not found".to_string()))
             }
         }
     }

@@ -1,3 +1,4 @@
+use business::use_cases::reference_import::ReferenceDataError;
 use fluent_templates::{Loader, static_loader};
 use unic_langid::{LanguageIdentifier, langid};
 
@@ -83,6 +84,14 @@ pub enum ErrorKey {
     BusinessPlanInUse,
     CountryNotSupported,
     ReferenceDataUnavailable,
+    /// DEF-RD-06: reference data is not a plan feature. Saying
+    /// "business plan forbidden" to a TenantUser who tried to edit a city sent
+    /// them to look at their subscription for a permission they will never buy.
+    ReferenceDataForbidden,
+    /// DEF-RD-06: a missing city or province is a missing *record*, not a
+    /// missing request parameter.
+    CityNotFound,
+    ProvinceNotFound,
     /// DEF-XF-02: a failure the caller cannot act on, but must be told about.
     /// Used where an empty result would otherwise be indistinguishable from a
     /// broken query.
@@ -108,6 +117,9 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
+            ErrorKey::ReferenceDataForbidden => "ReferenceDataForbidden",
+            ErrorKey::CityNotFound => "CityNotFound",
+            ErrorKey::ProvinceNotFound => "ProvinceNotFound",
             ErrorKey::UnexpectedError => "UnexpectedError",
         }
     }
@@ -130,7 +142,56 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
+            ErrorKey::ReferenceDataForbidden => "reference-data-forbidden",
+            ErrorKey::CityNotFound => "city-not-found",
+            ErrorKey::ProvinceNotFound => "province-not-found",
             ErrorKey::UnexpectedError => "unexpected-error",
+        }
+    }
+}
+
+/// Resolves a Fluent message id that is not an `ErrorKey`.
+///
+/// DEF-RD-04: the import rejection reasons are owned by the `business` crate,
+/// which has no locale and no `ErrorKey`. It names a reason
+/// (`RejectionReason::message_id`) and this is where that name becomes a
+/// sentence in the caller's language.
+pub fn translate_id(locale: &Locale, message_id: &str) -> String {
+    let lang_id = locale.language_id();
+    match LOCALES.try_lookup(&lang_id, message_id) {
+        Some(message) => message,
+        None => {
+            log::error!("missing fluent translation: locale={lang_id} key={message_id}");
+            message_id.to_string()
+        }
+    }
+}
+
+/// Renders an import failure in the caller's language.
+///
+/// DEF-RD-04: every part is translated -- the heading, the word "row" and each
+/// reason. Only the row number is formatted here, because a number is the same
+/// in all three bundles. Before this the whole sentence was built in English in
+/// the business layer, so a Portuguese operator read English rejections under
+/// Portuguese column headings.
+pub fn translate_reference_data_error(locale: &Locale, error: &ReferenceDataError) -> String {
+    match error {
+        ReferenceDataError::Unavailable => translate(locale.clone(), ErrorKey::ReferenceDataUnavailable),
+        ReferenceDataError::Rejected(rejections) => {
+            let row_word = translate_id(locale, "import-row");
+            let detail = rejections
+                .iter()
+                .map(|rejection| {
+                    format!(
+                        "{} {}: {}",
+                        row_word,
+                        rejection.row + 1,
+                        translate_id(locale, rejection.reason.message_id())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{} {}", translate_id(locale, "import-rejected"), detail)
         }
     }
 }
@@ -226,5 +287,60 @@ mod tests {
     fn a_differing_region_on_both_sides_still_does_not_match() {
         // pt-PT não é atendido pelo bundle pt-BR; cai no fallback.
         assert_eq!(Locale::from_accept_language(Some("pt-PT")).language_id(), langid!("en"));
+    }
+
+    /// DEF-RD-04: the rejection reasons are named by the `business` crate and
+    /// worded here. A reason with no message in some bundle would reach that
+    /// reader as a bare message id, which is how the English-under-Portuguese
+    /// defect looked in the first place.
+    #[test]
+    fn every_rejection_reason_is_worded_in_every_bundle() {
+        use business::use_cases::reference_import::RejectionReason::*;
+        let reasons = [
+            NameRequired, NameTooLong, ProvinceRequired, ProvinceNotFound,
+            AcronymRequired, AcronymTooLong, CountryCodeInvalid,
+            DuplicateCityInFile, DuplicateAcronymInFile,
+            CityAlreadyExists, ProvinceAlreadyExists,
+        ];
+        for tag in ["en", "pt-BR", "es"] {
+            let locale = Locale::from_accept_language(Some(tag));
+            for id in ["import-rejected", "import-row"] {
+                assert_ne!(super::translate_id(&locale, id), id, "{tag} is missing {id}");
+            }
+            for reason in reasons {
+                let id = reason.message_id();
+                assert_ne!(super::translate_id(&locale, id), id, "{tag} is missing {id}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_rejected_import_is_reported_in_the_readers_language() {
+        use business::use_cases::reference_import::{
+            ImportRejection, ReferenceDataError, RejectionReason,
+        };
+        let error = ReferenceDataError::Rejected(vec![
+            ImportRejection::new(0, RejectionReason::NameRequired),
+            ImportRejection::new(2, RejectionReason::ProvinceNotFound),
+        ]);
+        let en = super::translate_reference_data_error(&Locale::from_accept_language(Some("en")), &error);
+        let pt = super::translate_reference_data_error(&Locale::from_accept_language(Some("pt-BR")), &error);
+
+        // The row numbers are the operator's, one-based, in both languages.
+        assert!(en.contains("row 1"), "{en}");
+        assert!(en.contains("row 3"), "{en}");
+        assert!(pt.contains("linha 1"), "{pt}");
+        assert!(pt.contains("linha 3"), "{pt}");
+        assert_ne!(en, pt, "a Portuguese reader must not be shown the English wording");
+    }
+
+    #[test]
+    fn an_unavailable_database_is_never_described_to_the_caller() {
+        use business::use_cases::reference_import::ReferenceDataError;
+        let message = super::translate_reference_data_error(
+            &Locale::from_accept_language(Some("en")),
+            &ReferenceDataError::Unavailable,
+        );
+        assert_eq!(message, translate(Locale::from_accept_language(Some("en")), ErrorKey::ReferenceDataUnavailable));
     }
 }

@@ -1,5 +1,5 @@
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
-use crate::commons::i18n::{ErrorKey, Locale};
+use crate::commons::i18n::{translate_reference_data_error, ErrorKey, Locale};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, NotFoundErrorJson, UnauthorizedErrorJson, ForbiddenErrorJson,
     InternalServerErrorJson,
@@ -16,7 +16,7 @@ use business::use_cases::city_use_case::CityUseCase;
 use business::domain::authorization::can_manage_reference_data;
 use business::domain::city::City;
 use business::domain::user::User;
-use business::use_cases::reference_import::ImportOutcome;
+use business::use_cases::reference_import::{ImportOutcome, ReferenceDataError};
 use crate::endpoints::json::reference_json::ImportResultJson;
 
 #[utoipa::path(
@@ -36,7 +36,14 @@ pub async fn list_all(
     state: State<AppState>,
     Query(page_query): Query<PageQuery>,
     Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<CityJson>>> {
+    // DEF-RD-05: the maintenance grid is behind `can_manage_reference_data`,
+    // but this route -- the one that feeds it -- was not, so any authenticated
+    // TenantUser could page the whole table straight from the API. The
+    // dropdown that ordinary users legitimately need is
+    // `/cities/by-province/{id}`, which stays open.
+    authorize(&user, &locale)?;
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
     let (page, page_size) = (page_query.page(), page_query.page_size());
     let search = page_query.search();
@@ -99,15 +106,38 @@ pub async fn get_by_id(
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_id(id).await {
         Ok(res) => Ok(Json(CityMapper::json(res))),
-        Err(_) => Err(ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing)),
+        // DEF-RD-06: a city that is not there is `city-not-found`; the caller
+        // supplied the parameter the old message accused them of omitting.
+        Err(error) if error.is_not_found() => {
+            Err(ExceptionResponse::NotFound(locale, ErrorKey::CityNotFound))
+        }
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::ReferenceDataUnavailable,
+        )),
     }
 }
 
 fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
     if !can_manage_reference_data(user) {
-        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::BusinessPlanForbidden));
+        // DEF-RD-06: reference data is not a plan feature, so the refusal must
+        // not send the reader to their subscription.
+        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::ReferenceDataForbidden));
     }
     Ok(())
+}
+
+/// DEF-RD-03/04: turns a reference-data failure into the right status *and*
+/// the right language. A rejected file is the caller's to fix (400); an
+/// unavailable database is not (500), and says nothing about itself.
+fn reference_failure(locale: &Locale, error: ReferenceDataError) -> ExceptionResponse {
+    match error {
+        ReferenceDataError::Unavailable => ExceptionResponse::InternalServerError(
+            locale.clone(),
+            ErrorKey::ReferenceDataUnavailable,
+        ),
+        rejected => ExceptionResponse::BadRequestMessage(translate_reference_data_error(locale, &rejected)),
+    }
 }
 
 fn domain(json: CityJson) -> City {
@@ -139,7 +169,7 @@ pub async fn save(
         .save(domain(payload))
         .await
         .map(|saved| Json(CityMapper::json(saved)))
-        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
+        .map_err(|error| reference_failure(&locale, error))
 }
 
 /// PD-027: recebe as linhas que o operador já revisou na grade. Tudo ou nada.
@@ -168,5 +198,5 @@ pub async fn import(
         .import(payload.into_iter().map(domain).collect())
         .await
         .map(|result: ImportOutcome| Json(ImportResultJson { created: result.created, updated: result.updated }))
-        .map_err(|error| ExceptionResponse::BadRequestMessage(error.message))
+        .map_err(|error| reference_failure(&locale, error))
 }

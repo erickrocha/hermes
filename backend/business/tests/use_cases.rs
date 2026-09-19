@@ -153,7 +153,7 @@ async fn saving_a_duplicate_acronym_is_refused_before_writing() {
         .save(province("SP", "Another São Paulo", "BR"))
         .await
         .expect_err("a second SP in BR must be refused");
-    assert!(err.message.contains("already exists"));
+    assert!(err.english().contains("already exists"));
     assert_eq!(log(db).len(), 1, "only the lookup ran; nothing was written");
 }
 
@@ -164,7 +164,7 @@ async fn an_invalid_province_never_reaches_the_database() {
         .save(province("SP", "", "BR"))
         .await
         .expect_err("blank name");
-    assert!(err.message.contains("name is required"));
+    assert!(err.english().contains("name is required"));
     assert!(log(db).is_empty());
 }
 
@@ -196,10 +196,26 @@ async fn province_import_is_all_or_nothing() {
         ])
         .await
         .expect_err("one bad row rejects the batch");
-    assert!(err.message.contains("row 2: name is required"), "{}", err.message);
-    assert!(err.message.contains("row 3: duplicate acronym"), "{}", err.message);
-    assert!(!err.message.contains("row 2: duplicate"), "the duplicate is row 3, not row 2: {}", err.message);
+    let message = err.english();
+    assert!(message.contains("row 2: name is required"), "{message}");
+    assert!(message.contains("row 3: duplicate acronym"), "{message}");
+    assert!(!message.contains("row 2: duplicate"), "the duplicate is row 3, not row 2: {message}");
     assert!(log(db).is_empty(), "a rejected batch must not touch the database");
+}
+
+/// DEF-RD-02: the unique index behind this check is accent- and
+/// case-insensitive, so "SP" and "sp" are one province. The in-file check used
+/// an exact string key and let both through; the second then silently
+/// overwrote the first and the file reported as fully imported.
+#[tokio::test]
+async fn province_import_treats_case_as_the_database_does() {
+    let db = mock().into_connection();
+    let err = ProvinceUseCase::new(ProvinceGateway::new(db.clone()))
+        .import(vec![province("sp", "São Paulo", "BR"), province("SP", "Sao Paulo", "br")])
+        .await
+        .expect_err("one province, written twice");
+    assert!(err.english().contains("row 2: duplicate acronym"), "{}", err.english());
+    assert!(log(db).is_empty());
 }
 
 #[tokio::test]
@@ -226,16 +242,51 @@ fn city(name: &str, province_id: i64) -> City {
 #[tokio::test]
 async fn city_save_and_its_guards() {
     let db = mock()
+        .append_query_results([[province_row(26, "SP", "BR")]]) // the province exists
         .append_query_results([Vec::<city_entity::Model>::new()])
         .append_exec_results([inserted(9)])
         .append_query_results([[city_row(9, 26, "Limeira")]])
+        .append_query_results([[province_row(26, "SP", "BR")]]) // 2nd save re-checks
         .append_query_results([[city_row(9, 26, "Limeira")]]) // duplicate check for 2nd save
         .into_connection();
     let uc = CityUseCase::new(CityGateway::new(db));
     assert_eq!(uc.save(city(" Limeira ", 26)).await.unwrap().id, Some(9));
     let dup = uc.save(city("Limeira", 26)).await.expect_err("same name, same province");
-    assert!(dup.message.contains("already exists"));
+    assert!(dup.english().contains("already exists"));
     assert!(uc.save(city("Orphan", 0)).await.is_err(), "a city needs a province");
+}
+
+/// DEF-RD-03: an unknown `provinceId` is the operator's mistake, and it is
+/// named as one. It used to reach them as MySQL error 1452 quoting a
+/// constraint name — after the rows before it had already been committed.
+#[tokio::test]
+async fn an_unknown_province_is_named_not_reported_as_a_constraint() {
+    let db = mock()
+        .append_query_results([Vec::<province_entity::Model>::new()])
+        .into_connection();
+    let err = CityUseCase::new(CityGateway::new(db.clone()))
+        .import(vec![city("Limeira", 999)])
+        .await
+        .expect_err("province 999 does not exist");
+    let message = err.english();
+    assert!(message.contains("row 1: province does not exist"), "{message}");
+    assert!(!message.contains("1452"), "{message}");
+    assert!(!message.contains("constraint"), "{message}");
+    assert_eq!(log(db).len(), 1, "the existence check ran; nothing was written");
+}
+
+/// DEF-RD-02: MySQL's collation already treated these as one city, so the
+/// second spelling overwrote the first and the file reported "1 created, 1
+/// updated" for what the operator sent as two new cities.
+#[tokio::test]
+async fn accents_and_case_do_not_make_a_second_city() {
+    let db = mock().into_connection();
+    let err = CityUseCase::new(CityGateway::new(db.clone()))
+        .import(vec![city("São Paulo", 26), city("sao paulo", 26)])
+        .await
+        .expect_err("one city, spelled twice");
+    assert!(err.english().contains("row 2: duplicate city"), "{}", err.english());
+    assert!(log(db).is_empty());
 }
 
 #[tokio::test]
@@ -245,10 +296,11 @@ async fn city_import_is_all_or_nothing_and_idempotent_by_name() {
         .import(vec![city("A", 26), city("A", 26)])
         .await
         .expect_err("duplicate in file");
-    assert!(err.message.contains("row 2: duplicate city"), "{}", err.message);
+    assert!(err.english().contains("row 2: duplicate city"), "{}", err.english());
     assert!(log(empty).is_empty());
 
     let db = mock()
+        .append_query_results([[province_row(26, "SP", "BR")]])
         .append_query_results([[city_row(9, 26, "Limeira")]])
         .append_exec_results([inserted(9)])
         .append_query_results([[city_row(9, 26, "Limeira")]])
