@@ -14,3 +14,4 @@ required-parameter-missing = Required parameter missing
 tenant-created-failed = Failed to create tenant
 tenant-not-found = Tenant not found
 tenant-update-failed = Failed to update tenant
+unexpected-error = An unexpected error occurred

@@ -45,13 +45,38 @@ pub fn needs_rehash(stored: &str) -> bool {
     is_bcrypt(stored)
 }
 
+/// DEF-IA-05 (HRMS-103): a verificação descartável que o login roda quando
+/// não há conta a verificar.
+///
+/// Sem ela, um e-mail desconhecido ou uma conta desabilitada respondem sem
+/// nunca tocar no Argon2 (~1 ms) enquanto uma senha errada paga o custo do
+/// hash (~360 ms), e a diferença diz a um chamador anônimo quais endereços
+/// têm conta ativa. O hash é calculado uma única vez por processo, com os
+/// mesmos parâmetros de [`hash`], para que o custo seja o mesmo que o do
+/// caminho real.
+pub fn verify_dummy(plaintext: &str) {
+    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let stored = DUMMY.get_or_init(|| {
+        hash("hermes-constant-work-placeholder").unwrap_or_else(|_| String::new())
+    });
+    let _ = verify(plaintext, stored);
+}
+
 fn is_bcrypt(stored: &str) -> bool {
     stored.starts_with("$2a$") || stored.starts_with("$2b$") || stored.starts_with("$2y$")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{hash, needs_rehash, verify};
+    use super::{hash, needs_rehash, verify, verify_dummy};
+
+    #[test]
+    fn the_dummy_verification_never_panics_and_never_succeeds_at_anything() {
+        // DEF-IA-05: it exists for its cost, not its result. What matters is
+        // that the login path can always call it.
+        verify_dummy("");
+        verify_dummy("anything at all");
+    }
 
     #[test]
     fn argon2_round_trip() {

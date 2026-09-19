@@ -150,6 +150,7 @@ pub async fn get_by_uuid(
 pub async fn list_all(
     state: State<AppState>,
     Query(page_query): Query<PageQuery>,
+    Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<TenantJson>>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
@@ -161,7 +162,7 @@ pub async fn list_all(
     if let Some(tenant_id) = current_user.tenant_id {
         return match use_case.find_by_id(tenant_id).await {
             Ok(tenant) => Ok(Json(PageJson::new(vec![TenantMapper::json(tenant)], 0, page_size, 1))),
-            Err(_) => Ok(Json(PageJson::new(Vec::new(), 0, page_size, 0))),
+            Err(_) => Err(unreadable_tenants(locale)),
         };
     }
     if current_user.role != Role::SysAdmin {
@@ -174,8 +175,17 @@ pub async fn list_all(
             page_size,
             total,
         ))),
-        Err(_) => Ok(Json(PageJson::new(Vec::new(), page, page_size, 0))),
+        Err(_) => Err(unreadable_tenants(locale)),
     }
+}
+
+/// DEF-XF-02: a failed query used to be answered with `200 {"items":[],
+/// "totalItems":0}`, which reads to the console and to the operator exactly
+/// like a platform that has no tenants at all. An empty page is a fact about
+/// the data; it must never also be how a broken read looks.
+fn unreadable_tenants(locale: Locale) -> ExceptionResponse {
+    log::error!("[tenant_endpoint::list_all] Tenant query failed; answering 500 rather than an empty page");
+    ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)
 }
 
 #[utoipa::path(

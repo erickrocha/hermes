@@ -14,3 +14,4 @@ required-parameter-missing = Falta un parámetro obligatorio
 tenant-created-failed = No se pudo crear el inquilino
 tenant-not-found = Inquilino no encontrado
 tenant-update-failed = No se pudo actualizar el inquilino
+unexpected-error = Se produjo un error inesperado

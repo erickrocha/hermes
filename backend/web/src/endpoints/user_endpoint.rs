@@ -14,7 +14,8 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::commons::email_sender::EmailSender;
 use business::domain::authorization::{
-    can_administer_user, can_create_user_with_role, can_reassign_role, CreationTenant,
+    can_administer_user, can_create_user_with_role, can_read_user_record, can_reassign_role,
+    CreationTenant,
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
@@ -62,6 +63,18 @@ pub async fn add(
 
     match creation_tenant {
         CreationTenant::Fixed(tenant_id) => {
+            // DEF-IA-08 (HRMS-116, D-08): the hierarchy decides this account's
+            // tenant, so a caller who named a different one asked for something
+            // the platform will not create. Overwriting it silently answered
+            // 201 to `{"role":"SysAdmin","tenantId":42}` and stored a
+            // *platform-wide* administrator -- the opposite of what was asked
+            // for, with no warning.
+            if domain.tenant_id.is_some() && domain.tenant_id != tenant_id {
+                return Err(ExceptionResponse::BadRequest(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            }
             domain.tenant_id = tenant_id;
         }
         CreationTenant::CallerChosen => {
@@ -106,6 +119,58 @@ pub async fn add(
     Ok((StatusCode::CREATED, Json(UserMapper::json(created))))
 }
 
+#[utoipa::path(
+    post,
+    tag = "User",
+    path = "/user/{id}/invite",
+    params(
+        ("id" = i32, Path, description = "User ID")
+    ),
+    responses(
+        (status = 204, description = "A new invitation was issued and any outstanding one was superseded"),
+        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+/// DEF-IA-07 (HRMS-125, D-07, PD-002): re-issues an account's invitation.
+///
+/// `POST /user` was the only operation that ever issued one, and it cannot run
+/// twice for the same address, so an invitation lost to a mail failure or left
+/// to expire had no replacement at all -- the only way in was an administrator
+/// typing a password for the person, which PD-002 exists to remove.
+pub async fn reissue_invite(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(id): Path<i64>,
+) -> HttpResponse<StatusCode> {
+    let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
+    let existing = use_case
+        .find_by_id(id)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+
+    // Same boundary as editing the account, and the same 404-not-403 shape:
+    // inviting someone is administration of their record.
+    if !can_administer_user(&current_user, existing.id, existing.tenant_id) {
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::RequiredParameterMissing,
+        ));
+    }
+
+    let (refreshed, invite) = AccountInviteUseCase::reissue(state.conn.as_ref(), existing)
+        .await
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+
+    send_invite(&refreshed, invite);
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Best-effort: a mail-server outage must not fail account creation (the
 /// account and its 7-day invite token already exist and are valid either
 /// way) -- but it must never fail *silently*. Every failure path logs the
@@ -124,6 +189,10 @@ fn issue_and_send_invite(user: &User) {
         }
     };
 
+    send_invite(user, invite);
+}
+
+fn send_invite(user: &User, invite: business::use_cases::account_invite_use_case::AccountInvite) {
     let base_url = env::var("BACKOFFICE_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:5173".to_string());
     let accept_url = format!("{base_url}/accept-invite?token={}", invite.token);
@@ -136,7 +205,7 @@ fn issue_and_send_invite(user: &User) {
             Ok(sender) => {
                 if let Err(e) = sender.send_invite(&email, &accept_url).await {
                     log::error!(
-                        "[user_endpoint::add] Failed to send invite email to {}: {}",
+                        "[user_endpoint::send_invite] Failed to send invite email to {}: {}",
                         email,
                         e
                     );
@@ -144,7 +213,7 @@ fn issue_and_send_invite(user: &User) {
             }
             Err(e) => {
                 log::error!(
-                    "[user_endpoint::add] Cannot send invite email to {}: {}",
+                    "[user_endpoint::send_invite] Cannot send invite email to {}: {}",
                     email,
                     e
                 );
@@ -224,8 +293,10 @@ pub async fn get_by_id(
     // EPIC-IA-05-S01/HRMS-117: a tenant user has no user-administration
     // rights at all -- this used to check only whether a TenantOwner's
     // tenant matched, leaving a TenantUser (or a TenantOwner probing a
-    // foreign tenant) free to read any account by id.
-    if !can_administer_user(&current_user, user.id, user.tenant_id) {
+    // foreign tenant) free to read any account by id. Reading your *own*
+    // record is self-service rather than administration, so this is the
+    // read-side rule, which is one case wider than the write-side one.
+    if !can_read_user_record(&current_user, user.id, user.tenant_id) {
         return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::RequiredParameterMissing,
@@ -275,10 +346,14 @@ pub async fn update(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
-    // EPIC-IA-05-S01/HRMS-118: self, an unbound platform administrator, or
+    // EPIC-IA-05-S01/HRMS-117/HRMS-118: an unbound platform administrator, or
     // the tenant owner of that exact tenant -- nobody else may touch this
-    // record at all (a tenant user editing anyone, including themselves via
-    // this route rather than change-password, stops here too).
+    // record at all.
+    //
+    // DEF-IA-03: "or the target themselves" used to be part of this rule, which
+    // turned `PUT /user/{own id}` into a user-administration path open to every
+    // role. A tenant user now stops here on their own record too; what they may
+    // do to it without administering it lives on `/user/change-password`.
     //
     // Not found rather than forbidden (EPIC-IA-05-S04/HRMS-122's shape,
     // stated for tenant records and extended here to user records for the

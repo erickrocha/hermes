@@ -181,6 +181,51 @@ async fn disabling_an_account_ends_its_live_session() {
     assert!(result.is_err());
 }
 
+// ------------------------------------------- identity is the id (DEF-IA-01/02)
+
+/// The account that inherited a freed address: a different person, with a
+/// different id, in a different tenant.
+fn successor_row() -> user_entity::Model {
+    user_entity::Model { id: 6, tenant_id: Some(84), ..row(&argon(), true) }
+}
+
+#[tokio::test]
+async fn an_access_token_does_not_follow_its_address_to_another_account() {
+    // DEF-IA-02 (HRMS-102): the account the token was issued to was renamed
+    // and disabled; its old address was then reused by someone else. Because
+    // the account was resolved by address, the disabled holder's token came
+    // back to life -- and ran as the *original* user, in the original tenant.
+    secrets();
+    let issued = AuthenticationUseCase::generate_access_token(user());
+    let result = AuthenticationUseCase::validate(&db_returning(vec![vec![successor_row()]]), issued.access_token).await;
+    assert!(result.is_err(), "a token must not resolve to an account it was not issued to");
+}
+
+#[tokio::test]
+async fn a_refresh_token_does_not_mint_a_session_for_another_person() {
+    // DEF-IA-01 (HRMS-104, HRMS-003): the same reuse on the refresh path was
+    // worse -- it minted a *new* 3-hour session for the successor account, in
+    // the successor's tenant, for the whole 7-day refresh lifetime.
+    secrets();
+    let issued = AuthenticationUseCase::generate_access_token(user());
+    let result = AuthenticationUseCase::refresh_token(
+        &db_returning(vec![vec![successor_row()]]),
+        issued.refresh_token.clone().unwrap(),
+    )
+    .await;
+    assert!(result.is_err(), "a refresh token must not cross into another account or tenant");
+}
+
+#[tokio::test]
+async fn a_token_stops_working_once_its_account_is_renamed() {
+    // The check that makes the above hold in both directions: the token still
+    // names the id, but it no longer describes the account.
+    secrets();
+    let issued = AuthenticationUseCase::generate_access_token(user());
+    let renamed = user_entity::Model { email: "owner-renamed@example.com".into(), ..row(&argon(), true) };
+    assert!(AuthenticationUseCase::validate(&db_returning(vec![vec![renamed]]), issued.access_token).await.is_err());
+}
+
 // ---------------------------------------------------------------- invitations
 
 #[tokio::test]
@@ -193,7 +238,7 @@ async fn an_invitation_sets_the_password_once_and_then_stops_working() {
     assert!(invite.expires_at > Utc::now() + chrono::Duration::days(6), "7-day validity");
 
     let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(&provisional, false)]])
+        .append_query_results([vec![row(&provisional, true)]])
         .append_exec_results([MockExecResult { last_insert_id: 5, rows_affected: 1 }])
         .append_query_results([vec![row(&argon(), true)]])
         .into_connection();
@@ -207,6 +252,70 @@ async fn an_invitation_sets_the_password_once_and_then_stops_working() {
     let after = db_returning(vec![vec![row(&argon(), true)]]);
     let reused = AccountInviteUseCase::accept(&after, &invite.token, "Another#Pass99").await;
     assert!(reused.is_err(), "an invitation must be single-use");
+}
+
+#[tokio::test]
+async fn an_invitation_never_re_enables_a_disabled_account() {
+    // DEF-IA-04 (HRMS-102, PD-001, HRMS-124): accepting used to write
+    // `enabled = true` unconditionally, so an owner who disabled a person
+    // inside the 7-day window had that decision reversed by the invitee's
+    // own click.
+    secrets();
+    let provisional = password::hash(&AccountInviteUseCase::unguessable_secret()).unwrap();
+    let mut invitee = user();
+    invitee.password = provisional.clone();
+    let invite = AccountInviteUseCase::issue(&invitee).expect("invite issued");
+
+    let db = db_returning(vec![vec![row(&provisional, false)]]);
+    let refused = AccountInviteUseCase::accept(&db, &invite.token, "Chosen#Pass99").await;
+    assert!(refused.is_err(), "a disabled account must not be activated by its invitation");
+}
+
+#[tokio::test]
+async fn a_disabled_account_is_never_re_invited() {
+    // The same rule on the issuing side (DEF-IA-07's new operation must not
+    // become a way around DEF-IA-04).
+    secrets();
+    let mut disabled = user();
+    disabled.enabled = false;
+    let db = db_returning(vec![]);
+    assert!(AccountInviteUseCase::reissue(&db, disabled).await.is_err());
+}
+
+#[tokio::test]
+async fn re_issuing_replaces_the_secret_so_the_previous_invitation_dies() {
+    // DEF-IA-07 (HRMS-125, D-07): supersession is not bookkeeping -- the
+    // signing key is derived from the stored hash, so writing a fresh
+    // unguessable secret invalidates the outstanding invitation by
+    // construction.
+    secrets();
+    let provisional = password::hash(&AccountInviteUseCase::unguessable_secret()).unwrap();
+    let mut invitee = user();
+    invitee.password = provisional.clone();
+    let first = AccountInviteUseCase::issue(&invitee).expect("invite issued");
+
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_exec_results([MockExecResult { last_insert_id: 5, rows_affected: 1 }])
+        .append_query_results([vec![row(&provisional, true)]])
+        .into_connection();
+    let (refreshed, second) = entity::audit::run_with_user(
+        Some(entity::audit::AuditUser {
+            id: 1,
+            email: "admin@example.com".into(),
+            tenant_id: Some(42),
+            enforce_tenant: true,
+        }),
+        AccountInviteUseCase::reissue(&db, invitee),
+    )
+    .await
+    .expect("re-issued");
+
+    assert_ne!(refreshed.password, provisional, "the stored secret must be replaced");
+    assert_ne!(second.token, first.token);
+
+    // The old token no longer verifies against the new hash.
+    let after = db_returning(vec![vec![row(&refreshed.password, true)]]);
+    assert!(AccountInviteUseCase::accept(&after, &first.token, "Chosen#Pass99").await.is_err());
 }
 
 #[tokio::test]

@@ -1,3 +1,4 @@
+use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::password_policy;
 use crate::domain::user::User;
@@ -84,6 +85,16 @@ impl AccountInviteUseCase {
             .map_err(|e| BusinessError::new(format!("Database error validating invite: {}", e)))?
             .ok_or_else(|| BusinessError::new("Invalid invite".to_string()))?;
 
+        // DEF-IA-04 (HRMS-102, PD-001, HRMS-124): a disabled account stays
+        // disabled. Accepting the invitation used to write `enabled = true`
+        // unconditionally, so an owner who removed a person inside the 7-day
+        // window -- a hire withdrawn, an account created disabled on purpose --
+        // had that decision quietly reversed by the invitee's own click.
+        if !user.enabled {
+            log::warn!("[AccountInviteUseCase::accept] Invite refused for disabled account {}", user.email);
+            return Err(BusinessError::new("Invite is invalid or has already been used".to_string()));
+        }
+
         // Agora sim: assinatura conferida contra a chave derivada do hash atual.
         // Se a senha já foi definida, a chave mudou e este convite não abre mais.
         let mut strict = Validation::new(Algorithm::HS512);
@@ -107,7 +118,6 @@ impl AccountInviteUseCase {
 
         let mut active: user_entity::ActiveModel = user.clone().into();
         active.password = Set(hashed);
-        active.enabled = Set(true);
         // D-05: `/accept-invite` é rota pública — não há sessão, logo não há
         // escopo, logo a gravação seria recusada. O convidado age sobre a
         // própria conta, então a escrita roda com a identidade dele: quem tem
@@ -132,6 +142,45 @@ impl AccountInviteUseCase {
     /// antes de o paciente aceitar o convite.
     pub fn unguessable_secret() -> String {
         format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4())
+    }
+
+    /// DEF-IA-07 (HRMS-125, D-07): issues a fresh invitation for an existing
+    /// account, superseding any outstanding one.
+    ///
+    /// Until this existed, `POST /user` was the only operation that ever issued
+    /// an invitation, and it cannot run twice for the same address (the address
+    /// is unique). An invitation lost to a mail failure -- sending is
+    /// best-effort, and `POST /user` answers 201 either way -- or simply left to
+    /// expire after 7 days had no replacement, and the only way in was for an
+    /// administrator to type a password on the person's behalf, which is exactly
+    /// what PD-002 set out to remove.
+    ///
+    /// Supersession is not bookkeeping here: the signing key is derived from the
+    /// account's current password hash, so replacing that hash with a new
+    /// unguessable secret invalidates every earlier invitation by construction.
+    /// The account is left with a secret nobody knows, which is the same state
+    /// `POST /user` leaves it in.
+    pub async fn reissue(db: &DbConn, user: User) -> Result<(User, AccountInvite), BusinessError> {
+        if !user.enabled {
+            // DEF-IA-04's rule, stated on the issuing side too: a disabled
+            // account is not invited back in.
+            return Err(BusinessError::new("Cannot invite a disabled account".to_string()));
+        }
+
+        let hashed = crate::commons::password::hash(&Self::unguessable_secret())
+            .map_err(|e| BusinessError::new(format!("Failed to hash password: {}", e)))?;
+
+        let refreshed = User { password: hashed, updated_at: None, ..user };
+
+        let saved = UserGateway::new(db.clone())
+            .persist(refreshed.clone())
+            .await
+            .map_err(|e| BusinessError::new(format!("Failed to re-issue invite: {}", e)))?;
+
+        let _ = saved;
+        let invite = Self::issue(&refreshed)?;
+        log::info!("[AccountInviteUseCase::reissue] Invite re-issued for {}", refreshed.email);
+        Ok((refreshed, invite))
     }
 
     /// Lê o `sub` do payload do JWT sem verificar assinatura, apenas para saber

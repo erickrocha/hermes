@@ -64,6 +64,7 @@ impl Modify for SecurityAddon {
 		endpoints::user_endpoint::add,
 		endpoints::user_endpoint::list_all,
 		endpoints::user_endpoint::update,
+		endpoints::user_endpoint::reissue_invite,
 		endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
         endpoints::province_endpoint::list_page,
@@ -204,12 +205,32 @@ fn validate_token_secrets(access: Option<String>, refresh: Option<String>) -> Re
     Ok(())
 }
 
+/// DEF-IA-09 (HRMS-109): the seeded administrator is the most privileged
+/// account on the platform, and it was the one password on it exempt from the
+/// minimum length -- `SYSADMIN_PASSWORD=Short1` booted and signed in. Checked
+/// here, with the token secrets, so a bad value is a refusal to start rather
+/// than a weak account discovered later.
+fn validate_sysadmin_credentials(email: Option<String>, password: Option<String>) -> Result<(), String> {
+    match email.as_deref().map(str::trim) {
+        None | Some("") => return Err("SYSADMIN_EMAIL must be set".to_string()),
+        Some(_) => {}
+    }
+    match password.as_deref() {
+        None => Err("SYSADMIN_PASSWORD must be set".to_string()),
+        Some(secret) if secret.trim().is_empty() => Err("SYSADMIN_PASSWORD must be set".to_string()),
+        Some(secret) => business::domain::password_policy::validate_length(secret)
+            .map_err(|problem| format!("SYSADMIN_PASSWORD {}", problem.message.to_lowercase())),
+    }
+}
+
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
     // env::set_var("RUST_LOG", "debug");
     tracing_subscriber::fmt::init();
     load_dotenv()?;
     validate_token_secrets(env::var("ACCESS_TOKEN_SECRET").ok(), env::var("REFRESH_TOKEN_SECRET").ok())
+        .map_err(|problem| anyhow::anyhow!("Refusing to start: {problem}"))?;
+    validate_sysadmin_credentials(env::var("SYSADMIN_EMAIL").ok(), env::var("SYSADMIN_PASSWORD").ok())
         .map_err(|problem| anyhow::anyhow!("Refusing to start: {problem}"))?;
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let host = env::var("HOST").expect("HOST is not set in .env file");
@@ -518,5 +539,33 @@ mod token_secret_tests {
     #[test]
     fn a_shared_secret_is_refused() {
         assert!(validate_token_secrets(secret('a'), secret('a')).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sysadmin_credential_tests {
+    use super::validate_sysadmin_credentials;
+
+    fn email() -> Option<String> {
+        Some("admin@hermes.io".to_string())
+    }
+
+    #[test]
+    fn a_long_enough_password_is_accepted() {
+        assert!(validate_sysadmin_credentials(email(), Some("Str0ngEnough".to_string())).is_ok());
+    }
+
+    #[test]
+    fn the_reported_six_character_password_is_refused() {
+        // DEF-IA-09 reproduced: `SYSADMIN_PASSWORD=Short1` used to boot.
+        assert!(validate_sysadmin_credentials(email(), Some("Short1".to_string())).is_err());
+    }
+
+    #[test]
+    fn missing_or_blank_values_are_refused() {
+        assert!(validate_sysadmin_credentials(None, Some("Str0ngEnough".to_string())).is_err());
+        assert!(validate_sysadmin_credentials(Some("  ".to_string()), Some("Str0ngEnough".to_string())).is_err());
+        assert!(validate_sysadmin_credentials(email(), None).is_err());
+        assert!(validate_sysadmin_credentials(email(), Some("   ".to_string())).is_err());
     }
 }

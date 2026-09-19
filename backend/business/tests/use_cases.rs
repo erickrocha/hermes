@@ -729,7 +729,12 @@ async fn persisting_a_user_hashes_the_password() {
 }
 
 #[tokio::test]
-async fn updating_a_user_with_a_new_password_rehashes_it() {
+async fn updating_a_user_never_changes_the_password() {
+    // DEF-IA-03 (HRMS-108, HRMS-018): `PUT /user/{id}` is user administration,
+    // and administration never sets credentials. A `password` in the payload is
+    // ignored outright -- not hashed, not validated -- and the stored hash is
+    // written back untouched. Changing a password happens through invitation
+    // (PD-002), which is the only path that proves possession of the account.
     let existing = user_row(5, "u@example.com", "TenantUser", Some(42), "$argon2id$old");
     let db = mock()
         .append_query_results([[existing.clone()]])
@@ -741,17 +746,27 @@ async fn updating_a_user_with_a_new_password_rehashes_it() {
         UserUseCase::new(UserGateway::new(db.clone())).update(5, new_user("u@example.com", "Brand#New99", Role::TenantUser, Some(42))),
     )
     .await
-    .expect("update with password");
+    .expect("update ignores the password");
     let sql = format!("{:?}", log(db));
-    assert!(!sql.contains("Brand#New99") && !sql.contains("$argon2id$old"), "{sql}");
+    assert!(!sql.contains("Brand#New99"), "a supplied password must never reach the database: {sql}");
+    assert!(sql.contains("$argon2id$old"), "the stored hash must be written back unchanged: {sql}");
 
+    // A password that could never be *set* does not block an edit either,
+    // because the field is not a credential on this route.
     let short = run_with_user(
         Some(owner(42)),
-        UserUseCase::new(UserGateway::new(mock().append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "h")]]).into_connection()))
-            .update(5, new_user("u@example.com", "short", Role::TenantUser, Some(42))),
+        UserUseCase::new(UserGateway::new(
+            mock()
+                .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "h")]])
+                .append_exec_results([inserted(5)])
+                .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "h")]])
+                .into_connection(),
+        ))
+        .update(5, new_user("u@example.com", "short", Role::TenantUser, Some(42))),
     )
     .await;
-    assert!(short.is_err(), "the password policy applies on update too");
+    assert!(short.is_ok(), "the password field is inert on update");
+
     assert!(
         run_with_user(Some(owner(42)), UserUseCase::new(UserGateway::new(failing(1))).update(5, new_user("u@example.com", "", Role::TenantUser, Some(42))))
             .await

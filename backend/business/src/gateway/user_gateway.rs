@@ -81,6 +81,21 @@ impl UserGateway {
             .await
     }
 
+    /// DEF-IA-01/DEF-IA-02: the authentication-time lookup, keyed on the
+    /// account's immutable id rather than on its address.
+    ///
+    /// Deliberately *not* the `Gateway::find_by_id` above: that one goes
+    /// through `tenant_select`, and authentication happens before any tenant
+    /// scope exists. It is also deliberately not `find_by_email`: an address
+    /// is editable and reusable, so a token resolved by address follows the
+    /// address to whoever holds it next.
+    pub async fn find_by_user_id(db: &DbConn, id: i64) -> Result<Option<user_entity::Model>, DbErr> {
+        UserQuery::find()
+            .filter(user_entity::Column::Id.eq(id))
+            .one(db)
+            .await
+    }
+
     pub async fn find_by_role(db: &DbConn, role: String) -> Result<Option<user_entity::Model>, DbErr> {
         UserQuery::find()
             .filter(user_entity::Column::Role.eq(role))
