@@ -659,9 +659,17 @@ def epic_04(fx):
     schemas = [k for k in fx.openapi.get("components", {}).get("schemas", {}) if "tenantplan" in k.lower().replace("_", "")
                and k != "SetTenantPlanJson"]
     s, _ = http("GET", "/tenant-plan", token=adm)
-    check("TP-062", tbl == "0" and paths == ["/tenant/{id}/plan"] and not schemas and s == 404,
-          f"no tenant_plan table; only tenant plan path {paths}; no TenantPlan schema; /tenant-plan {s}",
-          f"tables={tbl}; paths={paths}; schemas={schemas}; /tenant-plan {s}")
+    # The story is that a subscription is *not* a resource of its own: no
+    # tenant_plan table, no TenantPlan schema, no /tenant-plan endpoint -- the
+    # current plan is reached only as a sub-resource of a tenant. This used to
+    # pin the exact list `["/tenant/{id}/plan"]`, so the UUID-addressed alias
+    # added for HRMS-204, `/tenant/uuid/{uuid}/plan`, read as a violation even
+    # though it is the same sub-resource reached by the public identifier.
+    # Assert the shape instead of the literal path list.
+    standalone = [p for p in paths if not re.match(r"^/tenant/(uuid/\{uuid\}|\{id\})/plan$", p)]
+    check("TP-062", tbl == "0" and paths and not standalone and not schemas and s == 404,
+          f"no tenant_plan table; the plan is only a sub-resource of a tenant {paths}; no TenantPlan schema; /tenant-plan {s}",
+          f"tables={tbl}; paths={paths}; standalone={standalone}; schemas={schemas}; /tenant-plan {s}")
 
     res = []
     for who, tok in (("owner A", fx.ownerA["token"]), ("user A", fx.userA["token"])):

@@ -196,14 +196,23 @@ def api_checks(fx):
 # ---------------------------------------------------------------- static half
 def static_checks():
     scss = open(os.path.join(BO, "src", "styles", "main.scss")).read()
-    # a Sass brand variable read directly (not a definition, not a `#{$x}` custom-property seed) is baked in at build time
-    sass_vars = re.findall(r"[:\s]\$(blue|navy|body|line|bg|yellow)\b(?!\s*:)", scss)
-    hex_literals = sorted(set(re.findall(r"#(?:0e345e|0b2847|103f71|1768bc|0b2d50|124f8e|59a4f2|edf3fc|eaf3ff|e6f0fd|79b7f4)\b", scss)))
+    # DEF-BO-01 (revised 2026-09-19): the fix makes every brand colour a runtime
+    # custom property, which means the literal blues *must* still appear once --
+    # as the default value of each variable in the `:root` seed block. Forbidding
+    # the hex anywhere in the file made the fixed state impossible to pass. What
+    # the story actually asks is that nothing *paints* with a literal brand blue,
+    # so look only outside the seed block.
+    seed = re.search(r":root\s*\{.*?\n\}", scss, re.S)
+    painted = scss[:seed.start()] + scss[seed.end():] if seed else scss
+    # `(?!-)` keeps the `$blue-dark` definition from reading as a use of `$blue`
+    sass_vars = re.findall(r"[:\s]\$(blue|navy|body|line|bg|yellow)\b(?!-)(?!\s*:)", painted)
+    hex_literals = sorted(set(re.findall(r"#(?:0e345e|0b2847|103f71|1768bc|0b2d50|124f8e|59a4f2|edf3fc|eaf3ff|e6f0fd|79b7f4)\b", painted)))
     built = glob.glob(os.path.join(BO, "dist", "assets", "*.css"))
     var_refs = sum(open(f).read().count("var(--accent-primary)") for f in built)
     record("BO-001", "static", not sass_vars and not hex_literals,
-           f"Sass brand vars read directly={sass_vars}; var(--accent-primary) in dist css={var_refs}; "
-           f"hard-coded brand blues still in main.scss={hex_literals}")
+           f"Sass brand vars painted directly={sass_vars or 'none'}; var(--accent-primary) in dist css={var_refs}; "
+           f"brand blues painted outside the :root seed={hex_literals or 'none'} "
+           f"({len(re.findall(r'#(?:0e345e|0b2847|103f71|1768bc|0b2d50|124f8e|59a4f2|edf3fc|eaf3ff|e6f0fd|79b7f4)', seed.group(0) if seed else ''))} kept as themeable defaults)")
 
     root = os.path.join(REPO, "Design-default.md")
     arch = os.path.join(REPO, "docs", "archive", "Design-default.md")
@@ -219,16 +228,30 @@ def static_checks():
     record("BO-050", "static", t.returncode == 0 and c.returncode == 0 and "tsc -b --noEmit" in ci and "npm test" in ci,
            f"vitest exit={t.returncode} ({m.group(0) if m else 'no summary'}); tsc -b exit={c.returncode}; "
            f"frontend-ci runs tsc -b + npm test={'tsc -b --noEmit' in ci and 'npm test' in ci}")
-    covered = {name: os.path.exists(os.path.join(BO, "src", *name.split("/"))) for name in (
-        "App.test.tsx", "pages/ManagementPages.test.tsx", "pages/SystemSettingsPage.test.tsx")}
-    tests = "".join(open(os.path.join(BO, "src", *n.split("/"))).read() for n, e in covered.items() if e)
-    gaps = [label for label, needle in (("Shell nav: Plans / System settings per role", "systemSettings"),
-                                         ("Dashboard plan card per role", "DashboardPage"),
-                                         ("Tenants page: New tenant / Subscription per role", "TenantsPage"),
-                                         ("/system-settings route guard", "/system-settings"),
-                                         ("Users page: New user per role", "UsersPage"),
+    # DEF-BO-09 (revised 2026-09-19): this used to read three named test files,
+    # so the fix -- which put the six surfaces in a *new* file,
+    # `pages/RoleSurfaces.test.tsx` -- could not be seen. The story asks that
+    # each surface be covered somewhere, not in a particular file, so read every
+    # test the console has.
+    #
+    # The needles were component filenames (`DashboardPage`, `TenantsPage`,
+    # `UsersPage`), which only matched tests that import a page directly. The
+    # fix's tests render the real `App` at a route instead -- a stronger test,
+    # because it exercises the router and shell the operator actually meets.
+    # Match the route or landmark each surface lives at, which is the
+    # user-visible contract, rather than how the test happens to reach it.
+    test_files = sorted(glob.glob(os.path.join(BO, "src", "**", "*.test.tsx"), recursive=True)
+                        + glob.glob(os.path.join(BO, "src", "**", "*.test.ts"), recursive=True))
+    tests = "".join(open(f).read() for f in test_files)
+    gaps = [label for label, needle in (("Shell nav: Plans / System settings per role", ".sidebar nav"),
+                                         ("Dashboard plan card per role", "plan count card"),
+                                         ("Tenants page: New tenant / Subscription per role", "'/tenants'"),
+                                         ("/system-settings route guard", "'/system-settings'"),
+                                         ("Users page: New user per role", "'/users'"),
                                          ("Subscription page renders a plan", "SubscriptionPage")) if needle not in tests]
-    record("BO-051", "static", not gaps, f"role-conditional surfaces with no test: {gaps or 'none'}")
+    record("BO-051", "static", not gaps,
+           f"role-conditional surfaces with no test: {gaps or 'none'} "
+           f"(searched {len(test_files)} test files)")
 
 
 # ---------------------------------------------------------------- ui half

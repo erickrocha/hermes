@@ -349,12 +349,31 @@ def hierarchy(fx):
           f"owner A's list shows the new users; the tenant user activated, signed in (role TenantUser, tenant {fx.tA}) and reads its tenant (200)",
           f"list {s_list} {sorted(seen)}; claims {c}; GET own tenant -> {st}")
 
-    # IA-015 -- the tenant comes from the owner, not the payload
+    # IA-015 -- the tenant comes from the owner, and a payload naming a
+    # different one is refused rather than reinterpreted.
+    #
+    # Updated 2026-09-19 for DEF-IA-08's accepted fix. This scenario used to
+    # assert the silent overwrite (201, stored as A). That is exactly the
+    # behaviour DEF-IA-08 removed: reinterpreting an impossible combination
+    # answered 201 to something the caller never asked for (D-08 "impossible by
+    # design"). The rule is unchanged -- the tenant still comes from the owner,
+    # never the payload -- only the answer to naming a different one.
     s, u = mk_user(fx, A["token"], "user-a3", "TenantUser", fx.tB)
     t = sql(f"SELECT IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('user-a3')}'")
-    check("IA-015", s == 201 and t == [[str(fx.tA)]],
-          f"owner A POST /user with tenantId={fx.tB} (B) -> 201, stored in tenant A ({fx.tA})",
+    check("IA-015", s == 400 and t == [],
+          f"owner A POST /user with tenantId={fx.tB} (B) -> 400, nothing stored (DEF-IA-08, D-08)",
           f"-> {s} {u}; stored tenant {t}")
+
+    # ...and then the same account created the way the hierarchy allows, so the
+    # session scenarios below have a tenant user of A to work with. Before the
+    # DEF-IA-08 fix the refused call above created it as a side effect; now it
+    # correctly creates nothing, so the fixture has to be made on purpose.
+    # Failing loudly here beats letting activate() raise 200 lines later and
+    # take every remaining story down as BLOCKED.
+    s3, u3 = mk_user(fx, A["token"], "user-a3", "TenantUser")
+    t3 = sql(f"SELECT IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('user-a3')}'")
+    if s3 != 201 or t3 != [[str(fx.tA)]]:
+        raise RuntimeError(f"fixture user-a3 could not be created: -> {s3} {u3}; stored tenant {t3}")
 
     # IA-016 -- combinations outside the hierarchy
     combos = {
@@ -687,11 +706,21 @@ def sessions(fx):
           f"refresh claim {cr.get('uuid')}, refreshed {cn.get('uuid')}, user {me.get('uuid')}")
 
     # IA-044 -- minimum length (8) on every API path that sets a password
+    #
+    # Updated 2026-09-19 for DEF-IA-03's accepted fix. `PUT /user/{id}` used to
+    # be a third password-setting path and this scenario checked that it too
+    # refused 7 characters. DEF-IA-03 removed password-setting from that route
+    # entirely -- anyone holding a 3-hour access token could otherwise replace
+    # an account's password without knowing the current one -- so exactly two
+    # paths remain. The route is still exercised here, for the stronger
+    # property that it now *ignores* a password rather than validating one.
     s_n, u_n = mk_user(fx, A["token"], "user-a5", "TenantUser")
     short = "Ab#4567"   # 7 characters
+    hash_before = pw_hash(em("user-a5"))
+    put_status = http("PUT", f"/user/{u_n['id']}", token=A["token"], body={
+        "email": em("user-a5"), "name": "user-a5", "role": "TenantUser", "enabled": True, "password": short})[0]
+    put_ignored = pw_hash(em("user-a5")) == hash_before
     res = {
-        "PUT /user/{id} reset": http("PUT", f"/user/{u_n['id']}", token=A["token"], body={
-            "email": em("user-a5"), "name": "user-a5", "role": "TenantUser", "enabled": True, "password": short})[0],
         "POST /accept-invite": http("POST", "/accept-invite", body={
             "token": mint_invite(em("user-a5"), pw_hash(em("user-a5")), fx.secret), "newPassword": short})[0],
     }
@@ -700,9 +729,12 @@ def sessions(fx):
         "currentPassword": "Ab#45678", "newPassword": short})[0]
     still = login(em("user-a5"), "Ab#45678")[0]
     short_in = login(em("user-a5"), short)[0]
-    check("IA-044", all(v == 400 for v in res.values()) and still == 200 and short_in == 401,
-          f"7-char password refused on {res}; 8-char accepted at the boundary; the account keeps its 8-char password",
-          f"statuses {res}; 8-char login {still}; 7-char login {short_in}")
+    check("IA-044", all(v == 400 for v in res.values()) and still == 200 and short_in == 401 and put_ignored,
+          f"7-char password refused on {res}; PUT /user/{{id}} ignored it entirely "
+          f"({put_status}, stored hash unchanged -- DEF-IA-03); 8-char accepted at the boundary; "
+          f"the account keeps its 8-char password",
+          f"statuses {res}; PUT reset {put_status}, hash unchanged={put_ignored}; "
+          f"8-char login {still}; 7-char login {short_in}")
 
     # IA-050 -- change own password; identity from the token only
     h_a2 = pw_hash(A2["email"])
@@ -840,17 +872,25 @@ def invitations(fx):
           f"created and invited but the invitation is refused, so the invitee can never get in")
 
     # IA-063 -- a password set by other means kills the outstanding invitation; no invitation table
+    #
+    # Updated 2026-09-19 for DEF-IA-03's accepted fix. The "other means" used to
+    # be an owner resetting the password through `PUT /user/{id}`; that route no
+    # longer sets a password at all, so the property is exercised through the
+    # route that does. The property itself is unchanged and is the reason there
+    # is no invitation table: an invitation is signed with the password hash it
+    # was issued against, so any later password change invalidates it.
     s3, u3 = mk_user(fx, A["token"], "inv-3", "TenantUser")
-    inv3 = mint_invite(em("inv-3"), pw_hash(em("inv-3")), fx.secret)
-    s_reset = http("PUT", f"/user/{u3['id']}", token=A["token"], body={
-        "email": em("inv-3"), "name": "inv-3", "role": "TenantUser", "enabled": True, "password": "QaAdminSet#2026"})[0]
-    after = http("POST", "/accept-invite", body={"token": inv3, "newPassword": "QaLateAccept#2026"})[0]
+    holder = activate(fx, em("inv-3"), "QaInvThree#2026")
+    outstanding = mint_invite(em("inv-3"), pw_hash(em("inv-3")), fx.secret)
+    s_reset = http("PUT", "/user/change-password", token=holder["token"], body={
+        "currentPassword": "QaInvThree#2026", "newPassword": "QaAdminSet#2026"})[0]
+    after = http("POST", "/accept-invite", body={"token": outstanding, "newPassword": "QaLateAccept#2026"})[0]
     tables = [r[0] for r in sql("SHOW TABLES")]
     inv_tables = [t for t in tables if "invit" in t.lower() or "invite" in t.lower() or "token" in t.lower()]
     check("IA-063", s_reset == 200 and after == 400 and login(em("inv-3"), "QaAdminSet#2026")[0] == 200 and not inv_tables,
-          f"password set by the owner (PUT -> {s_reset}) -> the earlier invitation -> {after}; after acceptance the link is "
-          f"dead too (IA-062); no invitation/token table in {tables}",
-          f"reset {s_reset}; stale invite -> {after}; invitation tables {inv_tables}")
+          f"password changed by its holder (change-password -> {s_reset}) -> the outstanding invitation -> {after}; "
+          f"after acceptance the link is dead too (IA-062); no invitation/token table in {tables}",
+          f"change-password {s_reset}; stale invite -> {after}; invitation tables {inv_tables}")
 
     # IA-064 -- a newer invitation supersedes the older one
     s_doc, doc = http("GET", "/api-docs/openapi.json")

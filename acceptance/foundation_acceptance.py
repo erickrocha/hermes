@@ -252,19 +252,34 @@ def api_scenarios(fx):
            f"after DB-only reassignment to tenant B the SAME token sees tenant B rows={B['email'] in seen2} "
            f"-> scope {'follows token claims' if from_claims else 'is re-read from the database on every request (HRMS-001/PD-012 say claims alone, no lookup)'}")
 
-    # XF-003/004/009/010 -- owner A creates a tenant user while claiming tenant B,
-    # a fake uuid and fake audit fields in the payload.
+    # XF-003/004/009/010 -- owner A creates a tenant user with a fake uuid and
+    # fake audit fields in the payload.
+    #
+    # Updated 2026-09-19 for DEF-IA-08's accepted fix. This call used to also
+    # claim `tenantId` = B, and XF-004 asserted the claim was silently
+    # overwritten with A. DEF-IA-08 refuses that combination outright now, so
+    # the refusal is asserted on its own and the fixture is created the way the
+    # hierarchy allows. Otherwise the create fails, and with it XF-003/009/010
+    # and the tenant-user fixture that the XF-020/021 guard scenarios need --
+    # `U = fx.userA or A` quietly falls back to the *owner*, which then creates
+    # a user legitimately and reads as a privilege escalation that never
+    # happened.
     fake_uuid = str(uuid.uuid4())
+    claimed_b = http("POST", "/user", token=A["token"], body={
+        "email": f"{TAG}-user-bclaim@hermes.test", "name": "claim b", "role": "TenantUser",
+        "enabled": True, "tenantId": fx.tB})[0]
     s, _, u = http("POST", "/user", token=A["token"], body={
         "email": f"{TAG}-user-a@hermes.test", "name": "user a", "role": "TenantUser", "enabled": True,
-        "tenantId": fx.tB, "uuid": fake_uuid, "createdBy": "forged@evil", "updatedBy": "forged@evil",
+        "uuid": fake_uuid, "createdBy": "forged@evil", "updatedBy": "forged@evil",
         "createdAt": "2000-01-01T00:00:00"})
     fx.userA = None
     if s == 201:
         row = sql(f"SELECT tenant_id, created_by, updated_by, HEX(uuid), created_at FROM user WHERE id={u['id']}")[0]
-        check("XF-004", int(row[0]) == fx.tA,
-              f"POST /user as owner A with tenantId={fx.tB} -> 201, stored tenant_id={row[0]} (A)",
-              f"POST /user as owner A with tenantId={fx.tB} stored tenant_id={row[0]}")
+        claim_stored = sql(f"SELECT COUNT(*) FROM user WHERE email='{TAG}-user-bclaim@hermes.test'")[0][0]
+        check("XF-004", int(row[0]) == fx.tA and claimed_b == 400 and claim_stored == "0",
+              f"the tenant comes from the caller: stored tenant_id={row[0]} (A) with no tenantId in the payload; "
+              f"naming tenant {fx.tB} instead -> {claimed_b}, nothing stored (DEF-IA-08, D-08)",
+              f"stored tenant_id={row[0]}; naming tenant B -> {claimed_b}, rows stored {claim_stored}")
         check("XF-003", row[1] == A["email"] and row[2] == A["email"],
               f"row written deep in the persistence layer carries created_by/updated_by={row[1]} (the caller) with no identity in the payload path",
               f"created_by={row[1]} updated_by={row[2]}, expected {A['email']}")
@@ -320,39 +335,51 @@ def api_scenarios(fx):
           f"codes={codes}, old-password login={still}")
 
     # XF-020/021: role rules enforced by the API whatever the client shows
-    U = fx.userA or A
-    matrix = [
-        ("TenantUser POST /tenant", U, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
-        ("TenantUser POST /user", U, "POST", "/user", {"email": f"{TAG}-x1@hermes.test", "role": "TenantUser", "enabled": True}),
-        ("TenantUser GET /business-plan", U, "GET", "/business-plan", None),
-        ("TenantOwner POST /tenant", A, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
-        ("TenantOwner POST /business-plan", A, "POST", "/business-plan",
-         {"name": f"{TAG}-plan", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
-          "paymentDate": "2026-10-01"}),
-        ("TenantOwner GET /business-plan", A, "GET", "/business-plan", None),
-        ("TenantOwner POST /province", A, "POST", "/province", {"acronym": "QZ", "name": "x", "countryCode": "US"}),
-        ("TenantOwner POST /city", A, "POST", "/city", {"provinceId": 1, "name": f"{TAG}-city"}),
-        ("TenantOwner POST /tenant/{A}/plan", A, "POST", f"/tenant/{fx.tA}/plan", {"businessPlanId": 1}),
-    ]
-    got = {name: http(m, p, body=b, token=who["token"])[0] for name, who, m, p, b in matrix}
-    check("XF-020", all(c in (403, 404) for c in got.values()),
-          "every out-of-role call refused server-side: " + ", ".join(f"{k}={v}" for k, v in got.items()),
-          "out-of-role call accepted: " + ", ".join(f"{k}={v}" for k, v in got.items()))
-    esc = {
-        "owner creates SysAdmin": http("POST", "/user", token=A["token"], body={
-            "email": f"{TAG}-esc1@hermes.test", "role": "SysAdmin", "enabled": True})[0],
-        "owner creates TenantOwner": http("POST", "/user", token=A["token"], body={
-            "email": f"{TAG}-esc2@hermes.test", "role": "TenantOwner", "enabled": True, "tenantId": fx.tA})[0],
-        "user creates TenantUser": http("POST", "/user", token=U["token"], body={
-            "email": f"{TAG}-esc3@hermes.test", "role": "TenantUser", "enabled": True})[0],
-    }
-    http("PUT", f"/user/{A['id']}", token=A["token"], body={
-        "email": A["email"], "name": "owner-a", "role": "SysAdmin", "enabled": True, "tenantId": None})
-    role_after = sql(f"SELECT role, tenant_id FROM user WHERE id={A['id']}")[0]
-    leaked = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-esc%' OR email LIKE '{TAG}-x1%'")[0][0]
-    check("XF-021", all(c == 403 for c in esc.values()) and role_after == ["TenantOwner", str(fx.tA)] and leaked == "0",
-          f"privilege escalation refused: {esc}; owner self-promotion to SysAdmin via PUT left role={role_after[0]}",
-          f"escalation results={esc}, owner row after self-promotion={role_after}, leaked rows={leaked}")
+    #
+    # `fx.userA or A` used to stand in here when the tenant-user fixture was
+    # missing. That is the worst possible substitute: every "TenantUser ..."
+    # row below then describes the *owner's* rights, so "TenantUser POST /user"
+    # answers 201 legitimately and XF-020/021 report a privilege escalation
+    # that never happened. Report the missing fixture instead.
+    U = fx.userA
+    if U is None:
+        for sid in ("XF-020", "XF-021"):
+            record(sid, "BLOCKED", "no tenant-user fixture: POST /user did not create one, and the "
+                                   "owner must not stand in for a tenant user in a role-guard matrix")
+        U = A
+    else:
+        matrix = [
+            ("TenantUser POST /tenant", U, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
+            ("TenantUser POST /user", U, "POST", "/user", {"email": f"{TAG}-x1@hermes.test", "role": "TenantUser", "enabled": True}),
+            ("TenantUser GET /business-plan", U, "GET", "/business-plan", None),
+            ("TenantOwner POST /tenant", A, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
+            ("TenantOwner POST /business-plan", A, "POST", "/business-plan",
+             {"name": f"{TAG}-plan", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
+              "paymentDate": "2026-10-01"}),
+            ("TenantOwner GET /business-plan", A, "GET", "/business-plan", None),
+            ("TenantOwner POST /province", A, "POST", "/province", {"acronym": "QZ", "name": "x", "countryCode": "US"}),
+            ("TenantOwner POST /city", A, "POST", "/city", {"provinceId": 1, "name": f"{TAG}-city"}),
+            ("TenantOwner POST /tenant/{A}/plan", A, "POST", f"/tenant/{fx.tA}/plan", {"businessPlanId": 1}),
+        ]
+        got = {name: http(m, p, body=b, token=who["token"])[0] for name, who, m, p, b in matrix}
+        check("XF-020", all(c in (403, 404) for c in got.values()),
+              "every out-of-role call refused server-side: " + ", ".join(f"{k}={v}" for k, v in got.items()),
+              "out-of-role call accepted: " + ", ".join(f"{k}={v}" for k, v in got.items()))
+        esc = {
+            "owner creates SysAdmin": http("POST", "/user", token=A["token"], body={
+                "email": f"{TAG}-esc1@hermes.test", "role": "SysAdmin", "enabled": True})[0],
+            "owner creates TenantOwner": http("POST", "/user", token=A["token"], body={
+                "email": f"{TAG}-esc2@hermes.test", "role": "TenantOwner", "enabled": True, "tenantId": fx.tA})[0],
+            "user creates TenantUser": http("POST", "/user", token=U["token"], body={
+                "email": f"{TAG}-esc3@hermes.test", "role": "TenantUser", "enabled": True})[0],
+        }
+        http("PUT", f"/user/{A['id']}", token=A["token"], body={
+            "email": A["email"], "name": "owner-a", "role": "SysAdmin", "enabled": True, "tenantId": None})
+        role_after = sql(f"SELECT role, tenant_id FROM user WHERE id={A['id']}")[0]
+        leaked = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-esc%' OR email LIKE '{TAG}-x1%'")[0][0]
+        check("XF-021", all(c == 403 for c in esc.values()) and role_after == ["TenantOwner", str(fx.tA)] and leaked == "0",
+              f"privilege escalation refused: {esc}; owner self-promotion to SysAdmin via PUT left role={role_after[0]}",
+              f"escalation results={esc}, owner row after self-promotion={role_after}, leaked rows={leaked}")
 
     # XF-023: roles are a closed named set carried in the token
     roles = {jwt_payload(t)["role"] for t in (adm["token"], A["token"], U["token"])}

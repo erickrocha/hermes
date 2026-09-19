@@ -106,7 +106,13 @@ try {
     await review.waitFor({ state: 'detached', timeout: 10000 })
     await admin.waitForTimeout(800)
     const afterFix = await qrProvinces(token)
-    out('RD-054', /row 2/.test(message) && !/row 1:/.test(message) && !('U3' in afterReject) && gridKept === 2
+    // The row-number assertion used to be English-only (`/row 2/`), but this
+    // browser runs in pt-BR (RD-055 pins the three translations), so a correctly
+    // localised message -- "linha 2: o nome é obrigatório" -- read as a failure.
+    // Accept the row word in any of the three console languages.
+    const rowN = (n) => new RegExp(`(row|linha|fila) ${n}`)
+    out('RD-054', rowN(2).test(message) && !new RegExp('(row|linha|fila) 1:').test(message)
+      && !('U3' in afterReject) && gridKept === 2
       && afterFix.U3 === 'qa-rd-ui-three' && afterFix.U4 === 'qa-rd-ui-four',
       `Save -> error shown in the review grid: "${message}" (console language pt-BR); U3 written after rejection=${'U3' in afterReject}; ` +
       `grid kept ${gridKept} rows; after fixing row 2 in the grid and saving again -> U3/U4 stored=${Boolean(afterFix.U3 && afterFix.U4)}`)
@@ -116,15 +122,25 @@ try {
     admin.on('response', (r) => { if (/\/(province\?|cities\/by-province)/.test(r.url())) feeds.push(r) })
     await admin.goto(`${CONSOLE}/tenants/new`)
     await admin.waitForTimeout(1500)
-    const countries = await admin.locator('input[name=countryCode]').evaluateAll((els) => els.map((e) => e.value))
-    const checked = await admin.locator('input[name=countryCode]:checked').getAttribute('value')
-    const province = admin.getByRole('combobox').first().locator('input')
+    // DEF-RD-08 (PD-027) replaced the hardcoded BR/US radios with a country
+    // <select> fed by whichever countries actually have reference data, so
+    // `input[name=countryCode]` no longer exists. The scenario is unchanged --
+    // a pt-BR browser lands on BR, and the province/city feeds follow it.
+    const countrySelect = admin.locator('select#tenant-country')
+    await countrySelect.waitFor({ timeout: 15000 })
+    const countries = await countrySelect.locator('option').evaluateAll((els) => els.map((e) => e.value))
+    const checked = await countrySelect.inputValue()
+    // `getByRole('combobox')` used to reach the province picker first. Since
+    // DEF-RD-08 the country field is a native <select>, which also carries the
+    // combobox role, so it now shadows the province picker at index 0. Address
+    // the console's own Combobox component instead of the ARIA role.
+    const province = admin.locator('.combobox-control').nth(0).locator('input')
     await province.click()
     await province.fill('Paulo')
     const provOptions = await admin.getByRole('option').allInnerTexts()
     await admin.getByRole('option', { name: 'São Paulo (SP)' }).click()
     await admin.waitForTimeout(1200)
-    const city = admin.getByRole('combobox').nth(1).locator('input')
+    const city = admin.locator('.combobox-control').nth(1).locator('input')
     await city.click()
     const cityOptions = await admin.getByRole('option').allInnerTexts()
     await admin.screenshot({ path: join(SHOTS, 'rd-031-tenant-editor.png') })

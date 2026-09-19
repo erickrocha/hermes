@@ -3,19 +3,19 @@
   "BO-002",
   "ui",
   "PASS",
-  "login page --accent-primary=#1d6fd1; after TM owner sign-in=#ff5b00; sidebar=linear-gradient(175deg, rgb(14, 52, 94) 0%, rgb(11, 40, 71) 100%); welcome panel=linear-gradient(130deg, rgb(16, 63, 113), rgb(23, 104, 188))"
+  "login page --accent-primary=#1d6fd1; after TM owner sign-in=#ff5b00; sidebar=linear-gradient(175deg, rgb(28, 25, 23) 0%, rgb(12, 10, 9) 100%); welcome panel=linear-gradient(130deg, rgb(124, 45, 18), rgb(234, 88, 12))"
  ],
  [
   "BO-004",
   "ui",
-  "FAIL",
-  "draft palette applied (accent #ff5b00); vendor-blue surfaces still shown: sidebar true, welcome panel true -- see BO-002-transmega-dashboard.png"
+  "PASS",
+  "draft palette applied (accent #ff5b00); vendor-blue surfaces still shown: sidebar false, welcome panel false -- see BO-002-transmega-dashboard.png"
  ],
  [
   "BO-002",
   "ui",
-  "FAIL",
-  "fresh load of /settings as TM owner: --accent-primary=#1d6fd1"
+  "PASS",
+  "fresh load of /settings as TM owner: --accent-primary=#ff5b00"
  ],
  [
   "BO-003",
@@ -45,19 +45,19 @@
   "BO-061",
   "ui",
   "PASS",
-  "search \"pager 1\" from page 2 -> 10 rows (expected 10: pager 10..19), pager shown=false, first=qa-bo pager 19; requests sent after typing: ?page=1&pageSize=25&search=pager+1 , ?page=0&pageSize=25&search=pager+1"
+  "search \"pager 1\" from page 2 -> 10 rows (expected 10: pager 10..19), pager shown=false, first=qa-bo pager 19; requests sent after typing: ?page=0&pageSize=25&search=pager+1"
  ],
  [
   "BO-064",
   "ui",
-  "FAIL",
-  "dashboard count request answered 2 s late, Users opened meanwhile -> 1 rows, pager \"1–1 of 29Page 1 of 29\""
+  "PASS",
+  "dashboard count request answered 2 s late, Users opened meanwhile -> 25 rows, pager \"1–25 of 29Page 1 of 2\""
  ],
  [
   "BO-065",
   "ui",
-  "FAIL",
-  "on page 2, typed \"pager 1\" (10 matches); stale page=1 request answered last -> 0 rows, \"No records\" shown=true"
+  "PASS",
+  "on page 2, typed \"pager 1\" (10 matches); stale page=1 request answered last -> 10 rows, \"No records\" shown=false"
  ],
  [
   "BO-012",
@@ -69,25 +69,25 @@
   "BO-014",
   "ui",
   "PASS",
-  "owner: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/119/subscription->/"
+  "owner: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/204/subscription->/"
  ],
  [
   "BO-014",
   "ui",
   "PASS",
-  "user: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/119/subscription->/"
+  "user: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/204/subscription->/"
  ],
  [
   "BO-013",
   "ui",
-  "FAIL",
-  "TenantUser offered: \"New user\" on /users=true (list empty=true); \"Edit\" on own tenant card=true; dashboard counts=[1,0]"
+  "PASS",
+  "TenantUser offered: \"New user\" on /users=false (list empty=true); \"Edit\" on own tenant card=true; dashboard counts=[1,0]"
  ],
  [
   "BO-013",
   "ui",
-  "INFO",
-  "TenantUser can open /users/new and submit; API refuses with \"Required header value missing\""
+  "PASS",
+  "TenantUser opening /users/new by hand is bounced to \"/\" with no creation form (DEF-BO-04)"
  ],
  [
   "BO-062",
@@ -128,8 +128,8 @@
  [
   "BO-023",
   "ui",
-  "FAIL",
-  "subscription page for TM: form rendered=false; selected=\"\"; page errors=[\"plans.flatMap is not a function\"]; body=\" \""
+  "PASS",
+  "subscription page for TM: form rendered=true; selected=\"qa-bo-flat · R$12,345.67\"; page errors=[]; body=\" hermesBACKOFFICEOverviewTenantsPlansUsersSystem settingsHermesv0.1SysAdminSysAdminPortuguêsEnglishEspañolSSystem Administratoradmin@hermes.devOverviewTenantsSubscriptionSubscription · qa-bo-Transmega\""
  ],
  [
   "BO-066",
@@ -171,18 +171,18 @@
   "BO-033",
   "ui",
   "PASS",
-  "hermes.session.uuid=4f70e4fe-9e0d-4c22-894e-5b6512cac57c, email=qa-bo-owner-tm@hermes.test"
+  "hermes.session.uuid=9524c668-d42a-4e19-968b-4cc57c5d12bc, email=qa-bo-owner-tm@hermes.test"
  ],
  [
   "BO-040",
   "ui",
   "PASS",
-  "en-US: login=\"Sign in to the backoffice\", nav=Overview/Tenants/Users, Accept-Language=en-US, toggle shows \"PT\"/\"EN\" || pt-BR: login=\"Acesse o backoffice\", nav=Visão geral/Tenants/Usuários, Accept-Language=pt-BR, toggle shows \"EN\"/\"PT\" || es-ES: login=\"Inicia sesión en el backoffice\", nav=Resumen/Inquilinos/Usuarios, Accept-Language=es-ES, toggle shows \"PT\"/\"EN\""
+  "en-US: login=\"Sign in to the backoffice\", nav=Overview/Tenants/Users, Accept-Language=en-US, toggle shows \"PortuguêsEnglishEspañol\"/\"PortuguêsEnglishEspañol\" || pt-BR: login=\"Acesse o backoffice\", nav=Visão geral/Tenants/Usuários, Accept-Language=pt-BR, toggle shows \"PortuguêsEnglishEspañol\"/\"PortuguêsEnglishEspañol\" || es-ES: login=\"Inicia sesión en el backoffice\", nav=Resumen/Inquilinos/Usuarios, Accept-Language=es-ES, toggle shows \"PortuguêsEnglishEspañol\"/\"PortuguêsEnglishEspañol\""
  ],
  [
   "BO-042",
   "ui",
-  "FAIL",
-  "language switcher offers en/pt only: an es-ES user sees the button labelled \"EN\", one click switches to pt-BR, and Spanish cannot be chosen back from the UI"
+  "PASS",
+  "language switcher offers en/pt only: an es-ES user sees the button labelled \"PortuguêsEnglishEspañol\", one click switches to pt-BR, and Spanish cannot be chosen back from the UI"
  ]
 ]

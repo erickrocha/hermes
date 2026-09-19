@@ -196,13 +196,19 @@ async function step(sid, fn, page) {
     await shot(user, 'BO-013-tenant-user-tenants-page')
     const dashCount = await (async () => { await user.goto(`${BASE}/`); await user.waitForSelector('.metric-card'); return user.$$eval('.metric-card strong', (s) => s.map((x) => x.textContent)) })()
     rec('BO-013', !newUser, `TenantUser offered: "New user" on /users=${!!newUser} (list empty=${!!empty}); "Edit" on own tenant card=${!!edit}; dashboard counts=[${dashCount}]`)
-    await user.goto(`${BASE}/users/new`); await user.waitForSelector('form')
-    await user.fill('form input[type=email]', 'qa-bo-ui-refused@hermes.test')
-    await user.fill('form label:first-child input', 'refused')
-    await user.click('form .form-actions button.btn.primary'); await user.waitForTimeout(1500)
-    const err = await user.$eval('.form-error', (e) => e.textContent).catch(() => '(no error shown)')
-    await shot(user, 'BO-013-tenant-user-create-refused')
-    rec('BO-013', true, `TenantUser can open /users/new and submit; API refuses with "${err}"`, 'INFO')
+    // DEF-BO-04 fixed this by putting `canCreateUsers(role)` behind *both* the
+    // "New user" button and the `/users/new` route, so a TenantUser is now
+    // bounced instead of being shown a form the API would refuse. This half
+    // used to assert the old behaviour -- that the form opens and Save fails --
+    // which the fix deliberately removed. Assert the guard instead: it is the
+    // same property (no action offered that the server refuses), enforced one
+    // step earlier.
+    await user.goto(`${BASE}/users/new`); await user.waitForTimeout(1500)
+    const guardedTo = new URL(user.url()).pathname
+    const formOffered = await user.$('form .form-actions button.btn.primary')
+    await shot(user, 'BO-013-tenant-user-create-guarded')
+    rec('BO-013', guardedTo === '/' && !formOffered,
+      `TenantUser opening /users/new by hand is bounced to "${guardedTo}" with no creation form (DEF-BO-04)`)
   }, user)
 
   // Admin: BO-012 SysAdmin picker, BO-020 country-following addresses, BO-022 price entry, BO-023 subscription
@@ -232,16 +238,21 @@ async function step(sid, fn, page) {
       await admin.keyboard.press('Escape'); await admin.mouse.click(5, 5)
       return o
     }
-    const initialCountry = await admin.$eval('input[name=countryCode]:checked', (e) => e.value)
-    await admin.check('input[name=countryCode][value=US]'); await admin.waitForTimeout(800)
+    // DEF-RD-08 (PD-027, owner question Q-3) replaced the two hardcoded BR/US
+    // radios with a country <select> fed by the countries that actually have
+    // reference data, so `input[name=countryCode]` no longer exists. The
+    // scenario is unchanged -- pick a country, and the province list follows it.
+    const pickCountry = async (code) => { await admin.selectOption('select#tenant-country', code); await admin.waitForTimeout(800) }
+    const initialCountry = await admin.$eval('select#tenant-country', (e) => e.value)
+    await pickCountry('US')
     const us = await provOptions()
-    await admin.check('input[name=countryCode][value=BR]'); await admin.waitForTimeout(800)
+    await pickCountry('BR')
     const br = await provOptions()
     await shot(admin, 'BO-020-tenant-editor-br')
     rec('BO-020', us.some((o) => /\(TX\)/.test(o)) && br.some((o) => /\(SP\)/.test(o)) && !br.some((o) => /\(TX\)/.test(o)),
       `new tenant defaults to ${initialCountry}; US -> ${us.length} provinces (${us.slice(0, 2).join('; ')}); BR -> ${br.length} (${br.slice(0, 2).join('; ')})`)
     // create a US tenant through the form, then reopen it
-    await admin.check('input[name=countryCode][value=US]'); await admin.waitForTimeout(800)
+    await pickCountry('US')
     const inputs = await admin.$$('form .form-grid > label > input')
     await inputs[0].fill('qa-bo-ui-tenant'); await inputs[1].fill('qa-bo-ui-tenant Inc'); await inputs[2].fill('QABO0000000003')
     await admin.fill('form label:has-text("Province") .combobox-control input', 'Texas'); await admin.waitForTimeout(300)
@@ -258,7 +269,7 @@ async function step(sid, fn, page) {
       `saved tenant: ${t ? `${t.countryCode}/${t.administrativeArea}/${t.locality}` : `not created (${err})`}`)
     if (t) {
       await admin.goto(`${BASE}/tenants/${t.id}/edit`); await admin.waitForSelector('form'); await admin.waitForTimeout(1200)
-      const cc = await admin.$eval('input[name=countryCode]:checked', (e) => e.value)
+      const cc = await admin.$eval('select#tenant-country', (e) => e.value)
       const area = await admin.$eval('form label:has-text("Province") .combobox-control input', (e) => e.value || e.placeholder)
       await shot(admin, 'BO-020-tenant-editor-reopen')
       rec('BO-020', cc === 'US' && /TX|Texas/.test(area), `reopened: country=${cc}, province shows "${area.trim()}"`)
@@ -287,7 +298,11 @@ async function step(sid, fn, page) {
     await admin.goto(`${BASE}/tenants/${fx.tenants.tm.id}/subscription`); await admin.waitForTimeout(2500)
     const body = (await admin.textContent('body')).replace(/\s+/g, ' ').slice(0, 200)
     const hasForm = await admin.$('form')
-    const picked = hasForm ? await admin.$eval('form .combobox', (e) => e.textContent).catch(() => '') : ''
+    // DEF-BO-03's fix made the plan picker a *filterable* Combobox, which shows
+    // the current selection in its input placeholder rather than as element
+    // text, so reading `textContent` returned "". Read both.
+    const picked = hasForm ? await admin.$eval('form .combobox',
+      (e) => { const i = e.querySelector('input'); return [e.textContent, i && i.value, i && i.placeholder].filter(Boolean).join(' ') }).catch(() => '') : ''
     await shot(admin, 'BO-023-subscription-page')
     rec('BO-023', !!hasForm && picked.includes('qa-bo-flat') && admin.errors.length === 0,
       `subscription page for TM: form rendered=${!!hasForm}; selected="${picked}"; page errors=${JSON.stringify(admin.errors)}; body="${body}"`)

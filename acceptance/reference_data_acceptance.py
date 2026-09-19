@@ -653,15 +653,19 @@ def ui_scenarios():
     env = dict(os.environ, QA_OWNER_EMAIL=f"{TAG}-owner@hermes.test", QA_OWNER_PASSWORD=FIXTURE_PW)
     p = subprocess.run(["node", script], capture_output=True, text=True, timeout=600, env=env)
     print("  " + (p.stderr.strip().splitlines() or [""])[-1])
-    found = False
+    seen = set()
     for line in p.stdout.splitlines():
         if line.startswith("{"):
             r = json.loads(line)
             record(r["id"], r["status"], r["evidence"])
-            found = True
-    if not found:
-        for sid in ("RD-031", "RD-052", "RD-053", "RD-054"):
-            record(sid, "BLOCKED", f"UI script did not run: {(p.stdout + p.stderr)[-300:]}")
+            seen.add(r["id"])
+    # The UI script's `finally` prints the screenshot path, so the last stderr
+    # line above hides any exception. A scenario the script never reached used
+    # to vanish as "NOT RUN" with no reason; report it with the actual error.
+    missing = [s for s in ("RD-031", "RD-052", "RD-053", "RD-054") if s not in seen]
+    why = (p.stderr.strip() or p.stdout.strip())[-600:]
+    for sid in missing:
+        record(sid, "BLOCKED", f"UI script did not report this scenario ({'ran others' if seen else 'did not run'}): {why}")
 
 
 # ---------------------------------------------------------------- main
