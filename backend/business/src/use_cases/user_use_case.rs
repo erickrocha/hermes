@@ -70,16 +70,14 @@ impl UserUseCase {
             }
         };
 
-        let password = if user.password.trim().is_empty() {
-            existing.password
-        } else {
-            password_policy::validate_length(&user.password)?;
-            password::hash(&user.password).map_err(|e| {
-                let msg = format!("Password encryption error: {:?}", e);
-                log::error!("[UserUseCase::update] {}", msg);
-                BusinessError::new(msg)
-            })?
-        };
+        // DEF-IA-03 (HRMS-107, PD-002): editing an account never sets its
+        // password. This route used to hash whatever `password` the payload
+        // carried, so anyone holding a 3-hour access token could replace the
+        // account's password without knowing the current one and keep the
+        // account permanently. A password is set in exactly two places now:
+        // `/user/change-password`, which demands the current one, and the
+        // invitation, which the account holder opens from their own mailbox.
+        let password = existing.password;
 
         let updated_user = User {
             id: Some(id),
@@ -289,6 +287,15 @@ impl UserUseCase {
 
         if sysadmin_email.trim().is_empty() || sysadmin_password.trim().is_empty() {
             panic!("SYSADMIN_EMAIL and SYSADMIN_PASSWORD must not be empty");
+        }
+
+        // DEF-IA-09 (HRMS-109): the minimum applies to every path that sets a
+        // password, and the boot-seeded account is the most privileged one on
+        // the platform. `web::start` refuses to boot on a short value before
+        // this is ever reached; this is the same rule stated where the password
+        // is actually written, so a second caller cannot bypass it.
+        if let Err(error) = password_policy::validate_length(&sysadmin_password) {
+            panic!("SYSADMIN_PASSWORD is invalid: {}", error.message);
         }
 
         if let Some(existing_sysadmin) = Self::find_sysadmin(db).await {

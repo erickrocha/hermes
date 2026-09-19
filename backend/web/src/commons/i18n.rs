@@ -83,6 +83,10 @@ pub enum ErrorKey {
     BusinessPlanInUse,
     CountryNotSupported,
     ReferenceDataUnavailable,
+    /// DEF-XF-02: a failure the caller cannot act on, but must be told about.
+    /// Used where an empty result would otherwise be indistinguishable from a
+    /// broken query.
+    UnexpectedError,
 }
 
 impl ErrorKey {
@@ -104,6 +108,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
+            ErrorKey::UnexpectedError => "UnexpectedError",
         }
     }
 
@@ -125,6 +130,7 @@ impl ErrorKey {
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
+            ErrorKey::UnexpectedError => "unexpected-error",
         }
     }
 }

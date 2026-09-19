@@ -16,6 +16,7 @@ mod m20260917_000004_tenant_country_required_and_tax_id_unique;
 mod m20260918_000001_sysadmin_has_no_tenant;
 mod m20260918_000002_tenant_column_names;
 mod m20260918_000003_reconcile_edited_migrations;
+mod m20260919_000001_widen_audit_actor_columns;
 
 pub struct Migrator;
 
@@ -37,6 +38,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260918_000001_sysadmin_has_no_tenant::Migration),
             Box::new(m20260918_000002_tenant_column_names::Migration),
             Box::new(m20260918_000003_reconcile_edited_migrations::Migration),
+            Box::new(m20260919_000001_widen_audit_actor_columns::Migration),
         ]
     }
 }

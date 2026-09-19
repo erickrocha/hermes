@@ -61,13 +61,72 @@ impl AuthenticationUseCase {
         Ok(UserEntityMapper::from_model(model))
     }
 
+    /// DEF-IA-01/DEF-IA-02 (HRMS-104, HRMS-102, HRMS-003): resolves the account
+    /// a *token* was issued to, by its immutable id.
+    ///
+    /// The address is not an identity. Before this, every token path looked the
+    /// account up by `sub` (the address), so once an address was freed by a
+    /// rename and handed to someone else, the old holder's tokens resolved to
+    /// the new person -- in another tenant, for the whole remaining lifetime of
+    /// the token. The address is still compared here, but as a *check*: a token
+    /// minted before a rename no longer describes the account and is refused.
+    async fn load_enabled_account(db: &DbConn, user_id: i64, email: &str, context: &str) -> Result<User, BusinessError> {
+        if user_id <= 0 {
+            log::warn!("[AuthenticationUseCase::{}] Token carries no usable user id", context);
+            return Err(BusinessError::new("Invalid credentials".to_string()));
+        }
+
+        let found = UserGateway::find_by_user_id(db, user_id)
+            .await
+            .map_err(|err| {
+                log::error!("[AuthenticationUseCase::{}] Database error for user id {}: {}", context, user_id, err);
+                BusinessError::new("Invalid credentials".to_string())
+            })?;
+
+        let Some(model) = found else {
+            log::error!("[AuthenticationUseCase::{}] User not found by id: {}", context, user_id);
+            return Err(BusinessError::new("Invalid credentials".to_string()));
+        };
+
+        if !model.enabled {
+            log::warn!("[AuthenticationUseCase::{}] Disabled account rejected: id {}", context, user_id);
+            return Err(BusinessError::new("Invalid credentials".to_string()));
+        }
+
+        if model.id != user_id {
+            log::error!("[AuthenticationUseCase::{}] Account lookup returned id {} for id {}", context, model.id, user_id);
+            return Err(BusinessError::new("Invalid credentials".to_string()));
+        }
+
+        if model.email != email {
+            log::warn!("[AuthenticationUseCase::{}] Token subject no longer matches account id {}", context, user_id);
+            return Err(BusinessError::new("Invalid credentials".to_string()));
+        }
+
+        Ok(UserEntityMapper::from_model(model))
+    }
+
     pub async fn execute(db: &DbConn, email: String, password: String) -> Result<AccessToken, BusinessError> {
         log::info!("[AuthenticationUseCase::execute] Executing login for user: {}", email);
         if email.is_empty() || password.is_empty() {
             log::error!("[AuthenticationUseCase::execute] Email and password are required");
             return Err(BusinessError::new("Email and password are required".to_string()));
         }
-        let user = Self::load_enabled_user(db, &email, "execute").await?;
+        let user = Self::load_enabled_user(db, &email, "execute").await;
+
+        // DEF-IA-05 (HRMS-103): the three refusals -- unknown address, disabled
+        // account, wrong password -- must be indistinguishable, and a body that
+        // matches is only half of that. Returning before any hash verification
+        // answered in ~1 ms where a wrong password cost ~360 ms, which told an
+        // anonymous caller exactly which addresses have an enabled account. The
+        // no-account paths now pay the same Argon2 cost as the real one.
+        let user = match user {
+            Ok(user) => user,
+            Err(error) => {
+                password::verify_dummy(&password);
+                return Err(error);
+            }
+        };
 
         if password::verify(&password, user.password.as_str()) {
             log::info!("[AuthenticationUseCase::execute] Password verified for user: {}", email);
@@ -193,7 +252,7 @@ impl AuthenticationUseCase {
             .claims;
         log::info!("[AuthenticationUseCase::validate] Token valid for subject: {}", claims.sub);
 
-        let account = Self::load_enabled_user(db, &claims.sub, "validate").await?;
+        let account = Self::load_enabled_account(db, claims.user_id, &claims.sub, "validate").await?;
         Ok(User {
             id: Some(claims.user_id),
             role: claims.role,
@@ -214,9 +273,12 @@ impl AuthenticationUseCase {
 
         let authentication = result.unwrap();
         log::info!("[AuthenticationUseCase::validate_refresh_token] Refresh token valid for subject: {}", authentication.claims.sub);
-        let email = authentication.claims.sub;
+        let claims = authentication.claims;
 
-        Self::load_enabled_user(db, &email, "validate_refresh_token").await
+        // DEF-IA-01: the refresh path mints a *new* session, so getting the
+        // account wrong here is the worst of the two. Resolved by id, and the
+        // freshly read role and tenant (not the token's) go into the new claims.
+        Self::load_enabled_account(db, claims.user_id, &claims.sub, "validate_refresh_token").await
     }
 
     pub async fn refresh_token(db: &DbConn, refresh_token: String) -> Result<AccessToken, BusinessError> {

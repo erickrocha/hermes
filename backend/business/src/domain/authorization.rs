@@ -126,13 +126,30 @@ pub fn can_reassign_role(actor: &User, requested_role: &Role, requested_tenant_i
         }
 }
 
-/// Whether `actor` may administer `target`'s record at all (EPIC-IA-05-S01,
-/// HRMS-118): the target editing themselves, an unbound platform
-/// administrator (any target), or a tenant owner whose tenant matches the
-/// target's exactly.
-pub fn can_administer_user(actor: &User, target_id: Option<i64>, target_tenant_id: Option<i64>) -> bool {
+/// Whether `actor` may *read* `target`'s record (EPIC-IA-05-S01): the target
+/// themselves, an unbound platform administrator (any target), or a tenant
+/// owner whose tenant matches the target's exactly.
+///
+/// Reading your own record is self-service, not administration -- see
+/// [`can_administer_user`] for the write side, which is a strictly smaller
+/// set.
+pub fn can_read_user_record(actor: &User, target_id: Option<i64>, target_tenant_id: Option<i64>) -> bool {
     (actor.id.is_some() && actor.id == target_id)
-        || is_unbound_sys_admin(actor)
+        || can_administer_user(actor, target_id, target_tenant_id)
+}
+
+/// Whether `actor` may administer `target`'s record -- edit it, not read it
+/// (EPIC-IA-05-S01, HRMS-117, HRMS-118): an unbound platform administrator
+/// (any target), or a tenant owner whose tenant matches the target's exactly.
+///
+/// DEF-IA-03: "the target themselves" used to be an arm of this rule, which
+/// made `PUT /user/{own id}` a user-administration path open to every role --
+/// HRMS-117 says a tenant user has no user-administration rights at all, and
+/// their own record is not an exception to that. What a user may do to their
+/// own account without administering it (change their password, knowing the
+/// current one) has its own route.
+pub fn can_administer_user(actor: &User, _target_id: Option<i64>, target_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
         || (actor.role == Role::TenantOwner && actor.tenant_id == target_tenant_id)
 }
 
@@ -271,10 +288,28 @@ mod tests {
         let owner_of_1 = User { id: Some(10), ..user(Role::TenantOwner, Some(1)) };
         assert!(can_administer_user(&owner_of_1, Some(99), Some(1))); // same tenant
         assert!(!can_administer_user(&owner_of_1, Some(99), Some(2))); // different tenant
-        assert!(can_administer_user(&owner_of_1, Some(10), Some(1))); // self
+        assert!(can_administer_user(&owner_of_1, Some(10), Some(1))); // self, via the tenant rule
 
+        // DEF-IA-03/HRMS-117: a tenant user administers nobody -- themselves
+        // included. Their own account is reachable through change-password,
+        // which is a different capability.
         let member_of_1 = User { id: Some(20), ..user(Role::TenantUser, Some(1)) };
-        assert!(can_administer_user(&member_of_1, Some(20), Some(1))); // self only
-        assert!(!can_administer_user(&member_of_1, Some(99), Some(1))); // not self, no admin rights
+        assert!(!can_administer_user(&member_of_1, Some(20), Some(1)));
+        assert!(!can_administer_user(&member_of_1, Some(99), Some(1)));
+    }
+
+    #[test]
+    fn reading_your_own_record_is_allowed_where_administering_it_is_not() {
+        let member_of_1 = User { id: Some(20), ..user(Role::TenantUser, Some(1)) };
+        assert!(can_read_user_record(&member_of_1, Some(20), Some(1)));
+        assert!(!can_read_user_record(&member_of_1, Some(99), Some(1)));
+        assert!(!can_read_user_record(&member_of_1, Some(99), Some(2)));
+
+        // And it stays a superset of the administration rule everywhere else.
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_read_user_record(&sysadmin, Some(42), Some(1)));
+        let owner_of_1 = User { id: Some(10), ..user(Role::TenantOwner, Some(1)) };
+        assert!(can_read_user_record(&owner_of_1, Some(99), Some(1)));
+        assert!(!can_read_user_record(&owner_of_1, Some(99), Some(2)));
     }
 }
