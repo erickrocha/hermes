@@ -391,11 +391,52 @@ async fn tenant_creation_rules() {
     let db = mock().into_connection();
     let uc = TenantUseCase::new(TenantGateway::new(db.clone()));
     assert!(uc.create(tenant("", None, "11222333000181", Some("BR"))).await.is_err(), "HRM-002");
+    assert!(uc.create(tenant("   ", None, "11222333000181", Some("BR"))).await.is_err(), "DEF-TP-03: a name of blanks");
     assert!(uc.create(tenant("X", None, "11222333000181", Some("BRA"))).await.is_err(), "HRM-003");
     assert!(uc.create(tenant("X", None, "11222333000181", None)).await.is_err(), "country required");
     assert!(uc.create(tenant("X", None, "123", Some("BR"))).await.is_err(), "invalid CNPJ");
+    // DEF-TP-01: a country with no validator must still require an identifier.
+    assert!(uc.create(tenant("X", None, "", Some("US"))).await.is_err(), "tax id required");
+    assert!(uc.create(tenant("X", None, "   ", Some("CA"))).await.is_err(), "blank tax id");
     assert!(uc.persist(tenant("", None, "", Some("BR"))).await.is_none());
     assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn tenant_update_and_plan_rules() {
+    let db = mock()
+        .append_query_results([Vec::<tenant_entity::Model>::new()]) // update: not found
+        .append_query_results([[tenant_row(1)]]) // update: found, business name is blank
+        .append_query_results([[tenant_row(1)]]) // update: found, tax id is blank
+        .append_query_results([[tenant_row(1)]]) // update: found, no company name -> allowed
+        .append_exec_results([inserted(1)])
+        .append_query_results([[tenant_row(1)]])
+        .append_query_results([Vec::<tenant_entity::Model>::new()]) // set_plan: tenant not found
+        .append_query_results([[tenant_row(1)]]) // set_plan: found
+        .append_exec_results([inserted(1)])
+        .append_query_results([[tenant_row(1)]])
+        .into_connection();
+    let uc = TenantUseCase::new(TenantGateway::new(db));
+
+    let missing = uc.update(404, tenant("X", Some("Y"), "11222333000181", Some("BR"))).await;
+    assert!(missing.as_ref().is_err_and(|e| e.is_not_found()), "an unknown tenant is a not-found, not a generic failure");
+
+    // DEF-TP-03: the business name is validated on update too, and blanking it
+    // out is refused.
+    assert!(uc.update(1, tenant("  ", Some("Y"), "11222333000181", Some("BR"))).await.is_err());
+    // DEF-TP-01: and so is emptying the tax identifier.
+    assert!(uc.update(1, tenant("X", Some("Y"), "", Some("BR"))).await.is_err());
+    // DEF-TP-02: company name is optional on create, so it cannot be mandatory
+    // on update -- a tenant onboarded with only its required fields must stay
+    // editable.
+    assert!(
+        uc.update(1, tenant("X", None, "11222333000181", Some("BR"))).await.is_ok(),
+        "a tenant without a company name must be editable"
+    );
+
+    // DEF-TP-05: setting a plan on a tenant that does not exist is a not-found.
+    assert!(uc.set_plan(404, 3).await.is_err_and(|e| e.is_not_found()));
+    assert!(uc.set_plan(1, 3).await.is_ok());
 }
 
 #[tokio::test]
@@ -415,21 +456,6 @@ async fn updating_a_tenant_keeps_its_plan_and_identity() {
     let sql = format!("{:?}", log(db));
     assert!(sql.contains("Renamed"), "{sql}");
     assert!(!sql.contains("Some(99)"), "the plan from the request body must be ignored: {sql}");
-}
-
-#[tokio::test]
-async fn tenant_update_and_plan_rules() {
-    let db = mock()
-        .append_query_results([Vec::<tenant_entity::Model>::new()]) // update: not found
-        .append_query_results([[tenant_row(1)]]) // update: found, but no name
-        .append_query_results([[tenant_row(1)]]) // set_plan
-        .append_exec_results([inserted(1)])
-        .append_query_results([[tenant_row(1)]])
-        .into_connection();
-    let uc = TenantUseCase::new(TenantGateway::new(db));
-    assert!(uc.update(404, tenant("X", Some("Y"), "11222333000181", Some("BR"))).await.is_err());
-    assert!(uc.update(1, tenant("X", Some("  "), "11222333000181", Some("BR"))).await.is_err());
-    assert!(uc.set_plan(1, 3).await.is_ok());
 }
 
 #[tokio::test]

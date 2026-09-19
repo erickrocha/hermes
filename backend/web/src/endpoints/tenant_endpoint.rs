@@ -219,12 +219,76 @@ pub async fn update(
             ErrorKey::TenantNotFound,
         ));
     }
+    update_tenant(&state, locale, id, payload).await
+}
+
+#[utoipa::path(
+    put,
+    tag = "Tenant",
+    path = "/tenant/uuid/{uuid}",
+    params(
+        ("uuid" = String, Path, description = "Tenant UUID")
+    ),
+    request_body = TenantJson,
+    responses(
+        (status = 200, description = "Tenant updated", body = TenantJson),
+        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_by_uuid(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<TenantJson>,
+) -> HttpResponse<Json<TenantJson>> {
+    let id = resolve_uuid(&state, &locale, &current_user, uuid).await?;
+    update_tenant(&state, locale, id, payload).await
+}
+
+/// HRMS-204/AD-010: the UUID is the tenant's public identifier, so every
+/// operation available by internal id is available by UUID too (DEF-TP-04).
+/// The `/{id}` routes stay for callers that already hold an id; a console can
+/// now work entirely in UUIDs and never put a sequential id — and therefore
+/// the number of customers — in a URL.
+async fn resolve_uuid(
+    state: &AppState,
+    locale: &Locale,
+    current_user: &User,
+    uuid: String,
+) -> Result<i64, ExceptionResponse> {
+    let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+    let tenant = use_case
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound))?;
+    let id = tenant.id.unwrap_or_default();
+    // PD-034/HRM-092: a tenant that is not yours is answered 404, exactly as
+    // on the `/{id}` routes -- the public identifier must not become a way to
+    // tell "does not exist" from "not yours".
+    if !can_access_tenant(current_user, id) {
+        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound));
+    }
+    Ok(id)
+}
+
+async fn update_tenant(
+    state: &AppState,
+    locale: Locale,
+    id: i64,
+    payload: TenantJson,
+) -> HttpResponse<Json<TenantJson>> {
     let domain = TenantMapper::domain(payload);
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     match use_case.update(id, domain).await {
         Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
         Err(err) => {
-            if err.message.contains("not found") {
+            if err.is_not_found() {
                 Err(ExceptionResponse::NotFound(
                     locale,
                     ErrorKey::TenantNotFound,
@@ -271,7 +335,50 @@ pub async fn add_plan(
             ErrorKey::InvalidParameterValue,
         ));
     }
+    set_tenant_plan(&state, locale, id, payload).await
+}
 
+#[utoipa::path(
+    post,
+    tag = "Tenant",
+    path = "/tenant/uuid/{uuid}/plan",
+    params(
+        ("uuid" = String, Path, description = "Tenant UUID")
+    ),
+    request_body = SetTenantPlanJson,
+    responses(
+        (status = 200, description = "Tenant plan set", body = BusinessPlanJson),
+        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 404, description = "Tenant or business plan not found", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn add_plan_by_uuid(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<SetTenantPlanJson>,
+) -> HttpResponse<Json<BusinessPlanJson>> {
+    if !can_set_tenant_plan(&current_user) {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+    let id = resolve_uuid(&state, &locale, &current_user, uuid).await?;
+    set_tenant_plan(&state, locale, id, payload).await
+}
+
+async fn set_tenant_plan(
+    state: &AppState,
+    locale: Locale,
+    id: i64,
+    payload: SetTenantPlanJson,
+) -> HttpResponse<Json<BusinessPlanJson>> {
     let plan_use_case = BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()));
     let plan = plan_use_case
         .find_by_id(payload.business_plan_id)
@@ -282,7 +389,15 @@ pub async fn add_plan(
     tenant_use_case
         .set_plan(id, payload.business_plan_id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::TenantUpdateFailed))?;
+        // DEF-TP-05: an unknown tenant is a 404, as the documented response
+        // says and as an unknown plan already answered — not a 400.
+        .map_err(|err| {
+            if err.is_not_found() {
+                ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)
+            } else {
+                ExceptionResponse::BadRequest(locale, ErrorKey::TenantUpdateFailed)
+            }
+        })?;
 
     Ok(Json(business_plan_response(plan)))
 }
@@ -315,7 +430,40 @@ pub async fn get_active_plan(
             ErrorKey::TenantNotFound,
         ));
     }
+    active_plan(&state, locale, id).await
+}
 
+#[utoipa::path(
+    get,
+    tag = "Tenant",
+    path = "/tenant/uuid/{uuid}/plan",
+    params(
+        ("uuid" = String, Path, description = "Tenant UUID")
+    ),
+    responses(
+        (status = 200, description = "Tenant's current plan, if one is set", body = Option<BusinessPlanJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_active_plan_by_uuid(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<Json<Option<BusinessPlanJson>>> {
+    let id = resolve_uuid(&state, &locale, &current_user, uuid).await?;
+    active_plan(&state, locale, id).await
+}
+
+async fn active_plan(
+    state: &AppState,
+    locale: Locale,
+    id: i64,
+) -> HttpResponse<Json<Option<BusinessPlanJson>>> {
     let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     let tenant = tenant_use_case
         .find_by_id(id)

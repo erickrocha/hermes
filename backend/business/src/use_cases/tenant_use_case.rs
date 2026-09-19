@@ -13,12 +13,28 @@ fn valid_country_code(value: &Option<String>) -> bool {
     value.as_ref().is_some_and(|code| code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
 }
 
+/// EPIC-TP-01 (HRMS-201/HRM-001): the business name identifies the tenant, so
+/// it is required in substance and not just in form — a name made of spaces is
+/// the "list of blanks" the story exists to prevent (DEF-TP-03).
+fn valid_business_name(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
 /// EPIC-TP-02 (HRMS-207...211, PD-022): validates and normalises `tax_id`
 /// against whichever country the tenant is being saved with. A country with
 /// no registered validator (S05) is accepted as given -- expanding into a
 /// new market must not be blocked on writing that country's validator
 /// first, and must not have another country's rules silently applied to it.
 fn validate_tax_id(country_code: &str, tax_id: &str) -> Result<String, BusinessError> {
+    // HRMS-200/HRM-001: the tax identifier is a required element of a tenant.
+    // Without this check every country that has no validator yet accepted a
+    // tenant with no legal identity at all (DEF-TP-01) — and because the
+    // identifier is unique per country (HRMS-211), the empty string then
+    // counted as a value and collided with the next such tenant.
+    if tax_id.trim().is_empty() {
+        return Err(BusinessError::new("Tax identifier is required".to_string()));
+    }
+
     match tax_id::validate_and_normalize(country_code, tax_id) {
         TaxIdOutcome::Valid(normalized) => Ok(normalized),
         TaxIdOutcome::Invalid => Err(BusinessError::new(format!(
@@ -40,7 +56,7 @@ impl TenantUseCase {
     pub async fn create(&self, tenant: Tenant) -> Result<Tenant, BusinessError> {
         log::info!("[TenantUseCase::create] Executing create tenant for business name: {:?}", tenant.business_name);
 
-        if tenant.business_name.is_empty() {
+        if !valid_business_name(&tenant.business_name) {
             let msg = "Tenant business name is required".to_string();
             log::error!("[TenantUseCase::create] {}", msg);
             return Err(BusinessError::new(msg));
@@ -87,7 +103,7 @@ impl TenantUseCase {
             None => {
                 let msg = format!("Tenant not found with id: {}", id);
                 log::error!("[TenantUseCase::find_by_id] {}", msg);
-                Err(BusinessError::new("Tenant not found".to_string()))
+                Err(BusinessError::not_found("Tenant not found".to_string()))
             }
         }
     }
@@ -110,7 +126,7 @@ impl TenantUseCase {
             None => {
                 let msg = format!("Tenant not found with uuid: {}", uuid);
                 log::error!("[TenantUseCase::find_by_uuid] {}", msg);
-                Err(BusinessError::new("Tenant not found".to_string()))
+                Err(BusinessError::not_found("Tenant not found".to_string()))
             }
         }
     }
@@ -152,8 +168,14 @@ impl TenantUseCase {
             }
         };
 
-        if tenant.company_name.as_ref().is_none_or(|n| n.trim().is_empty()) {
-            let msg = "Tenant name is required".to_string();
+        // EPIC-TP-01-S02 (HRMS-201): update validates the same field create
+        // does. It used to require `company_name` — which is optional on
+        // create — so a tenant onboarded with only its required fields could
+        // not be edited at all, not even to add the missing company name
+        // (DEF-TP-02), while the business name went unchecked and could be
+        // blanked out (DEF-TP-03).
+        if !valid_business_name(&tenant.business_name) {
+            let msg = "Tenant business name is required".to_string();
             log::error!("[TenantUseCase::update] {}", msg);
             return Err(BusinessError::new(msg));
         }
@@ -236,7 +258,28 @@ impl TenantUseCase {
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_country_code, validate_tax_id};
+    use super::{valid_business_name, valid_country_code, validate_tax_id};
+
+    #[test]
+    fn a_business_name_of_blanks_is_not_a_name() {
+        // DEF-TP-03: `is_empty` let "   " through, so a tenant could be
+        // created — and on update renamed — to a run of spaces.
+        assert!(valid_business_name("Acme"));
+        assert!(!valid_business_name(""));
+        assert!(!valid_business_name("   "));
+        assert!(!valid_business_name("\t\n"));
+    }
+
+    #[test]
+    fn a_tax_identifier_is_required_in_every_country() {
+        // DEF-TP-01: BR refused an empty value only as a side effect of the
+        // CPF/CNPJ check. Every country without a validator accepted a tenant
+        // with no legal identity.
+        for country in ["BR", "US", "CA", "MX", "CL"] {
+            assert!(validate_tax_id(country, "").is_err(), "{country} accepted an empty tax id");
+            assert!(validate_tax_id(country, "   ").is_err(), "{country} accepted a blank tax id");
+        }
+    }
 
     #[test]
     fn country_code_is_now_required_not_optional() {
