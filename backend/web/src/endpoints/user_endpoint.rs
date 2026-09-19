@@ -55,9 +55,12 @@ pub async fn add(
     // business::domain::authorization for why this is not the rule the
     // code used to implement.
     let Some(creation_tenant) = can_create_user_with_role(&current_user, &domain.role) else {
+        // DEF-BO-05: the refusal used to be `RequiredHeaderValueMissing`, which
+        // described a malformed request rather than a role that may not create
+        // users — and the console showed that sentence to the person.
         return Err(ExceptionResponse::Forbidden(
             locale,
-            ErrorKey::RequiredHeaderValueMissing,
+            ErrorKey::UserCreationForbidden,
         ));
     };
 

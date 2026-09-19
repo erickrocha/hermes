@@ -18,6 +18,7 @@ unexpected-error = An unexpected error occurred
 city-not-found = City not found
 province-not-found = Province not found
 reference-data-forbidden = You are not allowed to manage reference data
+user-creation-forbidden = Your role is not allowed to create users
 import-rejected = Nothing was imported. Correct these rows and try again:
 import-row = row
 import-name-required = name is required

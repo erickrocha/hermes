@@ -6,8 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { api, apiMessage } from '../api'
 import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
-import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
-import type { BusinessPlan, Tenant, User } from '../types'
+import { clearCities, loadCities, loadCountries, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
+import type { BusinessPlan, Page, Tenant, User } from '../types'
 import type { ColumnDef } from '@tanstack/react-table'
 import { DataTable, Pagination } from '../components/DataTable'
 import { usePagedList } from '../usePagedList'
@@ -25,6 +25,11 @@ const today = () => new Date().toISOString().slice(0, 10)
 const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
 const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode })
 const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today() }
+// DEF-BO-04 (PD-019/EPIC-IA-04): only a SysAdmin and a TenantOwner may create
+// accounts. A TenantUser was still shown "New user", and the form only failed
+// on submit -- offering a control the API refuses is exactly what PD-015
+// warns against. Exported so the route guard and the page agree on one rule.
+export const canCreateUsers = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
 
 export function TenantsPage() {
   const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
@@ -37,12 +42,28 @@ export function TenantEditorPage() {
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
   const { t, i18n } = useTranslation()
-  const { provinces, cities } = useSelector((s: RootState) => s.data)
+  const { provinces, cities, countries } = useSelector((s: RootState) => s.data)
   const localeCountry = localeCountryCode(i18n.resolvedLanguage || i18n.language)
+  // DEF-RD-08: ISO codes alone ("BR", "AR") are not what an operator reads, so
+  // the browser names them in the console's language. `Intl.DisplayNames` is
+  // the platform's own table -- translating country names by hand in our
+  // bundles would rot the moment a new country is imported.
+  const countryOptions = useMemo(() => {
+    const language = i18n.resolvedLanguage || i18n.language || 'pt-BR'
+    let names: Intl.DisplayNames | null = null
+    try { names = new Intl.DisplayNames([language], { type: 'region' }) } catch { names = null }
+    return countries
+      .map((code) => ({ code, label: (names?.of(code) ?? code) || code }))
+      .sort((a, b) => a.label.localeCompare(b.label, language))
+  }, [countries, i18n.resolvedLanguage, i18n.language])
   const [form, setForm] = useState<Tenant>(() => blankTenant(localeCountry))
   const [loading, setLoading] = useState(Boolean(id))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    dispatch(loadCountries())
+  }, [dispatch])
 
   useEffect(() => {
     if (!id) {
@@ -108,29 +129,24 @@ export function TenantEditorPage() {
       <section className="page-form-card">
         <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
           <div className="span-2">
-            <label>{t('country')}</label>
-            <div className="radio-group" role="radiogroup" aria-label={t('country')}>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="BR"
-                  checked={(form.countryCode || 'BR') === 'BR'}
-                  onChange={() => handleCountryChange('BR')}
-                />
-                <span>BR · {t('brazil')}</span>
-              </label>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="US"
-                  checked={form.countryCode === 'US'}
-                  onChange={() => handleCountryChange('US')}
-                />
-                <span>US · {t('unitedStates')}</span>
-              </label>
-            </div>
+            <label htmlFor="tenant-country">{t('country')}</label>
+            {/* DEF-RD-08 (PD-027): the country list is the set that actually
+                has reference data, so importing a country's provinces is all
+                it takes to make it selectable. The hardcoded BR/US radios
+                meant PD-027's import could never reach this form. */}
+            <select
+              id="tenant-country"
+              required
+              value={form.countryCode || ''}
+              onChange={(e) => handleCountryChange(e.target.value)}
+            >
+              {!countryOptions.some((option) => option.code === (form.countryCode || '')) && (
+                <option value={form.countryCode || ''}>{form.countryCode || t('select')}</option>
+              )}
+              {countryOptions.map(({ code, label }) => (
+                <option key={code} value={code}>{code} · {label}</option>
+              ))}
+            </select>
           </div>
           <label>
             {t('businessName')}
@@ -197,8 +213,12 @@ export function TenantEditorPage() {
 }
 
 export function SubscriptionPage() {
+  // DEF-BO-03: `/business-plan` returns PD-028's page envelope, not a bare
+  // array. Reading it as an array made `plans.flatMap` throw and -- with no
+  // error boundary above it -- unmounted the whole console, so the operator
+  // saw a blank screen instead of the plan picker.
   const { id } = useParams(); const tenantId = Number(id); const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [businessPlanId, setBusinessPlanId] = useState<number | null>(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/${tenantId}`), api.get<BusinessPlan[]>('/business-plan'), api.get<BusinessPlan | null>(`/tenant/${tenantId}/plan`).catch(() => ({ data: null }))]).then(([tenantResult, plansResult, planResult]) => { setTenant(tenantResult.data); setPlans(plansResult.data); setBusinessPlanId(planResult.data?.id ?? plansResult.data[0]?.id ?? null) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
+  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/${tenantId}`), api.get<Page<BusinessPlan>>('/business-plan', { params: { page: 0, pageSize: 200 } }), api.get<BusinessPlan | null>(`/tenant/${tenantId}/plan`).catch(() => ({ data: null }))]).then(([tenantResult, plansResult, planResult]) => { const available = plansResult.data.items ?? []; setTenant(tenantResult.data); setPlans(available); setBusinessPlanId(planResult.data?.id ?? available[0]?.id ?? null) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
   const save = async (event: FormEvent) => { event.preventDefault(); if (!businessPlanId) return; setSaving(true); setError(''); try { await api.post(`/tenant/${tenantId}/plan`, { businessPlanId }); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
   return <><PageHeader title={`${t('subscription')} · ${tenant ? tenantName(tenant) : ''}`} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}><label className="span-2">{t('plans')}<Combobox filterable value={businessPlanId} options={plans.flatMap((plan) => plan.id ? [{ value: plan.id, label: `${plan.name} · ${money(plan.priceInCents, i18n.language)}` }] : [])} onChange={(value) => setBusinessPlanId(value)} /></label></Form></section></>
@@ -241,7 +261,7 @@ export function UsersPage() {
     { header: () => t('status'), accessorKey: 'enabled', cell: ({ row }) => <span className={`badge ${row.original.enabled ? 'green' : 'gray'}`}>{row.original.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{row.original.enabled ? t('active') : t('inactive')}</span> },
     { id: 'actions', header: () => t('actions'), cell: ({ row }) => <div className="row-actions">{row.original.id && <Link to={`/users/${row.original.id}/edit`}><Pencil size={16} /></Link>}<button className={row.original.enabled ? 'danger-text' : 'success-text'} disabled={row.original.id === session.userId} onClick={() => setConfirming(row.original)}>{row.original.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div> },
   ], [t, tenants, session.userId])
-  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={users} loading={loading} onPageChange={onPageChange} />{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
+  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{canCreateUsers(session.role) && <Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={users} loading={loading} onPageChange={onPageChange} />{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
 }
 
 export function UserEditorPage() {
@@ -250,17 +270,23 @@ export function UserEditorPage() {
   // a platform administrator creates tenants and tenant owners, never a
   // tenant user directly (EPIC-IA-04).
   const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const [inviting, setInviting] = useState(false); const [invited, setInvited] = useState(false)
   // O seletor de tenant precisa das opções, não de uma página: pede um lote
   // grande em vez de paginar um <select>.
   useEffect(() => { dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch])
   useEffect(() => { if (!id) return; api.get<User>(`/user/${id}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
   useEffect(() => { if (!id && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants.items[0]?.id) setForm((value) => ({ ...value, tenantId: tenants.items[0].id })) }, [form.role, form.tenantId, id, session.role, tenants])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); const payload = { ...form }; if (!payload.password) delete payload.password; try { if (id) await api.put(`/user/${id}`, payload); else await api.post('/user', payload); navigate('/users') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
+  // EPIC-IA-07/D-07: `PUT /user/{id}` discards any password it is sent, so
+  // the old "new password" field promised a reset that silently did nothing.
+  // Re-issuing the invitation is the action the API actually offers, so that
+  // is the action the form offers.
+  const resendInvite = async () => { if (!id) return; setInviting(true); setError(''); setInvited(false); try { await api.post(`/user/${id}/invite`); setInvited(true) } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setInviting(false) } }
+  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); const payload = { ...form }; delete payload.password; try { if (id) await api.put(`/user/${id}`, payload); else await api.post('/user', payload); navigate('/users') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
   // EPIC-IA-07/D-07 (PD-002): a new account is never given a caller-set
   // password -- the server discards it and emails an invitation instead. A
-  // password field on this form for *creation* would offer a control the
-  // API no longer honours (exactly what PD-015/EPIC-BO-06 warns against).
-  // Editing an existing user still supports an admin-driven reset.
-  return <><PageHeader title={id ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>{id ? <label className="span-2">{t('newPassword')}<input type="password" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label> : <p className="span-2 form-hint">{t('inviteNotice')}</p>}{session.role === 'SysAdmin' && <><label>{t('role')}<Combobox value={form.role} options={[{ value: 'TenantOwner', label: 'TenantOwner' }, { value: 'SysAdmin', label: 'SysAdmin' }]} onChange={(value) => value && setForm({ ...form, role: value as User['role'], tenantId: value === 'SysAdmin' ? null : form.tenantId || tenants.items[0]?.id })} /></label><label>{t('tenant')}<Combobox filterable disabled={form.role === 'SysAdmin'} value={form.tenantId || null} options={tenants.items.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={(value) => setForm({ ...form, tenantId: value })} /></label></>}<label className="checkbox span-2"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />{t('active')}</label></Form></section></>
+  // password field on this form would offer a control the API no longer
+  // honours (exactly what PD-015/EPIC-BO-06 warns against), on creation and
+  // on edit alike, so neither has one.
+  return <><PageHeader title={id ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>{id ? <div className="span-2 form-hint invite-hint"><span>{invited ? t('inviteSent') : t('resendInviteHint')}</span><button type="button" className="btn tertiary" disabled={inviting} onClick={resendInvite}><RefreshCw size={15} />{inviting ? t('sending') : t('resendInvite')}</button></div> : <p className="span-2 form-hint">{t('inviteNotice')}</p>}{session.role === 'SysAdmin' && <><label>{t('role')}<Combobox value={form.role} options={[{ value: 'TenantOwner', label: 'TenantOwner' }, { value: 'SysAdmin', label: 'SysAdmin' }]} onChange={(value) => value && setForm({ ...form, role: value as User['role'], tenantId: value === 'SysAdmin' ? null : form.tenantId || tenants.items[0]?.id })} /></label><label>{t('tenant')}<Combobox filterable disabled={form.role === 'SysAdmin'} value={form.tenantId || null} options={tenants.items.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={(value) => setForm({ ...form, tenantId: value })} /></label></>}<label className="checkbox span-2"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />{t('active')}</label></Form></section></>
 }

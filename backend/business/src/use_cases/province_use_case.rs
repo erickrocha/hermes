@@ -198,6 +198,17 @@ impl ProvinceUseCase {
 
         Ok(ProvinceEntityMapper::from_models(models))
     }
+
+    /// DEF-RD-08: the countries a tenant can be placed in. The console used a
+    /// hardcoded `["BR","US"]`, so a country onboarded through PD-027's import
+    /// could never be chosen — which defeats the reason PD-027 exists.
+    pub async fn find_countries(&self) -> Result<Vec<String>, BusinessError> {
+        self.gateway.distinct_country_codes().await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[ProvinceUseCase::find_countries] {}", msg);
+            BusinessError::new(msg)
+        })
+    }
 }
 
 #[cfg(test)]

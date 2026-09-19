@@ -18,6 +18,7 @@ unexpected-error = Se produjo un error inesperado
 city-not-found = Ciudad no encontrada
 province-not-found = Provincia no encontrada
 reference-data-forbidden = No tiene permiso para administrar datos de referencia
+user-creation-forbidden = Su rol no tiene permiso para crear usuarios
 import-rejected = No se importó nada. Corrija estas filas e inténtelo de nuevo:
 import-row = fila
 import-name-required = el nombre es obligatorio

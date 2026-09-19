@@ -7,7 +7,7 @@ use entity::province_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{Condition, 
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder,
+    QueryOrder, QuerySelect, QueryTrait,
 };
 
 pub struct ProvinceGateway {
@@ -30,6 +30,21 @@ impl ProvinceGateway {
         ProvinceQuery::find()
             .filter(province_entity::Column::CountryCode.eq(country_code))
             .order_by_asc(province_entity::Column::Acronym)
+            .all(&self.db)
+            .await
+    }
+
+    /// DEF-RD-08 (PD-022/PD-027): the countries the platform can actually
+    /// place a tenant in — those that have provinces, however they got them.
+    /// Derived rather than listed, so importing a new country's provinces is
+    /// by itself enough to make it selectable; that is the point of PD-027.
+    pub async fn distinct_country_codes(&self) -> Result<Vec<String>, DbErr> {
+        ProvinceQuery::find()
+            .select_only()
+            .column(province_entity::Column::CountryCode)
+            .distinct()
+            .order_by_asc(province_entity::Column::CountryCode)
+            .into_tuple::<String>()
             .all(&self.db)
             .await
     }

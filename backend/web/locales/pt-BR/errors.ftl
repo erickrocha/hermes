@@ -18,6 +18,7 @@ unexpected-error = Ocorreu um erro inesperado
 city-not-found = Cidade não encontrada
 province-not-found = Estado não encontrado
 reference-data-forbidden = Você não tem permissão para gerenciar dados de referência
+user-creation-forbidden = Seu perfil não tem permissão para criar usuários
 import-rejected = Nada foi importado. Corrija estas linhas e tente novamente:
 import-row = linha
 import-name-required = o nome é obrigatório

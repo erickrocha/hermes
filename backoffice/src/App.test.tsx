@@ -17,7 +17,7 @@ function sessionStore(session: Session | null) {
   return configureStore({
     reducer: {
       auth: (state = { session, loading: false, error: '' }) => state,
-      data: (state = { tenants: emptyPage(), plans: emptyPage(), users: emptyPage(), provinces: [], cities: [], loading: false, error: '' }) => state,
+      data: (state = { tenants: emptyPage(), plans: emptyPage(), users: emptyPage(), provinces: [], cities: [], countries: ['BR', 'US'], counts: { tenants: 0, users: 0, plans: 0 }, currentTenant: null, loading: false, error: '' }) => state,
     },
   })
 }

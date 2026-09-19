@@ -19,6 +19,25 @@ export type ThemeVariableKey =
   | '--accent-hover'
   | '--accent-secondary'
   | '--border-color'
+  // DEF-BO-01: the chrome around the content. Without these a themed tenant
+  // got orange buttons inside a blue console, which reads as a rendering bug
+  // rather than as their identity.
+  | '--sidebar-from'
+  | '--sidebar-to'
+  | '--sidebar-text'
+  | '--sidebar-link'
+  | '--brand-mark-to'
+  | '--panel-from'
+  | '--panel-to'
+  | '--panel-text'
+  | '--auth-panel-from'
+  | '--auth-panel-to'
+  | '--auth-panel-text'
+  | '--auth-panel-highlight'
+  | '--tint-accent'
+  | '--tint-accent-strong'
+  | '--tint-accent-deep'
+  | '--tint-muted'
 
 export type ThemeVariables = Partial<Record<ThemeVariableKey, string>>
 
@@ -35,6 +54,22 @@ export const transmegaTheme: Theme = {
     '--accent-hover': '#c2410c',
     '--accent-secondary': '#f59e0b',
     '--border-color': '#e0ded9',
+    '--sidebar-from': '#1c1917',
+    '--sidebar-to': '#0c0a09',
+    '--sidebar-text': '#f5f5f4',
+    '--sidebar-link': '#d6d3d1',
+    '--brand-mark-to': '#f97316',
+    '--panel-from': '#7c2d12',
+    '--panel-to': '#ea580c',
+    '--panel-text': '#ffedd5',
+    '--auth-panel-from': '#1c1917',
+    '--auth-panel-to': '#7c2d12',
+    '--auth-panel-text': '#ffedd5',
+    '--auth-panel-highlight': '#fdba74',
+    '--tint-accent': '#fff1e8',
+    '--tint-accent-strong': '#ffe8d9',
+    '--tint-accent-deep': '#ffddc7',
+    '--tint-muted': '#faf7f4',
   },
 }
 

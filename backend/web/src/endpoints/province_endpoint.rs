@@ -92,6 +92,34 @@ pub async fn get_by_id(state: State<AppState>,Extension(locale): Extension<Local
     }
 }
 
+/// DEF-RD-08 (PD-022/PD-027): the countries a tenant can be placed in, which
+/// is exactly the set that has provinces. Open to any signed-in caller: the
+/// tenant editor needs it, and a list of ISO country codes is not sensitive.
+/// Deriving it means importing a country's provinces is all it takes to make
+/// that country selectable, with no code change.
+#[utoipa::path(
+    get,
+    tag = "Province",
+    path = "/country",
+    responses(
+        (status = 200, description = "Country codes with reference data", body = Vec<String>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_countries(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+) -> HttpResponse<Json<Vec<String>>> {
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    let codes = use_case
+        .find_countries()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+    Ok(Json(codes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::normalize_country_code;

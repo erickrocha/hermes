@@ -6,7 +6,7 @@ use crate::endpoints::city_endpoint::{
 };
 use crate::endpoints::province_endpoint::{
     get_by_id as get_province_by_id, import as import_provinces, list_all as list_provinces,
-    list_page as list_provinces_page, save as save_province,
+    list_countries, list_page as list_provinces_page, save as save_province,
 };
 use axum::routing::{get, post};
 use axum::{Router, middleware};
@@ -23,6 +23,7 @@ pub fn resources_routes(state: AppState) -> Router<AppState> {
         .route("/cities/by-province/{province_id}", get(get_by_province))
         .route("/city/{id}", get(get_city_by_id))
         .route("/province", get(list_provinces))
+        .route("/country", get(list_countries))
         .route("/province/{id}", get(get_province_by_id))
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }

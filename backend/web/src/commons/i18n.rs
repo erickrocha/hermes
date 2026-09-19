@@ -92,6 +92,9 @@ pub enum ErrorKey {
     /// missing request parameter.
     CityNotFound,
     ProvinceNotFound,
+    /// DEF-BO-05: a role that may not create users. Distinct from a malformed
+    /// request, which is what the caller used to be told.
+    UserCreationForbidden,
     /// DEF-XF-02: a failure the caller cannot act on, but must be told about.
     /// Used where an empty result would otherwise be indistinguishable from a
     /// broken query.
@@ -120,6 +123,7 @@ impl ErrorKey {
             ErrorKey::ReferenceDataForbidden => "ReferenceDataForbidden",
             ErrorKey::CityNotFound => "CityNotFound",
             ErrorKey::ProvinceNotFound => "ProvinceNotFound",
+            ErrorKey::UserCreationForbidden => "UserCreationForbidden",
             ErrorKey::UnexpectedError => "UnexpectedError",
         }
     }
@@ -145,6 +149,7 @@ impl ErrorKey {
             ErrorKey::ReferenceDataForbidden => "reference-data-forbidden",
             ErrorKey::CityNotFound => "city-not-found",
             ErrorKey::ProvinceNotFound => "province-not-found",
+            ErrorKey::UserCreationForbidden => "user-creation-forbidden",
             ErrorKey::UnexpectedError => "unexpected-error",
         }
     }

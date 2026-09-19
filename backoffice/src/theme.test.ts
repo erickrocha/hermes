@@ -23,6 +23,35 @@ describe('hexToRgbTriple', () => {
 describe('applyTheme (EPIC-BO-01-S01/S02)', () => {
   afterEach(() => applyTheme(null))
 
+  // DEF-BO-01: the chrome the operator actually looks at -- sidebar, welcome
+  // panel, sign-in panel, accent tints -- was painted with literal blues, so
+  // a themed tenant got their accent on Hermes-blue furniture. Every variable
+  // main.scss reads for that chrome must be in the theme, or the swap is
+  // partial and reads as a rendering bug.
+  const CHROME_VARIABLES = [
+    '--sidebar-from', '--sidebar-to', '--sidebar-text', '--sidebar-link',
+    '--brand-mark-to',
+    '--panel-from', '--panel-to', '--panel-text',
+    '--auth-panel-from', '--auth-panel-to', '--auth-panel-text', '--auth-panel-highlight',
+    '--tint-accent', '--tint-accent-strong', '--tint-accent-deep', '--tint-muted',
+  ] as const
+
+  it('themes the console chrome, not just the buttons', () => {
+    applyTheme(transmegaTheme)
+    const root = document.documentElement.style
+    CHROME_VARIABLES.forEach((key) => {
+      expect(transmegaTheme.variables[key], `${key} missing from the theme`).toBeTruthy()
+      expect(root.getPropertyValue(key).trim(), `${key} not applied`).toBe(transmegaTheme.variables[key])
+    })
+  })
+
+  it('clears the chrome overrides too, so a tenant colour never survives a sign-out', () => {
+    applyTheme(transmegaTheme)
+    applyTheme(null)
+    const root = document.documentElement.style
+    CHROME_VARIABLES.forEach((key) => expect(root.getPropertyValue(key), `${key} left behind`).toBe(''))
+  })
+
   it('overrides the CSS custom properties main.scss reads its brand colours from', () => {
     applyTheme(transmegaTheme)
     const root = document.documentElement.style

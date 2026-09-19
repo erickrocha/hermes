@@ -12,20 +12,25 @@ const SEARCH_DEBOUNCE_MS = 300
 /// "página 4 de 1" e uma tabela vazia para uma busca que tem resultados.
 export function usePagedList(load: (request: PageRequest) => unknown, pageSize = DEFAULT_PAGE_SIZE) {
   const dispatch = useDispatch<AppDispatch>()
-  const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
+  // DEF-BO-08: page and the debounced term have to move together. Held as two
+  // independent states, typing a search fired one request with the *old* page
+  // (the memo recomputed first) and a second with page 0 (the reset effect ran
+  // after), and whichever reply landed last won -- so a search from page 3
+  // intermittently rendered page 3 of the filtered set, or the unfiltered
+  // list. One state object means one recomputation and one request.
+  const [query, setQuery] = useState({ page: 0, search: '' })
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS)
+    const timer = setTimeout(() => {
+      setQuery((current) => (current.search === search ? current : { page: 0, search }))
+    }, SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [search])
 
-  useEffect(() => { setPage(0) }, [debouncedSearch])
-
   const request = useMemo<PageRequest>(
-    () => ({ page, pageSize, search: debouncedSearch }),
-    [page, pageSize, debouncedSearch],
+    () => ({ page: query.page, pageSize, search: query.search }),
+    [query, pageSize],
   )
 
   useEffect(() => { dispatch(load(request) as never) }, [dispatch, load, request])
@@ -34,7 +39,7 @@ export function usePagedList(load: (request: PageRequest) => unknown, pageSize =
     search,
     setSearch,
     request,
-    onPageChange: (next: PageRequest) => setPage(next.page),
+    onPageChange: (next: PageRequest) => setQuery((current) => ({ ...current, page: next.page })),
     reload: () => dispatch(load(request) as never),
   }
 }

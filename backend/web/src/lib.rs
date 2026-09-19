@@ -70,6 +70,7 @@ impl Modify for SecurityAddon {
 		endpoints::user_endpoint::reissue_invite,
 		endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
+        endpoints::province_endpoint::list_countries,
         endpoints::province_endpoint::list_page,
         endpoints::province_endpoint::get_by_id,
         endpoints::province_endpoint::save,

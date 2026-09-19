@@ -1,21 +1,29 @@
 import { useEffect, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
 import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
-import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage } from './pages/ManagementPages'
+import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers } from './pages/ManagementPages'
 import { SettingsPage } from './pages/SettingsPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
-function Protected({ children, sysAdmin = false }: { children: ReactNode; sysAdmin?: boolean }) {
+function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (role: string) => boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
+  const location = useLocation()
   if (!session) return <Navigate to="/login" replace />
   if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/" replace />
-  return <Shell>{children}</Shell>
+  // DEF-BO-04: a role check that only lives in the page's action bar is a
+  // suggestion -- the URL is still reachable by hand. The guard and the
+  // button share one predicate so they cannot disagree.
+  if (allow && !allow(session.role)) return <Navigate to="/" replace />
+  // U-1: keyed by route so navigating away from a page that threw clears the
+  // failure instead of stranding the operator on the error card.
+  return <Shell><ErrorBoundary key={location.pathname}>{children}</ErrorBoundary></Shell>
 }
 
 export default function App() {
@@ -39,7 +47,7 @@ export default function App() {
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/plans/:id/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/users" element={<Protected><UsersPage /></Protected>} />
-    <Route path="/users/new" element={<Protected><UserEditorPage /></Protected>} />
+    <Route path="/users/new" element={<Protected allow={canCreateUsers}><UserEditorPage /></Protected>} />
     <Route path="/users/:id/edit" element={<Protected><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
     <Route path="*" element={<Navigate to="/" replace />} />
