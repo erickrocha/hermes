@@ -171,21 +171,35 @@ impl AuthenticationUseCase {
         encode(&header, &claims, &EncodingKey::from_secret(private_key.as_bytes())).unwrap()
     }
 
+    /// DEF-XF-09 (owner, 2026-09-18): identity and tenant scope come from the
+    /// token. At login the user is found by email (unique across the platform),
+    /// the password verified, and the token minted with that user's role and
+    /// tenant -- empty only for a SysAdmin. Every protected request then decodes
+    /// the token and uses *those* claims; the database is never the source of
+    /// role or tenant here.
+    ///
+    /// The one database read left is HRM-042: the account must still exist and
+    /// be enabled, so disabling someone ends their session at once instead of
+    /// when the token expires. A role or tenant change takes effect at the next
+    /// login or refresh, which re-reads the account and mints fresh claims.
     pub async fn validate(db: &DbConn, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate] Validating access token");
         let public_key = env::var("ACCESS_TOKEN_SECRET").expect("ACCESS_TOKEN_SECRET must be set");
-        let result = decode::<Claims>(&token, &DecodingKey::from_secret(public_key.as_bytes()), &Validation::new(Algorithm::HS512));
+        let claims = decode::<Claims>(&token, &DecodingKey::from_secret(public_key.as_bytes()), &Validation::new(Algorithm::HS512))
+            .map_err(|err| {
+                log::error!("[AuthenticationUseCase::validate] Token decode error: {:?}", err);
+                BusinessError::new("Token is invalid".to_string())
+            })?
+            .claims;
+        log::info!("[AuthenticationUseCase::validate] Token valid for subject: {}", claims.sub);
 
-        if let Err(err) = &result {
-            log::error!("[AuthenticationUseCase::validate] Token decode error: {:?}", err);
-            return Err(BusinessError::new("Token is invalid".to_string()));
-        }
-
-        let authentication = result.unwrap();
-        log::info!("[AuthenticationUseCase::validate] Token valid for subject: {}", authentication.claims.sub);
-        let email = authentication.claims.sub;
-
-        Self::load_enabled_user(db, &email, "validate").await
+        let account = Self::load_enabled_user(db, &claims.sub, "validate").await?;
+        Ok(User {
+            id: Some(claims.user_id),
+            role: claims.role,
+            tenant_id: claims.tenant_id,
+            ..account
+        })
     }
 
     pub async fn validate_refresh_token(db: &DbConn, token: String) -> Result<User, BusinessError> {

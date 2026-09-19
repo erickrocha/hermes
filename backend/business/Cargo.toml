@@ -32,3 +32,11 @@ mock = ["sea-orm/mock"]
 [[test]]
 name = "mock"
 required-features = ["mock"]
+
+[[test]]
+name = "use_cases"
+required-features = ["mock"]
+
+[[test]]
+name = "authentication"
+required-features = ["mock"]

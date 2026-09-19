@@ -28,7 +28,7 @@ impl FromStr for Role {
             "SysAdmin" => Ok(Self::SysAdmin),
             "TenantOwner" => Ok(Self::TenantOwner),
             "TenantUser" => Ok(Self::TenantUser),
-            _ => Err(format!("Invalid recommended period: {}", value))?,
+            _ => Err(format!("Invalid role: {}", value))?,
         }
     }
 }

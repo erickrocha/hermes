@@ -8,7 +8,7 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::user_json::UserJson;
-use crate::infrastructure::mapper::{Mapper, UserMapper};
+use crate::infrastructure::mapper::{reject_unknown_role, Mapper, UserMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
@@ -45,6 +45,7 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<(StatusCode, Json<UserJson>)> {
+    reject_unknown_role(&payload.role, &locale)?;
     let mut domain = UserMapper::domain(payload);
 
     // PD-019's creation hierarchy (EPIC-IA-04): an unbound platform
@@ -258,6 +259,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<Json<UserJson>> {
+    reject_unknown_role(&payload.role, &locale)?;
     let mut domain = UserMapper::domain(payload);
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 

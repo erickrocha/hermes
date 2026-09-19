@@ -32,8 +32,12 @@ jobs:
       - name: Install
         run: npm ci
 
+      # `tsc --noEmit` at the root checks nothing: tsconfig.json is a
+      # project-references stub (`"files": []`). `-b` builds the referenced
+      # app/node projects, which is where the source actually is. The old step
+      # had been passing without type-checking a single file.
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npx tsc -b --noEmit
 
       - name: Test (role-conditional screens, session handling, price editing)
         run: npm test

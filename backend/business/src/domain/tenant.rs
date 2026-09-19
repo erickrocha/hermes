@@ -20,7 +20,6 @@ pub struct Tenant {
     pub administrative_area: Option<String>,
     pub postal_code: Option<String>,
     pub country_code: Option<String>,
-    /// Days a customer keeps app access after a charge falls due.
     /// The tenant's single current plan. Set only via `TenantUseCase::set_plan`
     /// (PD-021) — `create`/`update` never take a caller-supplied value.
     pub business_plan_id: Option<i64>,

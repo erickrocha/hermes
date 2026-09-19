@@ -16,10 +16,10 @@ impl MigrationTrait for Migration {
                     .col(string_len(User::Name, 500).null())
                     .col(string_len(User::Email, 500).unique_key())
                     .col(string_len(User::Password, 500).not_null())
+                    .col(boolean(User::FirstLogin).default(true))
                     .col(boolean(User::Enabled).default(true))
                     .col(integer(User::TenantId).null())
                     .col(string_len(User::Role,50).not_null())
-                    .col(string_len(User::BlockedReason,32).null())
                     .col(date_time(User::CreatedAt).null())
                     .col(string_len(User::CreatedBy,50).null())
                     .col(date_time(User::UpdatedAt).null())
@@ -45,10 +45,10 @@ pub enum User {
     Name,
     Email,
     Password,
+    FirstLogin,
     Enabled,
     TenantId,
     Role,
-    BlockedReason,
     CreatedAt,
     CreatedBy,
     UpdatedAt,

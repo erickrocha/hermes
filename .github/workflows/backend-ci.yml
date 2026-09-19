@@ -28,8 +28,8 @@ jobs:
       - name: Test (all crates, including AD-019's naming check)
         run: cargo test --workspace
 
-      - name: Test (database-free mock suite, AD-002/EPIC-XF-07)
-        run: cargo test -p business --features mock --test mock
+      - name: Test (database-free mock suites, AD-002/EPIC-XF-07, DEF-XF-10)
+        run: cargo test -p business --features mock
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -59,5 +59,49 @@ jobs:
       # raise this number in the same commit -- see
       # EPIC-XF-09-S04 in 02-system_requirements/hermes/foundation_implementation_plan.md
       # for how the guide wants that read.
-      - name: Coverage floor (ratchet toward AD-020's 90%, not there yet)
-        run: cargo llvm-cov --package business --fail-under-lines 24
+      # DEF-XF-10: HRMS-037's 90% is met (measured 94.2% on 2026-09-18) now
+      # that the use cases are tested against MockDatabase. `--features mock`
+      # is required -- without it the mock-backed test binaries don't compile
+      # in and the gate measures a fraction of the suite.
+      - name: Coverage floor (HRMS-037, 90%)
+        run: cargo llvm-cov --package business --features mock --fail-under-lines 90
+
+  # Defect D-13: a single BIGINT-vs-INT foreign key made the migration chain
+  # fail on every fresh database, and nothing above could see it -- no unit
+  # test touches DDL. This job runs the real deploy step (PD-033) against an
+  # empty MariaDB, twice: the second run proves migrations are idempotent,
+  # which is what a redeploy relies on.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: ci
+          MARIADB_DATABASE: hermes
+          MARIADB_USER: hermes
+          MARIADB_PASSWORD: ci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: mysql://hermes:ci@127.0.0.1:3306/hermes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Migrate an empty database (the deploy step)
+        run: cargo run -- migrate
+
+      - name: Migrate again (must be a no-op)
+        run: cargo run -- migrate
+
+      # DEF-XF-01 and three earlier defects: an entity declaring a column the
+      # migrations never create. Only a real, migrated schema can show it.
+      - name: Every entity column exists in the migrated schema
+        run: cargo test -p business --test schema_matches_entities -- --ignored
+

@@ -74,13 +74,13 @@ impl CityUseCase {
     pub async fn save(&self, mut city: City) -> Result<City, BusinessError> {
         Self::validate(&mut city).map_err(BusinessError::new)?;
 
-        if let Ok(Some(existing)) = self.gateway.find_by_name(city.province_id, &city.name).await {
-            if Some(existing.id) != city.id {
+        if let Ok(Some(existing)) = self.gateway.find_by_name(city.province_id, &city.name).await
+            && Some(existing.id) != city.id
+        {
                 return Err(BusinessError::new(format!(
                     "City {} already exists in this province",
                     city.name
                 )));
-            }
         }
 
         let saved = CityEntityMapper::build_active_model(city)
@@ -97,13 +97,16 @@ impl CityUseCase {
 
         for (index, mut row) in rows.into_iter().enumerate() {
             match Self::validate(&mut row) {
-                Ok(()) => prepared.push(row),
+                Ok(()) => prepared.push((index, row)),
                 Err(reason) => rejections.push(ImportRejection::new(index, reason)),
             }
         }
 
-        for index in find_duplicate_keys(prepared.iter().map(|c| (c.province_id, c.name.clone()))) {
-            rejections.push(ImportRejection::new(index, "duplicate city within the file"));
+        // Positions are reported against the rows as the operator sent them;
+        // `prepared` holds only the valid ones, so each keeps its original index.
+        let keys = prepared.iter().map(|(_, c)| (c.province_id, c.name.clone()));
+        for position in find_duplicate_keys(keys) {
+            rejections.push(ImportRejection::new(prepared[position].0, "duplicate city within the file"));
         }
 
         if !rejections.is_empty() {
@@ -112,7 +115,7 @@ impl CityUseCase {
         }
 
         let mut outcome = ImportOutcome::default();
-        for mut row in prepared {
+        for (_, mut row) in prepared {
             let existing = self
                 .gateway
                 .find_by_name(row.province_id, &row.name)

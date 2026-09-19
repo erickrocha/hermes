@@ -1,0 +1,188 @@
+[
+ [
+  "BO-002",
+  "ui",
+  "PASS",
+  "login page --accent-primary=#1d6fd1; after TM owner sign-in=#ff5b00; sidebar=linear-gradient(175deg, rgb(14, 52, 94) 0%, rgb(11, 40, 71) 100%); welcome panel=linear-gradient(130deg, rgb(16, 63, 113), rgb(23, 104, 188))"
+ ],
+ [
+  "BO-004",
+  "ui",
+  "FAIL",
+  "draft palette applied (accent #ff5b00); vendor-blue surfaces still shown: sidebar true, welcome panel true -- see BO-002-transmega-dashboard.png"
+ ],
+ [
+  "BO-002",
+  "ui",
+  "FAIL",
+  "fresh load of /settings as TM owner: --accent-primary=#1d6fd1"
+ ],
+ [
+  "BO-003",
+  "ui",
+  "PASS",
+  "after TM sign-out, login page accent=#1d6fd1; ACME owner accent=#1d6fd1"
+ ],
+ [
+  "BO-010",
+  "ui",
+  "PASS",
+  "owner's user list shows role badges TenantUser (25 rows)"
+ ],
+ [
+  "BO-060",
+  "ui",
+  "PASS",
+  "pager text \"1–25 of 29Page 1 of 2\", 25 rows"
+ ],
+ [
+  "BO-060",
+  "ui",
+  "PASS",
+  "next page -> \"26–29 of 29Page 2 of 2\", 4 rows"
+ ],
+ [
+  "BO-061",
+  "ui",
+  "PASS",
+  "search \"pager 1\" from page 2 -> 10 rows (expected 10: pager 10..19), pager shown=false, first=qa-bo pager 19; requests sent after typing: ?page=1&pageSize=25&search=pager+1 , ?page=0&pageSize=25&search=pager+1"
+ ],
+ [
+  "BO-064",
+  "ui",
+  "FAIL",
+  "dashboard count request answered 2 s late, Users opened meanwhile -> 1 rows, pager \"1–1 of 29Page 1 of 29\""
+ ],
+ [
+  "BO-065",
+  "ui",
+  "FAIL",
+  "on page 2, typed \"pager 1\" (10 matches); stale page=1 request answered last -> 0 rows, \"No records\" shown=true"
+ ],
+ [
+  "BO-012",
+  "ui",
+  "PASS",
+  "TM owner's new-user form: role/tenant picker shown=false; saved and returned to /users"
+ ],
+ [
+  "BO-014",
+  "ui",
+  "PASS",
+  "owner: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/119/subscription->/"
+ ],
+ [
+  "BO-014",
+  "ui",
+  "PASS",
+  "user: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/119/subscription->/"
+ ],
+ [
+  "BO-013",
+  "ui",
+  "FAIL",
+  "TenantUser offered: \"New user\" on /users=true (list empty=true); \"Edit\" on own tenant card=true; dashboard counts=[1,0]"
+ ],
+ [
+  "BO-013",
+  "ui",
+  "INFO",
+  "TenantUser can open /users/new and submit; API refuses with \"Required header value missing\""
+ ],
+ [
+  "BO-062",
+  "ui",
+  "PASS",
+  "SysAdmin nav=[Overview, Tenants, Plans, Users, System settings]; cards=[Registered tenants28 | Users32 | Available plans1]"
+ ],
+ [
+  "BO-012",
+  "ui",
+  "PASS",
+  "SysAdmin role options=[TenantOwner, SysAdmin]"
+ ],
+ [
+  "BO-020",
+  "ui",
+  "PASS",
+  "new tenant defaults to US; US -> 51 provinces (Alaska (AK); Alabama (AL)); BR -> 27 (Acre (AC); Alagoas (AL))"
+ ],
+ [
+  "BO-020",
+  "ui",
+  "PASS",
+  "saved tenant: US/TX/Austin"
+ ],
+ [
+  "BO-020",
+  "ui",
+  "PASS",
+  "reopened: country=US, province shows \"Texas (TX)\""
+ ],
+ [
+  "BO-022",
+  "ui",
+  "PASS",
+  "typed 199.90 -> stored 19990 cents; list shows \"R$199.90\"; editor reopens with 199.90"
+ ],
+ [
+  "BO-023",
+  "ui",
+  "FAIL",
+  "subscription page for TM: form rendered=false; selected=\"\"; page errors=[\"plans.flatMap is not a function\"]; body=\" \""
+ ],
+ [
+  "BO-066",
+  "ui",
+  "PASS",
+  "search \"qa-bo-grid\": 25 cards, pager \"1–25 of 26Page 1 of 2\"; page 2 -> 1 card(s)"
+ ],
+ [
+  "BO-063",
+  "ui",
+  "PASS",
+  "import dialog \"Imported: 2 created, 0 updated.\"; search shows 2 rows: Q1qa-bo-Prov OneQB | Q2qa-bo-Prov TwoQB"
+ ],
+ [
+  "BO-030",
+  "ui",
+  "PASS",
+  "after token rejected (refresh also invalid): at /login, session stored=false"
+ ],
+ [
+  "BO-030",
+  "ui",
+  "PASS",
+  "bad access token + valid refresh token: stays at /users"
+ ],
+ [
+  "BO-031",
+  "ui",
+  "SUPERSEDED",
+  "replacement PASS: /first-access -> / (route removed, HRM-045 descoped); /accept-invite with a bad token shows: \"Welcome to HermesSet a password to activate your account.New passwordConfirm new passwordInvalid parameter valueActivate\""
+ ],
+ [
+  "BO-032",
+  "ui",
+  "SUPERSEDED",
+  "replacement PASS: invite accepted: \"Account activatedYour password is set. You can sign in now.Sign in\"; signed in as qa-bo-pg-00@hermes.test; replaying the same link: \"dConfirm new passwordInvalid parameter valueActivate account\""
+ ],
+ [
+  "BO-033",
+  "ui",
+  "PASS",
+  "hermes.session.uuid=4f70e4fe-9e0d-4c22-894e-5b6512cac57c, email=qa-bo-owner-tm@hermes.test"
+ ],
+ [
+  "BO-040",
+  "ui",
+  "PASS",
+  "en-US: login=\"Sign in to the backoffice\", nav=Overview/Tenants/Users, Accept-Language=en-US, toggle shows \"PT\"/\"EN\" || pt-BR: login=\"Acesse o backoffice\", nav=Visão geral/Tenants/Usuários, Accept-Language=pt-BR, toggle shows \"EN\"/\"PT\" || es-ES: login=\"Inicia sesión en el backoffice\", nav=Resumen/Inquilinos/Usuarios, Accept-Language=es-ES, toggle shows \"PT\"/\"EN\""
+ ],
+ [
+  "BO-042",
+  "ui",
+  "FAIL",
+  "language switcher offers en/pt only: an es-ES user sees the button labelled \"EN\", one click switches to pt-BR, and Spanish cannot be chosen back from the UI"
+ ]
+]

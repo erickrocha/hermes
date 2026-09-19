@@ -107,11 +107,30 @@ pub struct AppState {
 // ==================== Route Builders ====================
 /// Build public welcome route
 fn welcome_route() -> Router<AppState> {
-    Router::new().route("/", get(welcome))
+    // `/` redirects to Swagger UI, which only exists in development; elsewhere
+    // a redirect to a 404 would be the first thing anyone sees.
+    if api_docs_enabled() {
+        Router::new().route("/", get(welcome))
+    } else {
+        Router::new().route("/", get(|| async { "Hermes API" }))
+    }
 }
 
-/// Origens permitidas em produção, de `CORS_ALLOWED_ORIGINS` (lista separada por vírgula).
-/// `None` = sem lista configurada, o chamador libera qualquer origem (só desenvolvimento).
+/// `APP_ENV` unset or `development` is a developer machine; anything else
+/// (`production`, `staging`, ...) is treated as production-like. One definition
+/// drives both rules below, so they can never disagree about where they are.
+fn is_development(app_env: Option<&str>) -> bool {
+    match app_env.map(str::trim) {
+        None | Some("") => true,
+        Some(env) => env.eq_ignore_ascii_case("development"),
+    }
+}
+
+fn app_env() -> Option<String> {
+    env::var("APP_ENV").ok()
+}
+
+/// Origens permitidas, de `CORS_ALLOWED_ORIGINS` (lista separada por vírgula).
 fn parse_allowed_origins(raw: Option<String>) -> Option<Vec<HeaderValue>> {
     let origins: Vec<HeaderValue> = raw?
         .split(',')
@@ -122,24 +141,24 @@ fn parse_allowed_origins(raw: Option<String>) -> Option<Vec<HeaderValue>> {
     (!origins.is_empty()).then_some(origins)
 }
 
-fn cors_allowed_origins() -> Option<Vec<HeaderValue>> {
-    parse_allowed_origins(env::var("CORS_ALLOWED_ORIGINS").ok())
-}
-
-/// O explorador interativo é conveniência de desenvolvimento: fica fora de produção
-/// salvo opt-in explícito. O documento OpenAPI em si não depende disto.
-fn swagger_ui_is_enabled(app_env: Option<String>, override_flag: Option<String>) -> bool {
-    if let Some(flag) = override_flag {
-        return flag.trim().eq_ignore_ascii_case("true");
+/// D-11 / OBS-1 (owner, 2026-09-18): production defines its origins; a
+/// developer machine accepts any. Outside development a missing list is a boot
+/// error, not a silent fall back to `*`.
+fn resolve_cors_origins(
+    app_env: Option<&str>,
+    raw: Option<String>,
+) -> Result<Option<Vec<HeaderValue>>, String> {
+    match parse_allowed_origins(raw) {
+        Some(origins) => Ok(Some(origins)),
+        None if is_development(app_env) => Ok(None),
+        None => Err("CORS_ALLOWED_ORIGINS must be set outside development".to_string()),
     }
-    !matches!(
-        app_env.as_deref().map(str::trim),
-        Some(env) if env.eq_ignore_ascii_case("production")
-    )
 }
 
-fn swagger_ui_enabled() -> bool {
-    swagger_ui_is_enabled(env::var("APP_ENV").ok(), env::var("SWAGGER_UI_ENABLED").ok())
+/// PD-032 as amended by the owner (2026-09-18, DEF-XF-05): the OpenAPI surface
+/// -- Swagger UI *and* the JSON document -- exists only in development.
+fn api_docs_enabled() -> bool {
+    is_development(app_env().as_deref())
 }
 
 /// A missing `.env` is normal (production takes its environment from the
@@ -156,11 +175,42 @@ fn load_dotenv() -> anyhow::Result<()> {
     }
 }
 
+/// DEF-XF-03 / DEF-XF-04: the token secrets are checked once, before anything
+/// is served. They used to be read lazily with `expect()` on each token
+/// operation, so an empty `ACCESS_TOKEN_SECRET` booted fine and a SysAdmin
+/// token forged with an empty HMAC key was accepted, while a missing one booted
+/// and then crashed the first login.
+///
+/// 32 bytes is the floor for an HMAC-SHA256 key worth the name. The two must
+/// also differ: with one shared secret a refresh token verifies as an access
+/// token and the other way round.
+const MIN_TOKEN_SECRET_BYTES: usize = 32;
+
+fn validate_token_secrets(access: Option<String>, refresh: Option<String>) -> Result<(), String> {
+    let check = |name: &str, value: &Option<String>| -> Result<(), String> {
+        match value.as_deref().map(str::trim) {
+            None | Some("") => Err(format!("{name} must be set")),
+            Some(secret) if secret.len() < MIN_TOKEN_SECRET_BYTES => Err(format!(
+                "{name} must be at least {MIN_TOKEN_SECRET_BYTES} bytes (generate one with `openssl rand -hex 32`)"
+            )),
+            Some(_) => Ok(()),
+        }
+    };
+    check("ACCESS_TOKEN_SECRET", &access)?;
+    check("REFRESH_TOKEN_SECRET", &refresh)?;
+    if access.as_deref().map(str::trim) == refresh.as_deref().map(str::trim) {
+        return Err("ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET must differ".to_string());
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
     // env::set_var("RUST_LOG", "debug");
     tracing_subscriber::fmt::init();
     load_dotenv()?;
+    validate_token_secrets(env::var("ACCESS_TOKEN_SECRET").ok(), env::var("REFRESH_TOKEN_SECRET").ok())
+        .map_err(|problem| anyhow::anyhow!("Refusing to start: {problem}"))?;
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let host = env::var("HOST").expect("HOST is not set in .env file");
     let port = env::var("PORT").expect("PORT is not set in .env file");
@@ -218,13 +268,15 @@ async fn start() -> anyhow::Result<()> {
             header::ACCESS_CONTROL_ALLOW_HEADERS,
         ]);
 
-    let cors = match cors_allowed_origins() {
+    let cors = match resolve_cors_origins(app_env().as_deref(), env::var("CORS_ALLOWED_ORIGINS").ok())
+        .map_err(|problem| anyhow::anyhow!("Refusing to start: {problem}"))?
+    {
         Some(origins) => cors.allow_origin(origins),
         None => cors.allow_origin(Any),
     };
 
     let mut app = Router::new();
-    if swagger_ui_enabled() {
+    if api_docs_enabled() {
         app = app.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
     }
     let app = app
@@ -338,7 +390,7 @@ mod openapi_contract_tests {
                 continue;
             }
             let source = std::fs::read_to_string(&file).expect("readable route file");
-            let (prefix, source) = nest_prefix(&source, &file);
+            let prefix = nest_prefix(&file);
             for literal in route_literals(&source) {
                 // `.route("/")` dentro de um `nest` é a raiz do prefixo:
                 // `/tenant`, não `/tenant/`.
@@ -368,15 +420,13 @@ mod openapi_contract_tests {
 
     /// Os routers de recurso são montados sob um prefixo em `lib.rs`; o nome do
     /// arquivo diz qual, para o caminho documentado bater com o servido.
-    fn nest_prefix<'a>(source: &'a str, file: &std::path::Path) -> (&'static str, &'a str) {
-        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-        let prefix = match stem {
+    fn nest_prefix(file: &std::path::Path) -> &'static str {
+        match file.file_stem().and_then(|s| s.to_str()).unwrap_or_default() {
             "tenant_routes" => "/tenant",
             "business_plan_routes" => "/business-plan",
             "user_routes" => "/user",
             _ => "",
-        };
-        (prefix, source)
+        }
     }
 
     #[test]
@@ -393,12 +443,15 @@ mod openapi_contract_tests {
 
 #[cfg(test)]
 mod environment_gates_tests {
-    use super::{parse_allowed_origins, swagger_ui_is_enabled};
+    use super::{is_development, parse_allowed_origins, resolve_cors_origins};
 
     #[test]
-    fn no_origin_list_means_unrestricted() {
-        assert!(parse_allowed_origins(None).is_none());
-        assert!(parse_allowed_origins(Some("  ,  ".to_string())).is_none());
+    fn only_unset_or_development_counts_as_development() {
+        assert!(is_development(None));
+        assert!(is_development(Some("")));
+        assert!(is_development(Some(" Development ")));
+        assert!(!is_development(Some("production")));
+        assert!(!is_development(Some("staging")));
     }
 
     #[test]
@@ -410,25 +463,60 @@ mod environment_gates_tests {
         assert_eq!(origins.len(), 2);
         assert_eq!(origins[0], "https://app.hermes.io");
         assert_eq!(origins[1], "https://admin.hermes.io");
+        assert!(parse_allowed_origins(Some("  ,  ".to_string())).is_none());
     }
 
     #[test]
-    fn swagger_ui_is_off_in_production_and_on_elsewhere() {
-        assert!(!swagger_ui_is_enabled(Some("production".to_string()), None));
-        assert!(!swagger_ui_is_enabled(Some(" PRODUCTION ".to_string()), None));
-        assert!(swagger_ui_is_enabled(Some("staging".to_string()), None));
-        assert!(swagger_ui_is_enabled(None, None));
+    fn development_without_a_list_accepts_any_origin() {
+        assert_eq!(resolve_cors_origins(Some("development"), None), Ok(None));
+        assert_eq!(resolve_cors_origins(None, None), Ok(None));
     }
 
     #[test]
-    fn explicit_flag_overrides_the_environment() {
-        assert!(swagger_ui_is_enabled(
-            Some("production".to_string()),
-            Some("true".to_string())
-        ));
-        assert!(!swagger_ui_is_enabled(
-            Some("staging".to_string()),
-            Some("false".to_string())
-        ));
+    fn production_without_a_list_refuses_to_start() {
+        assert!(resolve_cors_origins(Some("production"), None).is_err());
+        assert!(resolve_cors_origins(Some("production"), Some(" , ".to_string())).is_err());
+        assert!(resolve_cors_origins(Some("staging"), None).is_err());
+    }
+
+    #[test]
+    fn a_configured_list_is_used_everywhere() {
+        let list = Some("https://app.hermes.io".to_string());
+        assert_eq!(resolve_cors_origins(Some("production"), list.clone()).unwrap().unwrap().len(), 1);
+        assert_eq!(resolve_cors_origins(Some("development"), list).unwrap().unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod token_secret_tests {
+    use super::validate_token_secrets;
+
+    fn secret(c: char) -> Option<String> {
+        Some(c.to_string().repeat(32))
+    }
+
+    #[test]
+    fn two_distinct_long_secrets_are_accepted() {
+        assert!(validate_token_secrets(secret('a'), secret('b')).is_ok());
+    }
+
+    #[test]
+    fn missing_or_blank_secrets_are_refused() {
+        assert!(validate_token_secrets(None, secret('b')).is_err());
+        assert!(validate_token_secrets(Some(String::new()), secret('b')).is_err());
+        assert!(validate_token_secrets(Some("   ".to_string()), secret('b')).is_err());
+        assert!(validate_token_secrets(secret('a'), None).is_err());
+    }
+
+    #[test]
+    fn short_secrets_are_refused_including_the_example_placeholders() {
+        let example_access = Some("change-me-access-secret".to_string());
+        let example_refresh = Some("change-me-refresh-secret".to_string());
+        assert!(validate_token_secrets(example_access, example_refresh).is_err());
+    }
+
+    #[test]
+    fn a_shared_secret_is_refused() {
+        assert!(validate_token_secrets(secret('a'), secret('a')).is_err());
     }
 }

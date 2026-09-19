@@ -43,13 +43,12 @@ impl ProvinceUseCase {
             .gateway
             .find_by_acronym(&province.country_code, &province.acronym)
             .await
+            && Some(existing.id) != province.id
         {
-            if Some(existing.id) != province.id {
                 return Err(BusinessError::new(format!(
                     "Province {} already exists for {}",
                     province.acronym, province.country_code
                 )));
-            }
         }
 
         let saved = ProvinceEntityMapper::build_active_model(province)
@@ -66,15 +65,16 @@ impl ProvinceUseCase {
 
         for (index, mut row) in rows.into_iter().enumerate() {
             match Self::validate(&mut row) {
-                Ok(()) => prepared.push(row),
+                Ok(()) => prepared.push((index, row)),
                 Err(reason) => rejections.push(ImportRejection::new(index, reason)),
             }
         }
 
-        for index in find_duplicate_keys(
-            prepared.iter().map(|p| (p.country_code.clone(), p.acronym.clone())),
-        ) {
-            rejections.push(ImportRejection::new(index, "duplicate acronym within the file"));
+        // Positions are reported against the rows as the operator sent them;
+        // `prepared` holds only the valid ones, so each keeps its original index.
+        let keys = prepared.iter().map(|(_, p)| (p.country_code.clone(), p.acronym.clone()));
+        for position in find_duplicate_keys(keys) {
+            rejections.push(ImportRejection::new(prepared[position].0, "duplicate acronym within the file"));
         }
 
         if !rejections.is_empty() {
@@ -83,7 +83,7 @@ impl ProvinceUseCase {
         }
 
         let mut outcome = ImportOutcome::default();
-        for mut row in prepared {
+        for (_, mut row) in prepared {
             let existing = self
                 .gateway
                 .find_by_acronym(&row.country_code, &row.acronym)

@@ -1,4 +1,6 @@
 use std::str::FromStr;
+use crate::commons::exception_response::ExceptionResponse;
+use crate::commons::i18n::{ErrorKey, Locale};
 
 use crate::endpoints::json::access_token_json::AccessTokenJson;
 use crate::endpoints::json::city_json::CityJson;
@@ -84,7 +86,9 @@ impl Mapper<User, UserJson> for UserMapper {
             name: u.name,
             password: u.password.unwrap_or_default(),
             enabled: u.enabled,
-            role: Role::from_str(&u.role).unwrap(),
+            // Endpoints call `reject_unknown_role` first (DEF-XF-06); this
+            // default is never reached with an unknown value.
+            role: Role::from_str(&u.role).unwrap_or_default(),
             tenant_id: u.tenant_id,
             created_at: u.created_at,
             created_by: u.created_by,
@@ -148,9 +152,12 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
         Tenant {
             id: u.id,
             uuid: u.uuid,
-            business_name: u.business_name.unwrap(),
+            // DEF-XF-06: missing fields become empty and are rejected by the
+            // use case's own validation (HRM-002) with a 400, instead of
+            // panicking the handler and dropping the connection.
+            business_name: u.business_name.unwrap_or_default(),
             company_name: u.company_name,
-            tax_id: u.tax_id.unwrap(),
+            tax_id: u.tax_id.unwrap_or_default(),
             email: optional_text(u.email),
             phone: optional_text(u.phone),
             website: u.website,
@@ -215,6 +222,14 @@ impl Mapper<City, CityJson> for CityMapper {
     }
 }
 
+/// DEF-XF-06 (owner, 2026-09-18): a role the platform doesn't know is refused
+/// with 403 Forbidden -- never silently defaulted, never a panic.
+pub fn reject_unknown_role(role: &str, locale: &Locale) -> Result<(), ExceptionResponse> {
+    Role::from_str(role)
+        .map(|_| ())
+        .map_err(|_| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidParameterValue))
+}
+
 #[cfg(test)]
 mod address_mapping_tests {
     use super::{canonical_address, country_code, optional_text};
@@ -235,5 +250,26 @@ mod address_mapping_tests {
     fn optional_address_values_are_cleaned_and_country_is_uppercase() {
         assert_eq!(optional_text(Some("  ".into())), None);
         assert_eq!(country_code(Some(" br ".into())), Some("BR".into()));
+    }
+}
+
+#[cfg(test)]
+mod role_guard_tests {
+    use super::reject_unknown_role;
+    use crate::commons::exception_response::ExceptionResponse;
+    use crate::commons::i18n::Locale;
+
+    #[test]
+    fn known_roles_pass_and_unknown_ones_are_forbidden() {
+        let locale = Locale::from_accept_language(None);
+        for role in ["SysAdmin", "TenantOwner", "TenantUser"] {
+            assert!(reject_unknown_role(role, &locale).is_ok(), "{role} must be accepted");
+        }
+        for role in ["Wizard", "", "sysadmin", "Driver"] {
+            assert!(
+                matches!(reject_unknown_role(role, &locale), Err(ExceptionResponse::Forbidden(..))),
+                "{role:?} must be refused with 403"
+            );
+        }
     }
 }

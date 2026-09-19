@@ -179,8 +179,6 @@ impl TenantUseCase {
             administrative_area: tenant.administrative_area,
             postal_code: tenant.postal_code,
             country_code: tenant.country_code,
-            // Omitting the field keeps the clinic's current grace rather than
-            // silently resetting it to the column default.
             // A tenant's plan is set only through `set_plan` (HRMS-224,
             // PD-021) — the general update path always keeps it as-is,
             // regardless of what the caller sent.

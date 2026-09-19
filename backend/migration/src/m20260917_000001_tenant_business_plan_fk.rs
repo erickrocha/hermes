@@ -16,6 +16,11 @@ impl MigrationTrait for Migration {
                     // constraint falhava com errno 150 e a cadeia inteira de
                     // migrações não subia em banco novo — nenhum ambiente podia
                     // ser provisionado do zero.
+                    //
+                    // Única edição de migração aplicada mantida de propósito
+                    // (DEF-XF-07 / HRMS-026): a versão original nunca pôde ser
+                    // aplicada em MariaDB, então nenhum banco a tem registrada
+                    // como executada. Ver m20260918_000003.
                     .add_column(ColumnDef::new(Tenant::BusinessPlanId).integer().null())
                     .add_foreign_key(
                         TableForeignKey::new()
