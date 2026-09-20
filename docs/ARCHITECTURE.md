@@ -1,23 +1,33 @@
 # Architecture rationale
 
-EPIC-XF-08-S02 (HRMS-034). No ADR or design note for these three decisions exists anywhere
-in this repository's history — not in a commit message, not in a code comment. What follows
-is read off the structure that was built, not a record of what the original author actually
-reasoned through at the time. Where that matters, it's marked explicitly, so a later reader
-can tell "why this holds up" from "why this was chosen."
+EPIC-XF-08-S02 (HRMS-034). The three decisions below — Rust, the crate split, and the
+separately deployed console — were made by the project owner before this repository had any
+ADR or design note, so nothing in the commit history records them.
+
+The owner's reasoning was captured directly on **2026-09-19, closing decision D-13**. Each
+section states that reasoning first, then what the built structure observably buys. The two
+are kept apart on purpose: the first is why the choice was made, the second is why it still
+holds up. A later reader should be able to tell the difference.
 
 ## Why Rust
 
-No comment or commit records this. What the choice buys, observably: memory safety and
-compile-time correctness for a service holding credentials and billing data, a single
-self-contained binary to deploy, and a release profile tuned for it (`opt-level = 3`, thin
-LTO, in `backend/Cargo.toml`).
+**Owner's reasoning (D-13).** Existing knowledge of the language, and the fact that it is
+safe and fast. The choice was deliberate on those grounds, not the result of a survey of
+alternatives.
+
+What it buys, observably: memory safety and compile-time correctness for a service holding
+credentials and billing data, a single self-contained binary to deploy, and a release profile
+tuned for it (`opt-level = 3`, thin LTO, in `backend/Cargo.toml`).
 
 ## Why a four-crate workspace (`entity` / `business` / `migration` / `web`)
 
-The dependency graph is strictly one-way: `web → business → entity`, `web → migration`. The
-root `hermes_server` binary is a three-line shim that only calls `web::main()`. Observably,
-this buys:
+**Owner's reasoning (D-13).** Organisation, reuse, and good practice. The split is a
+structural default the owner applies deliberately, not a reaction to a specific problem this
+codebase hit.
+
+What it buys, observably — the dependency graph is strictly one-way (`web → business →
+entity`, `web → migration`) and the root `hermes_server` binary is a three-line shim that only
+calls `web::main()`:
 
 - `business` has no `axum` dependency and no HTTP types at all — it compiles and is testable
   as a plain library, independent of whether a server exists.
@@ -26,23 +36,28 @@ this buys:
 - `entity` carries table definitions and nothing else, so a migration or a query never has
   business logic hiding inside a `Model`.
 
-"This was done for testability and to keep HTTP concerns out of the domain" is the reading
-the structure supports; it is not a recorded decision, and the two owner-ratified rules that
-now sit on top of it — English-only persistence identifiers and this exact four-crate
-layering with no bypass (AD-019, AD-020) — arrived after the fact, as standing constraints
-rather than as the original reasoning.
+Two owner-ratified rules now sit on top of this layout as standing constraints: English-only
+persistence identifiers, and this exact four-crate layering with no bypass (AD-019, AD-020).
+Those arrived after the fact — they codify the split rather than explain its origin.
 
 ## Why a separately deployed console (`backoffice/`)
 
-`backoffice/` is its own npm package, its own toolchain, reaching the API only over HTTP at a
-configurable `VITE_API_URL`. It holds no privileged access of its own — every authorization
-decision it displays is enforced again by the API, not delegated to it (see
-`backend/business/src/domain/authorization.rs`).
+**Owner's reasoning (D-13).** The backend is expected to serve **many clients** — a mobile
+app, the web console, and third-party integrations. A console welded to the server would make
+the first additional client a rewrite, so the API was kept as the product and the console as
+one consumer of it.
 
-Observably, this means the API is the sole integration seam: the console could be replaced,
-or joined by a second client, without the backend changing. Whether that separation was
-originally for deployment independence, a team split, or because a second client was already
-anticipated is not recorded, and there is no second client in this repository today.
+This settles a question the structure alone could not answer: the separation was for multiple
+anticipated clients, not for deployment independence or a team split.
+
+What it buys, observably: `backoffice/` is its own npm package with its own toolchain,
+reaching the API only over HTTP at a configurable `VITE_API_URL`. It holds no privileged
+access of its own — every authorization decision it displays is enforced again by the API,
+never delegated to it (see `backend/business/src/domain/authorization.rs`). The API is
+therefore the sole integration seam: the console can be replaced, or joined by a second
+client, without the backend changing.
+
+There is no second client in this repository today; the design anticipates one.
 
 ## What this document is not
 

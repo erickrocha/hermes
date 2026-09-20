@@ -781,9 +781,22 @@ def doc_scenarios():
           f"PD-033: following the README on a fresh DB the server refuses to start; `hermes_server migrate` is not mentioned; "
           f"APP_ENV/CORS_ALLOWED_ORIGINS/ACCESS_TOKEN_HOURS/REFRESH_TOKEN_DAYS absent from 'Configuration'")
     arch = open(os.path.join(REPO, "docs", "ARCHITECTURE.md")).read()
-    record("XF-081", "BLOCKED" if "inferred" in arch.lower() or "read off the structure" in arch else "PASS",
-           "docs/ARCHITECTURE.md covers Rust / crate split / separate console, but explicitly as rationale inferred from the "
-           "structure; the owner's actual reasoning is D-13 'AWAITING INPUT'")
+    # HRMS-034 asks for the owner's *recorded* reasoning behind three decisions.
+    # Checking only for the "inferred" disclaimer was too weak: deleting that one
+    # word would have passed the scenario without recording anything. Assert that
+    # each decision is actually covered AND that the text no longer disclaims
+    # itself as read off the structure.
+    arch_low = arch.lower()
+    inferred = "inferred" in arch_low or "read off the structure" in arch_low
+    topics = {"rust": "rust" in arch_low,
+              "crate split": "crate" in arch_low,
+              "separate console": "backoffice" in arch_low or "console" in arch_low}
+    owner_recorded = "d-13" in arch_low
+    missing = [k for k, v in topics.items() if not v]
+    check("XF-081", not inferred and not missing and owner_recorded,
+          "docs/ARCHITECTURE.md records the owner's reasoning (D-13, 2026-09-19) for Rust, the crate split and the "
+          "separately deployed console, no longer disclaimed as inferred from the structure",
+          f"rationale still inferred={inferred}; topics missing={missing}; owner decision D-13 cited={owner_recorded}")
     # XF-047 (HRMS-026): applied migrations are never edited. Compare each file's
     # current content with its FIRST commit -- counting commits can't tell an edit
     # from a later restore to the original (DEF-XF-07 restored two files).
