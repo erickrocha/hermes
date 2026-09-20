@@ -209,14 +209,14 @@ def activate(fx, email, password=PW):
     if s != 204:
         raise RuntimeError(f"accept-invite {email} -> {s} {p}")
     t = token_for(email, password)
-    return {"email": email, "id": t["userId"], "token": t["accessToken"], "refresh": t["refreshToken"],
+    return {"email": email, "id": t["userId"], "uuid": t["uuid"], "token": t["accessToken"], "refresh": t["refreshToken"],
             "pw": password}
 
 
 def seed(fx):
     fx.secret = dotenv()["ACCESS_TOKEN_SECRET"]
     a = token_for(ADMIN_EMAIL, ADMIN_PASSWORD)
-    fx.admin = {"email": ADMIN_EMAIL, "token": a["accessToken"], "id": a["userId"]}
+    fx.admin = {"email": ADMIN_EMAIL, "token": a["accessToken"], "id": a["userId"], "uuid": a["uuid"]}
     fx.tenants = {}
     fx.tenant_create = {}
     for key, tax in (("A", "QAIA0000000001"), ("B", "QAIA0000000002")):
@@ -290,7 +290,7 @@ def hierarchy(fx):
     rows = sql(f"SELECT email, role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-%' AND role<>'SysAdmin'")
     unbound = [r[0] for r in rows if r[2] == "NULL"]
     # SysAdmin tries to strip an owner's tenant through an edit
-    s2, _ = http("PUT", f"/user/{B['id']}", token=adm["token"],
+    s2, _ = http("PUT", f"/user/uuid/{B['uuid']}", token=adm["token"],
                  body={"email": B["email"], "name": "owner-b", "role": "TenantOwner", "enabled": True})
     tB_after = user_row(B["id"])[3]
     check("IA-002", s1 == 400 and no_row == "0" and not unbound and tB_after == str(fx.tB),
@@ -315,7 +315,7 @@ def hierarchy(fx):
         "admin address (owner A)": http("POST", "/user", token=A["token"], body={
             "email": ADMIN_EMAIL, "name": "dup", "role": "TenantUser", "enabled": True})[0],
     }
-    s_put, _ = http("PUT", f"/user/{A2['id']}", token=A["token"], body={
+    s_put, _ = http("PUT", f"/user/uuid/{A2['uuid']}", token=A["token"], body={
         "email": A1["email"], "name": "user-a2", "role": "TenantUser", "enabled": True})
     probes["PUT email -> existing"] = s_put
     n = {e: sql(f"SELECT COUNT(*) FROM user WHERE email='{e}'")[0][0] for e in (A1["email"], A["email"], ADMIN_EMAIL)}
@@ -406,14 +406,14 @@ def hierarchy(fx):
 
     # IA-018 -- owner A's reach stops at tenant A
     B1 = fx.userB1
-    g = http("GET", f"/user/{B1['id']}", token=A["token"])[0]
+    g = http("GET", f"/user/uuid/{B1['uuid']}", token=A["token"])[0]
     before_b1 = user_row(B1["id"])
-    p = http("PUT", f"/user/{B1['id']}", token=A["token"], body={
+    p = http("PUT", f"/user/uuid/{B1['uuid']}", token=A["token"], body={
         "email": B1["email"], "name": "pwned", "role": "TenantUser", "enabled": False})[0]
     after_b1 = user_row(B1["id"])
     _, seen = users_seen(A["token"])
-    own_get = http("GET", f"/user/{A1['id']}", token=A["token"])[0]
-    s_mv, _ = http("PUT", f"/user/{A1['id']}", token=A["token"], body={
+    own_get = http("GET", f"/user/uuid/{A1['uuid']}", token=A["token"])[0]
+    s_mv, _ = http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body={
         "email": A1["email"], "name": "user-a1", "role": "TenantOwner", "enabled": True, "tenantId": fx.tB})
     a1 = user_row(A1["id"])
     check("IA-018", g == 404 and p == 404 and before_b1 == after_b1 and B1["email"] not in seen
@@ -425,9 +425,9 @@ def hierarchy(fx):
     # IA-020 -- a tenant user administers nobody
     probes = {
         "POST /user": mk_user(fx, A1["token"], "x-u-any", "TenantUser")[0],
-        "GET /user/{peer}": http("GET", f"/user/{A2['id']}", token=A1["token"])[0],
-        "GET /user/{owner}": http("GET", f"/user/{A['id']}", token=A1["token"])[0],
-        "PUT /user/{peer}": http("PUT", f"/user/{A2['id']}", token=A1["token"], body={
+        "GET /user/uuid/{peer}": http("GET", f"/user/uuid/{A2['uuid']}", token=A1["token"])[0],
+        "GET /user/uuid/{owner}": http("GET", f"/user/uuid/{A['uuid']}", token=A1["token"])[0],
+        "PUT /user/uuid/{peer}": http("PUT", f"/user/uuid/{A2['uuid']}", token=A1["token"], body={
             "email": A2["email"], "name": "pwned", "role": "TenantUser", "enabled": False})[0],
     }
     s_l, p_l = http("GET", "/user?page=0&pageSize=200", token=A1["token"])
@@ -440,7 +440,7 @@ def hierarchy(fx):
 
     # IA-021 -- not even their own record through the administration route
     h0 = pw_hash(A2["email"])
-    s_self, p_self = http("PUT", f"/user/{A2['id']}", token=A2["token"], body={
+    s_self, p_self = http("PUT", f"/user/uuid/{A2['uuid']}", token=A2["token"], body={
         "email": A2["email"], "name": f"{TAG}-renamed-by-self", "role": "TenantUser", "enabled": True,
         "password": "QaSelfAdmin#2026"})
     a2 = user_row(A2["id"])
@@ -448,8 +448,8 @@ def hierarchy(fx):
     if changed_pw:
         A2["pw"] = "QaSelfAdmin#2026"
     check("IA-021", s_self in (403, 404) and a2[1] == "user-a2" and not changed_pw,
-          f"TenantUser PUT /user/{{self}} -> {s_self}; record and password unchanged",
-          f"TenantUser PUT /user/{{self}} (name + password, no current password) -> {s_self}; "
+          f"TenantUser PUT /user/uuid/{{self}} -> {s_self}; record and password unchanged",
+          f"TenantUser PUT /user/uuid/{{self}} (name + password, no current password) -> {s_self}; "
           f"name now '{a2[1]}', password replaced={changed_pw}")
     fx.ia051_user = (s_self, changed_pw)
 
@@ -458,11 +458,11 @@ def hierarchy(fx):
     sa2 = None
     if fx.sysadmin2_created:
         sa2 = activate(fx, em("sysadmin2"))
-        res["SysAdmin"] = http("PUT", f"/user/{sa2['id']}", token=sa2["token"], body={
+        res["SysAdmin"] = http("PUT", f"/user/uuid/{sa2['uuid']}", token=sa2["token"], body={
             "email": sa2["email"], "name": "sysadmin2", "role": "SysAdmin", "enabled": False})[0]
-    res["TenantOwner"] = http("PUT", f"/user/{A['id']}", token=A["token"], body={
+    res["TenantOwner"] = http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
         "email": A["email"], "name": "owner-a", "role": "TenantOwner", "enabled": False, "tenantId": fx.tA})[0]
-    res["TenantUser"] = http("PUT", f"/user/{A1['id']}", token=A1["token"], body={
+    res["TenantUser"] = http("PUT", f"/user/uuid/{A1['uuid']}", token=A1["token"], body={
         "email": A1["email"], "name": "user-a1", "role": "TenantUser", "enabled": False})[0]
     en = {k: sql(f"SELECT enabled FROM user WHERE email='{e}'")[0][0]
           for k, e in (("SysAdmin", em("sysadmin2")), ("TenantOwner", A["email"]), ("TenantUser", A1["email"]))}
@@ -483,20 +483,19 @@ def hierarchy(fx):
         upd = {"name": f"{TAG}-plan-hacked", "priceInCents": 1, "availableUsers": 999, "periodDays": 30, "paymentDate": "2026-10-01"}
         denied = {}
         for who, tok in (("owner", A["token"]), ("user", A1["token"])):
-            for m, path, body in (("GET", "/business-plan", None), ("GET", f"/business-plan/{pid}", None),
-                                  ("GET", f"/business-plan/uuid/{puuid}", None),
+            for m, path, body in (("GET", "/business-plan", None), ("GET", f"/business-plan/uuid/{puuid}", None),
                                   ("POST", "/business-plan", dict(upd, name=f"{TAG}-plan-{who}")),
-                                  ("PUT", f"/business-plan/{pid}", upd), ("DELETE", f"/business-plan/{pid}", None)):
-                denied[f"{who} {m} {path.replace(str(pid), '{id}').replace(puuid, '{uuid}')}"] = http(m, path, body=body, token=tok)[0]
+                                  ("PUT", f"/business-plan/uuid/{puuid}", upd),
+                                  ("DELETE", f"/business-plan/uuid/{puuid}", None)):
+                denied[f"{who} {m} {path.replace(puuid, '{uuid}')}"] = http(m, path, body=body, token=tok)[0]
         row = sql(f"SELECT name, price_in_cents FROM business_plan WHERE id={pid}")
         extra_plans = sql(f"SELECT COUNT(*) FROM business_plan WHERE name LIKE '{TAG}-plan-%'")[0][0]
         check("IA-023", all(v == 403 for v in denied.values()) and row == [[f"{TAG}-plan", "1000"]] and extra_plans == "0",
               f"{len(denied)} catalogue calls by TenantOwner/TenantUser all 403; plan untouched",
               f"non-403: { {k: v for k, v in denied.items() if v != 403} }; plan row {row}; extra plans {extra_plans}")
         allowed = {"list": http("GET", "/business-plan", token=adm["token"])[0],
-                   "get": http("GET", f"/business-plan/{pid}", token=adm["token"])[0],
-                   "uuid": http("GET", f"/business-plan/uuid/{puuid}", token=adm["token"])[0],
-                   "put": http("PUT", f"/business-plan/{pid}", token=adm["token"], body=dict(upd, name=f"{TAG}-plan"))[0]}
+                   "get": http("GET", f"/business-plan/uuid/{puuid}", token=adm["token"])[0],
+                   "put": http("PUT", f"/business-plan/uuid/{puuid}", token=adm["token"], body=dict(upd, name=f"{TAG}-plan"))[0]}
         check("IA-024", s_bp in (200, 201) and all(v == 200 for v in allowed.values()),
               f"unbound SysAdmin create {s_bp}, {allowed}", f"SysAdmin create {s_bp}, {allowed}")
 
@@ -560,7 +559,7 @@ def sessions(fx):
         record("IA-030", "FAIL", f"login -> {s} {p}")
 
     # IA-031 -- the token opens the door; bad sign-ins don't
-    good = http("GET", f"/user/{A1['id']}", token=p["accessToken"])[0] if s == 200 else None
+    good = http("GET", f"/user/uuid/{A1['uuid']}", token=p["accessToken"])[0] if s == 200 else None
     missing = login(A1["email"], "")[0]
     json_body = http("POST", "/login", body={"email": A1["email"], "password": A1["pw"]})[0]
     check("IA-031", good == 200 and missing == 401 and json_body in (400, 415, 422),
@@ -582,12 +581,12 @@ def sessions(fx):
     # IA-033/034/035 -- disabling ends every path, including the live session
     victim = activate(fx, em("user-a3"))
     t_live, r_live = victim["token"], victim["refresh"]
-    pre = (http("GET", f"/user/{victim['id']}", token=t_live)[0],
+    pre = (http("GET", f"/user/uuid/{victim['uuid']}", token=t_live)[0],
            http("POST", "/refresh", body={"refreshToken": r_live})[0])
-    s_dis, _ = http("PUT", f"/user/{victim['id']}", token=A["token"], body={
+    s_dis, _ = http("PUT", f"/user/uuid/{victim['uuid']}", token=A["token"], body={
         "email": victim["email"], "name": "user-a3", "role": "TenantUser", "enabled": False})
     lg = login(victim["email"], PW)[0]
-    acc = http("GET", f"/user/{victim['id']}", token=t_live)[0]
+    acc = http("GET", f"/user/uuid/{victim['uuid']}", token=t_live)[0]
     acc2 = http("PUT", "/user/change-password", token=t_live, body={"currentPassword": PW, "newPassword": "Whatever#2026"})[0]
     ref = http("POST", "/refresh", body={"refreshToken": r_live})[0]
     ok_pre = pre == (200, 200) and s_dis == 200
@@ -604,7 +603,7 @@ def sessions(fx):
     s_c, u_c = mk_user(fx, A["token"], "invitee-disabled", "TenantUser")
     if s_c == 201:
         inv = mint_invite(em("invitee-disabled"), pw_hash(em("invitee-disabled")), fx.secret)  # as mailed at creation
-        s_d, _ = http("PUT", f"/user/{u_c['id']}", token=A["token"], body={
+        s_d, _ = http("PUT", f"/user/uuid/{u_c['uuid']}", token=A["token"], body={
             "email": em("invitee-disabled"), "name": "invitee-disabled", "role": "TenantUser", "enabled": False})
         s_acc, _ = http("POST", "/accept-invite", body={"token": inv, "newPassword": "QaReopened#2026"})
         en = sql(f"SELECT enabled FROM user WHERE id={u_c['id']}")[0][0]
@@ -646,10 +645,10 @@ def sessions(fx):
     # IA-037 -- refresh
     s_r, p_r = http("POST", "/refresh", body={"refreshToken": A1["refresh"]})
     ok = s_r == 200 and p_r.get("accessToken")
-    works = http("GET", f"/user/{A1['id']}", token=p_r["accessToken"])[0] if ok else None
+    works = http("GET", f"/user/uuid/{A1['uuid']}", token=p_r["accessToken"])[0] if ok else None
     acc_as_ref = http("POST", "/refresh", body={"refreshToken": A1["token"]})[0]
     garbage = http("POST", "/refresh", body={"refreshToken": "not.a.token"})[0]
-    ref_as_acc = http("GET", f"/user/{A1['id']}", token=A1["refresh"])[0]
+    ref_as_acc = http("GET", f"/user/uuid/{A1['uuid']}", token=A1["refresh"])[0]
     check("IA-037", ok and works == 200 and acc_as_ref == 401 and garbage == 401 and ref_as_acc == 401,
           f"refresh -> 200, new access token works (200); access-as-refresh {acc_as_ref}, garbage {garbage}, refresh-as-access {ref_as_acc}",
           f"refresh -> {s_r}; new token -> {works}; access-as-refresh {acc_as_ref}; garbage {garbage}; refresh-as-access {ref_as_acc}")
@@ -657,9 +656,9 @@ def sessions(fx):
     # IA-040 -- one-way hash, never returned
     hashes = sql(f"SELECT email, password FROM user WHERE email LIKE '{TAG}-%'")
     all_argon = all(h.startswith("$argon2id$") for _, h in hashes)
-    bodies = [login(A1["email"], A1["pw"])[1], http("GET", f"/user/{A1['id']}", token=A["token"])[1],
+    bodies = [login(A1["email"], A1["pw"])[1], http("GET", f"/user/uuid/{A1['uuid']}", token=A["token"])[1],
               http("GET", f"/user?page=0&pageSize=200&search={TAG}", token=adm["token"])[1],
-              http("PUT", f"/user/{A1['id']}", token=A["token"], body={"email": A1["email"], "name": "user-a1",
+              http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body={"email": A1["email"], "name": "user-a1",
                    "role": "TenantUser", "enabled": True})[1],
               mk_user(fx, A["token"], "user-a4", "TenantUser", extra={"password": "QaEcho#Plain2026"})[1]]
     text = json.dumps(bodies)
@@ -691,7 +690,7 @@ def sessions(fx):
 
     # IA-041 -- an edit without a password leaves the password alone
     h0 = pw_hash(A1["email"])
-    r = [http("PUT", f"/user/{A1['id']}", token=A["token"], body=dict(
+    r = [http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body=dict(
         {"email": A1["email"], "name": f"user-a1", "role": "TenantUser", "enabled": True}, **extra))[0]
         for extra in ({}, {"password": ""}, {"password": None}, {"password": "   "})]
     check("IA-041", r == [200] * 4 and pw_hash(A1["email"]) == h0 and login(A1["email"], A1["pw"])[0] == 200,
@@ -699,7 +698,7 @@ def sessions(fx):
           f"PUT statuses {r}; hash changed={pw_hash(A1['email']) != h0}")
 
     # IA-042/043 -- the uuid claim is the user's UUID, not the email
-    s, me = http("GET", f"/user/{A1['id']}", token=A["token"])
+    s, me = http("GET", f"/user/uuid/{A1['uuid']}", token=A["token"])
     s_l, lp = login(A1["email"], A1["pw"])
     ca, cr = jwt_payload(lp["accessToken"]), jwt_payload(lp["refreshToken"])
     check("IA-042", s == 200 and ca.get("uuid") == me.get("uuid") == lp.get("uuid") and "@" not in ca.get("uuid", "@")
@@ -724,7 +723,7 @@ def sessions(fx):
     s_n, u_n = mk_user(fx, A["token"], "user-a5", "TenantUser")
     short = "Ab#4567"   # 7 characters
     hash_before = pw_hash(em("user-a5"))
-    put_status = http("PUT", f"/user/{u_n['id']}", token=A["token"], body={
+    put_status = http("PUT", f"/user/uuid/{u_n['uuid']}", token=A["token"], body={
         "email": em("user-a5"), "name": "user-a5", "role": "TenantUser", "enabled": True, "password": short})[0]
     put_ignored = pw_hash(em("user-a5")) == hash_before
     res = {
@@ -737,7 +736,7 @@ def sessions(fx):
     still = login(em("user-a5"), "Ab#45678")[0]
     short_in = login(em("user-a5"), short)[0]
     check("IA-044", all(v == 400 for v in res.values()) and still == 200 and short_in == 401 and put_ignored,
-          f"7-char password refused on {res}; PUT /user/{{id}} ignored it entirely "
+          f"7-char password refused on {res}; PUT /user/uuid/{{uuid}} ignored it entirely "
           f"({put_status}, stored hash unchanged -- DEF-IA-03); 8-char accepted at the boundary; "
           f"the account keeps its 8-char password",
           f"statuses {res}; PUT reset {put_status}, hash unchanged={put_ignored}; "
@@ -762,7 +761,7 @@ def sessions(fx):
 
     # IA-051 -- no other door replaces your own password without the current one
     h_o = pw_hash(A["email"])
-    s_o, _ = http("PUT", f"/user/{A['id']}", token=A["token"], body={
+    s_o, _ = http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
         "email": A["email"], "name": "owner-a", "role": "TenantOwner", "enabled": True, "tenantId": fx.tA,
         "password": "QaNoCurrent#2026"})
     owner_changed = pw_hash(A["email"]) != h_o
@@ -770,17 +769,17 @@ def sessions(fx):
         A["pw"] = "QaNoCurrent#2026"
     s_u, user_changed = fx.ia051_user
     check("IA-051", not owner_changed and not user_changed,
-          f"PUT /user/{{self}} with a password is refused or ignored (owner {s_o}, user {s_u})",
-          f"a signed-in caller replaces their OWN password with no current password via PUT /user/{{self}}: "
+          f"PUT /user/uuid/{{self}} with a password is refused or ignored (owner {s_o}, user {s_u})",
+          f"a signed-in caller replaces their OWN password with no current password via PUT /user/uuid/{{self}}: "
           f"TenantOwner -> {s_o} (replaced={owner_changed}), TenantUser -> {s_u} (replaced={user_changed})")
 
     # IA-081/082 -- a session belongs to the account it was issued to, not to whoever holds that address later
     s_u, u_u = mk_user(fx, A["token"], "reuse-u", "TenantUser")
     if s_u == 201:
         U = activate(fx, em("reuse-u"))
-        s_mv = http("PUT", f"/user/{U['id']}", token=A["token"], body={
+        s_mv = http("PUT", f"/user/uuid/{U['uuid']}", token=A["token"], body={
             "email": em("reuse-u-renamed"), "name": "reuse-u", "role": "TenantUser", "enabled": False})[0]
-        dead = (http("GET", f"/user/{U['id']}", token=U["token"])[0], http("POST", "/refresh", body={"refreshToken": U["refresh"]})[0])
+        dead = (http("GET", f"/user/uuid/{U['uuid']}", token=U["token"])[0], http("POST", "/refresh", body={"refreshToken": U["refresh"]})[0])
         s_v = mk_user(fx, fx.ownerB["token"], "reuse-u", "TenantUser")[0]      # a new person, tenant B, same address
         V = activate(fx, em("reuse-u"), "QaNewcomer#2026") if s_v == 201 else None
         acc = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=U["token"])[0]
@@ -836,8 +835,14 @@ def invitations(fx):
     if off is None:
         record("IA-066", "BLOCKED", f"API log {API_LOG} not readable (set HERMES_API_LOG)")
     else:
+        # The evidence string must not index `lines` unguarded: when the log is
+        # readable but carries no invite line (a stale file, or an API whose
+        # stdout went somewhere else), `lines[0]` raised IndexError and aborted
+        # the whole IA-07 block, reporting four stories as NOT RUN instead of
+        # failing this one scenario.
+        first = lines[0].split("] ", 1)[-1][:110] if lines else "<no invite line in log>"
         check("IA-066", len(lines) >= 2 and has_route and not token_in_log,
-              f"POST /user issued an invitation for each new account (API log: '{lines[0].split('] ', 1)[-1][:110]}'); "
+              f"POST /user issued an invitation for each new account (API log: '{first}'); "
               f"/accept-invite documented and live; the link/token is not written to the log",
               f"log lines for the new accounts: {lines}; /accept-invite documented={has_route}; token in log={token_in_log}")
 
@@ -913,7 +918,7 @@ def invitations(fx):
     s4, u4 = mk_user(fx, A["token"], "inv-4", "TenantUser")
     inv4 = mint_invite(em("inv-4"), pw_hash(em("inv-4")), fx.secret)
     res = {
-        "invite as Bearer": http("GET", f"/user/{u4['id']}", token=inv4)[0],
+        "invite as Bearer": http("GET", f"/user/uuid/{u4['uuid']}", token=inv4)[0],
         "invite as refresh": http("POST", "/refresh", body={"refreshToken": inv4})[0],
         "access as invite": http("POST", "/accept-invite", body={"token": fx.userA1["token"], "newPassword": "QaSwap#2026"})[0],
         "refresh as invite": http("POST", "/accept-invite", body={"token": fx.userA1["refresh"], "newPassword": "QaSwap#2026"})[0],
@@ -1003,7 +1008,7 @@ def scratch(fx):
         if s_o == 200:
             steps.append(http("PUT", "/user/change-password", base=B, token=p_o["accessToken"],
                               body={"currentPassword": "QaPlainLeak#1", "newPassword": "QaPlainLeak#2"})[0])
-            steps.append(http("PUT", f"/user/{p_o['userId']}", base=B, token=tok, body={
+            steps.append(http("PUT", f"/user/uuid/{p_o['uuid']}", base=B, token=tok, body={
                 "email": own, "role": "TenantOwner", "enabled": True, "tenantId": t["id"], "password": "QaPlainLeak#3"})[0])
         time.sleep(1)
         logf.flush()

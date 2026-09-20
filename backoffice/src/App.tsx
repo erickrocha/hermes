@@ -45,10 +45,10 @@ export default function App() {
     <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
-    <Route path="/plans/:id/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
+    <Route path="/plans/:uuid/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/users" element={<Protected><UsersPage /></Protected>} />
     <Route path="/users/new" element={<Protected allow={canCreateUsers}><UserEditorPage /></Protected>} />
-    <Route path="/users/:id/edit" element={<Protected><UserEditorPage /></Protected>} />
+    <Route path="/users/:uuid/edit" element={<Protected><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>

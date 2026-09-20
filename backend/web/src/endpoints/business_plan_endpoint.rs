@@ -152,33 +152,6 @@ pub async fn list_all(
 #[utoipa::path(
     get,
     tag = "Business Plan",
-    path = "/business-plan/{id}",
-    params(("id" = i64, Path)),
-    responses(
-        (status = 200, body = BusinessPlanJson),
-        (status = 404, body = NotFoundErrorJson),
-        (status = 401, body = UnauthorizedErrorJson),
-        (status = 403, body = ForbiddenErrorJson)
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn get_by_id(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Path(id): Path<i64>,
-) -> HttpResponse<Json<BusinessPlanJson>> {
-    authorize(&user, &locale)?;
-    use_case(&state)
-        .find_by_id(id)
-        .await
-        .map(|plan| Json(response(plan)))
-        .map_err(|error| map_error(locale, &error.message))
-}
-
-#[utoipa::path(
-    get,
-    tag = "Business Plan",
     path = "/business-plan/uuid/{uuid}",
     params(("uuid" = String, Path)),
     responses(
@@ -203,11 +176,27 @@ pub async fn get_by_uuid(
         .map_err(|error| map_error(locale, &error.message))
 }
 
+/// HRMS-204/AD-010 (OBS-TP-05): a plan is named by its UUID, so no public URL
+/// carries the sequential id. The internal id stays the database key; this
+/// helper is the single place the two are bridged, so an unknown plan answers
+/// 404 identically on every operation.
+async fn resolve_uuid(
+    state: &AppState,
+    locale: &Locale,
+    uuid: &str,
+) -> Result<i64, ExceptionResponse> {
+    let plan = use_case(state)
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|error| map_error(locale.clone(), &error.message))?;
+    Ok(plan.id.unwrap_or_default())
+}
+
 #[utoipa::path(
     put,
     tag = "Business Plan",
-    path = "/business-plan/{id}",
-    params(("id" = i64, Path)),
+    path = "/business-plan/uuid/{uuid}",
+    params(("uuid" = String, Path)),
     request_body = UpdateBusinessPlanJson,
     responses(
         (status = 200, body = BusinessPlanJson),
@@ -222,10 +211,11 @@ pub async fn update(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
-    Path(id): Path<i64>,
+    Path(uuid): Path<String>,
     Json(payload): Json<UpdateBusinessPlanJson>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
     authorize(&user, &locale)?;
+    let id = resolve_uuid(&state, &locale, &uuid).await?;
     use_case(&state)
         .update(id, update_domain(payload))
         .await
@@ -236,8 +226,8 @@ pub async fn update(
 #[utoipa::path(
     delete,
     tag = "Business Plan",
-    path = "/business-plan/{id}",
-    params(("id" = i64, Path)),
+    path = "/business-plan/uuid/{uuid}",
+    params(("uuid" = String, Path)),
     responses(
         (status = 204, description = "Business plan deleted"),
         (status = 404, body = NotFoundErrorJson),
@@ -250,9 +240,10 @@ pub async fn delete(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
-    Path(id): Path<i64>,
+    Path(uuid): Path<String>,
 ) -> HttpResponse<StatusCode> {
     authorize(&user, &locale)?;
+    let id = resolve_uuid(&state, &locale, &uuid).await?;
     use_case(&state)
         .delete(id)
         .await

@@ -179,11 +179,11 @@ pub async fn update_by_uuid(
     update_tenant(&state, locale, id, payload).await
 }
 
-/// HRMS-204/AD-010: the UUID is the tenant's public identifier, so every
-/// operation available by internal id is available by UUID too (DEF-TP-04).
-/// The `/{id}` routes stay for callers that already hold an id; a console can
-/// now work entirely in UUIDs and never put a sequential id — and therefore
-/// the number of customers — in a URL.
+/// HRMS-204/AD-010: the UUID is the tenant's public identifier, and since
+/// 2026-09-19 it is the *only* one — the `/{id}` routes were removed (DEF-TP-04,
+/// OBS-TP-05), because keeping them alongside left the sequential id, and
+/// therefore the number of customers, in public URLs. This helper is the single
+/// place a public UUID becomes an internal id.
 async fn resolve_uuid(
     state: &AppState,
     locale: &Locale,

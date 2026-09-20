@@ -217,12 +217,12 @@ def plan_body(name, price=4900, users=5, days=30, date="2026-10-05"):
 
 
 def activate(fx, email):
-    row = sql(f"SELECT id, password FROM user WHERE email='{email}'")[0]
-    s, p = http("POST", "/accept-invite", body={"token": mint_invite(email, row[1], fx.secret),
+    row = sql(f"SELECT id, LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))), password FROM user WHERE email='{email}'")[0]
+    s, p = http("POST", "/accept-invite", body={"token": mint_invite(email, row[2], fx.secret),
                                                 "newPassword": FIXTURE_PW})
     if s != 204:
         raise RuntimeError(f"accept-invite {email} -> {s} {p}")
-    return {"email": email, "id": int(row[0]), "token": token_for(email, FIXTURE_PW)}
+    return {"email": email, "id": int(row[0]), "uuid": row[1], "token": token_for(email, FIXTURE_PW)}
 
 
 def seed(fx):
@@ -242,7 +242,9 @@ def seed(fx):
         s, p = http("POST", "/user", body=body, token=creator)
         if s != 201:
             raise RuntimeError(f"POST /user {email} -> {s} {p}")
-        return activate(fx, email)
+        u = activate(fx, email)
+        u["uuid"] = p.get("uuid", u["uuid"])
+        return u
 
     fx.ownerA = user(fx.adm, f"{TAG}-owner-a@hermes.test", "TenantOwner", a["id"])
     fx.ownerB = user(fx.adm, f"{TAG}-owner-b@hermes.test", "TenantOwner", b["id"])
@@ -531,9 +533,9 @@ def epic_03(fx):
     want = {"name": f"{TAG}-plan-basic", "priceInCents": 12990, "availableUsers": 12, "periodDays": 30,
             "paymentDate": "2026-10-10"}
     echo = s == 201 and all(p.get(k) == v for k, v in want.items()) and p.get("uuid")
-    s2, g = http("GET", f"/business-plan/{p.get('id')}", token=adm) if s == 201 else (0, {})
+    s2, g = http("GET", f"/business-plan/uuid/{p.get('uuid')}", token=adm) if s == 201 else (0, {})
     check("TP-040", echo and s2 == 200 and all(g.get(k) == v for k, v in want.items()),
-          f"plan 201, fields echoed (name trimmed), GET by id equal: {want}",
+          f"plan 201, fields echoed (name trimmed), GET by uuid equal: {want}",
           f"create {s} {p}; GET {s2} {g}")
 
     s, p = create_plan(adm, plan_body(f"{TAG}-plan-cents", price=1999))
@@ -559,16 +561,16 @@ def epic_03(fx):
         b = plan_body(kw.get("name", f"{TAG}-plan-bad"), users=kw.get("users", 5), days=kw.get("days", 30))
         s, _ = create_plan(adm, b)
         pid = fx.basic["id"]
-        s2, _ = http("PUT", f"/business-plan/{pid}", body=b, token=adm)
+        s2, _ = http("PUT", f"/business-plan/uuid/{fx.basic['uuid']}", body=b, token=adm)
         res.append((label, s, s2))
-    g = http("GET", f"/business-plan/{fx.basic['id']}", token=adm)[1]
+    g = http("GET", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm)[1]
     kept = all(g.get(k) == v for k, v in want.items())
     check("TP-042", all(r[1] == 400 and r[2] == 400 for r in res) and kept,
           f"(case, create, update) {res}; stored plan unchanged", f"{res}; plan kept={kept} {g}")
 
     s, p = create_plan(adm, plan_body(f"{TAG}-plan-free", price=0))
     s2, _ = create_plan(adm, plan_body(f"{TAG}-plan-neg", price=-1))
-    s3, _ = http("PUT", f"/business-plan/{p.get('id')}", body=plan_body(f"{TAG}-plan-free", price=-1), token=adm) \
+    s3, _ = http("PUT", f"/business-plan/uuid/{p.get('uuid')}", body=plan_body(f"{TAG}-plan-free", price=-1), token=adm) \
         if s == 201 else (0, None)
     check("TP-043", s == 201 and p["priceInCents"] == 0 and s2 == 400 and s3 == 400,
           f"price 0 -> 201; -1 create {s2}, -1 update {s3}", f"0 -> {s}; -1 create {s2}; -1 update {s3}")
@@ -595,16 +597,16 @@ def epic_03(fx):
     s1, sr = http("GET", f"/business-plan?search={TAG}-plan-basic", token=adm)
     found = s1 == 200 and [x["name"] for x in sr["items"]] == [f"{TAG}-plan-basic"]
     s2, bu = http("GET", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm)
-    s3, up = http("PUT", f"/business-plan/{fx.basic['id']}", token=adm,
+    s3, up = http("PUT", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm,
                   body=plan_body(f"{TAG}-plan-basic", price=13990, users=15, days=30, date="2026-10-10"))
     upd = s3 == 200 and up["priceInCents"] == 13990 and up["availableUsers"] == 15 and up["uuid"] == fx.basic["uuid"]
     s4, tmp = create_plan(adm, plan_body(f"{TAG}-plan-tmp"))
-    s5, _ = http("DELETE", f"/business-plan/{tmp['id']}", token=adm)
-    s6, _ = http("GET", f"/business-plan/{tmp['id']}", token=adm)
-    s7, _ = http("DELETE", "/business-plan/999999999", token=adm)
+    s5, _ = http("DELETE", f"/business-plan/uuid/{tmp['uuid']}", token=adm)
+    s6, _ = http("GET", f"/business-plan/uuid/{tmp['uuid']}", token=adm)
+    s7, _ = http("DELETE", "/business-plan/uuid/00000000-0000-4000-8000-000000000000", token=adm)
     http("POST", f"/tenant/uuid/{fx.B['uuid']}/plan", body={"businessPlanId": fx.basic["id"]}, token=adm)
-    s8, d8 = http("DELETE", f"/business-plan/{fx.basic['id']}", token=adm)
-    s9, _ = http("GET", f"/business-plan/{fx.basic['id']}", token=adm)
+    s8, d8 = http("DELETE", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm)
+    s9, _ = http("GET", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm)
     check("TP-050", env_ok and found and s2 == 200 and bu["id"] == fx.basic["id"] and upd and s5 == 204 and s6 == 404
           and s7 == 404 and s8 == 409 and s9 == 200,
           f"list page ok; search finds basic; by uuid {s2}; update 200; delete free plan 204 then GET 404; "
@@ -617,16 +619,16 @@ def epic_03(fx):
     res = []
     for who, tok in (("owner", fx.ownerA["token"]), ("user", fx.userA["token"])):
         for m, path, b in (("POST", "/business-plan", plan_body(f"{TAG}-plan-by-{who}")), ("GET", "/business-plan", None),
-                           ("GET", f"/business-plan/{pid}", None), ("GET", f"/business-plan/uuid/{puid}", None),
-                           ("PUT", f"/business-plan/{pid}", plan_body("pwned", price=1)),
-                           ("DELETE", f"/business-plan/{pid}", None)):
+                           ("GET", f"/business-plan/uuid/{puid}", None),
+                           ("PUT", f"/business-plan/uuid/{puid}", plan_body("pwned", price=1)),
+                           ("DELETE", f"/business-plan/uuid/{puid}", None)):
             s, p = http(m, path, body=b, token=tok)
             if s == 201 and isinstance(p, dict):
                 CREATED_PLANS.add(p["id"])
-            res.append((who, m, path.replace(str(pid), "{id}").replace(puid, "{uuid}"), s))
+            res.append((who, m, path.replace(puid, "{uuid}"), s))
     after = sql(f"SELECT name, price_in_cents, available_users FROM business_plan WHERE id={pid}")
     bad = [r for r in res if r[3] != 403]
-    check("TP-051", not bad and before == after, f"12 catalogue calls by owner/user -> 403; plan unchanged",
+    check("TP-051", not bad and before == after, f"{len(res)} catalogue calls by owner/user -> 403; plan unchanged",
           f"non-403: {bad}; plan changed={before != after}")
 
     tcol = one("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='hermes' "
@@ -715,7 +717,7 @@ def epic_04(fx):
     tables_before = one("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='hermes'")
     # Free P1 from any other fixture reference, then prove nothing (no history row) still holds it.
     refs = one(f"SELECT COUNT(*) FROM tenant WHERE business_plan_id={p1['id']}")
-    s2, _ = http("DELETE", f"/business-plan/{p1['id']}", token=adm)
+    s2, _ = http("DELETE", f"/business-plan/uuid/{p1['uuid']}", token=adm)
     if s2 == 204:
         CREATED_PLANS.discard(p1["id"])
     check("TP-066", s == 200 and (cur or {}).get("id") == p2["id"] and refs == "0" and s2 == 204,

@@ -30,12 +30,12 @@ describe('PlanEditorPage price editing', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
   it('shows a loaded plan price in currency units, not raw cents', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, uuid: 'plan-uuid-1', name: 'Pro', priceInCents: 12345, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={['/plans/1/edit']}>
-          <Routes><Route path="/plans/:id/edit" element={<PlanEditorPage />} /></Routes>
+        <MemoryRouter initialEntries={['/plans/plan-uuid-1/edit']}>
+          <Routes><Route path="/plans/:uuid/edit" element={<PlanEditorPage />} /></Routes>
         </MemoryRouter>
       </Provider>
     )
@@ -45,13 +45,13 @@ describe('PlanEditorPage price editing', () => {
   })
 
   it('converts a typed currency amount back into cents on save', async () => {
-    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { id: 1, uuid: 'plan-uuid-1', name: 'Pro', priceInCents: 0, availableUsers: 5, periodDays: 30, paymentDate: '2026-01-01' } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={['/plans/1/edit']}>
-          <Routes><Route path="/plans/:id/edit" element={<PlanEditorPage />} /></Routes>
+        <MemoryRouter initialEntries={['/plans/plan-uuid-1/edit']}>
+          <Routes><Route path="/plans/:uuid/edit" element={<PlanEditorPage />} /></Routes>
         </MemoryRouter>
       </Provider>
     )
@@ -60,7 +60,7 @@ describe('PlanEditorPage price editing', () => {
     fireEvent.change(priceInput, { target: { value: '50.00' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
 
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/business-plan/1', expect.objectContaining({ priceInCents: 5000 })))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/business-plan/uuid/plan-uuid-1', expect.objectContaining({ priceInCents: 5000 })))
   })
 })
 

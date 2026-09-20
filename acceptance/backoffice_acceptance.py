@@ -149,7 +149,7 @@ def api_checks(fx):
     # BO-014: plan administration refused to TenantOwner and TenantUser even with a valid token
     calls = [("GET", "/business-plan", None), ("POST", "/business-plan", {"name": f"{TAG}-evil", "priceInCents": 1,
              "availableUsers": 1, "periodDays": 1, "paymentDate": "2026-01-01"}),
-             ("GET", f"/business-plan/{fx['plan']['id']}", None),
+             ("GET", f"/business-plan/uuid/{fx['plan']['uuid']}", None),
              ("POST", f"/tenant/uuid/{tm_uuid}/plan", {"businessPlanId": fx["plan"]["id"]}), ("POST", "/tenant", {
                  "businessName": f"{TAG}-evil", "taxId": "QABO0000000099", "countryCode": "US"})]
     res = [(who, m, path, http(m, path, token=tok, body=b)[0]) for who, tok in (("owner", own), ("user", usr))
@@ -165,7 +165,7 @@ def api_checks(fx):
            f"GET /province?countryCode=BR -> {counts['BR'][1]} rows {counts['BR'][2]}; US -> {counts['US'][1]} rows {counts['US'][2]}")
 
     # BO-022: the API stores integer cents exactly
-    s, _, p = http("GET", f"/business-plan/{fx['plan']['id']}", token=adm)
+    s, _, p = http("GET", f"/business-plan/uuid/{fx['plan']['uuid']}", token=adm)
     record("BO-022", "api", s == 200 and p["priceInCents"] == 1234567,
            f"GET plan -> priceInCents={p and p.get('priceInCents')} (created as 1234567)")
 
@@ -188,7 +188,7 @@ def api_checks(fx):
     record("BO-033", "api", ok, f"login.uuid={p.get('uuid')} db={db} jwt.uuid={claim}")
 
     # BO-041: the API answers in the console's language (en / pt-BR / es)
-    msgs = {lang: http("GET", "/business-plan/999999", token=adm, headers={"Accept-Language": lang})[2]
+    msgs = {lang: http("GET", "/business-plan/uuid/00000000-0000-4000-8000-000000000000", token=adm, headers={"Accept-Language": lang})[2]
             for lang in ("en", "pt-BR", "es")}
     texts = {k: (v or {}).get("message") for k, v in msgs.items()}
     record("BO-041", "api", len(set(texts.values())) == 3, f"messages: {texts}")

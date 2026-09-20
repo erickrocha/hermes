@@ -205,16 +205,17 @@ def seed_fixtures():
     ADMIN_AUDIT[:] = sql(f"SELECT updated_at, updated_by, name FROM user WHERE email='{ADMIN_EMAIL}'")[0]
     fx.admin = {"email": ADMIN_EMAIL, "token": token_for(ADMIN_EMAIL, ADMIN_PASSWORD)}
     fx.admin["id"] = jwt_payload(fx.admin["token"])["user_id"]
+    fx.admin["uuid"] = jwt_payload(fx.admin["token"])["uuid"]
     return fx
 
 
 def activate(fx, email):
-    row = sql(f"SELECT id, password FROM user WHERE email='{email}'")[0]
-    s, _, p = http("POST", "/accept-invite", body={"token": mint_invite(email, row[1], fx.secret),
+    row = sql(f"SELECT id, LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))), password FROM user WHERE email='{email}'")[0]
+    s, _, p = http("POST", "/accept-invite", body={"token": mint_invite(email, row[2], fx.secret),
                                                    "newPassword": FIXTURE_PW})
     if s != 204:
         raise RuntimeError(f"accept-invite {email} -> {s} {p}")
-    return {"email": email, "id": int(row[0]), "token": token_for(email, FIXTURE_PW)}
+    return {"email": email, "id": int(row[0]), "uuid": row[1], "token": token_for(email, FIXTURE_PW)}
 
 
 ADMIN_AUDIT = []
@@ -294,7 +295,7 @@ def api_scenarios(fx):
                     and not str(u.get("createdAt")).startswith("2000") and u.get("updatedAt"))
         fx.userA = activate(fx, f"{TAG}-user-a@hermes.test")
         # update by SysAdmin: updated_by moves, created_by stays
-        s2, _, u2 = http("PUT", f"/user/{u['id']}", token=adm["token"], body={
+        s2, _, u2 = http("PUT", f"/user/uuid/{u['uuid']}", token=adm["token"], body={
             "email": f"{TAG}-user-a@hermes.test", "name": "user a renamed", "role": "TenantUser",
             "enabled": True, "tenantId": fx.tA, "createdBy": "forged@evil"})
         row2 = sql(f"SELECT created_by, updated_by, name FROM user WHERE id={u['id']}")[0]
@@ -313,27 +314,27 @@ def api_scenarios(fx):
 
     # XF-005: an edit cannot move a record to another tenant
     if fx.userA:
-        s, _, p = http("PUT", f"/user/{fx.userA['id']}", token=A["token"], body={
+        s, _, p = http("PUT", f"/user/uuid/{fx.userA['uuid']}", token=A["token"], body={
             "email": fx.userA["email"], "name": "user a", "role": "TenantUser", "enabled": True,
             "tenantId": fx.tB})
         t = sql(f"SELECT tenant_id FROM user WHERE id={fx.userA['id']}")[0][0]
-        check("XF-005", int(t) == fx.tA, f"PUT /user/{{id}} as owner A with tenantId=B -> {s}; tenant stays A",
+        check("XF-005", int(t) == fx.tA, f"PUT /user/uuid/{{uuid}} as owner A with tenantId=B -> {s}; tenant stays A",
               f"PUT -> {s}; tenant_id now {t}")
 
     # XF-006: cross-tenant reads are invisible (404, not 403)
-    r1 = http("GET", f"/user/{B['id']}", token=A["token"])[0]
-    r2 = http("PUT", f"/user/{B['id']}", token=A["token"], body={
+    r1 = http("GET", f"/user/uuid/{B['uuid']}", token=A["token"])[0]
+    r2 = http("PUT", f"/user/uuid/{B['uuid']}", token=A["token"], body={
         "email": B["email"], "name": "pwned", "role": "TenantOwner", "enabled": False})[0]
     nm = sql(f"SELECT name, enabled FROM user WHERE id={B['id']}")[0]
     s, seen = emails(A["token"])
     check("XF-006", r1 == 404 and r2 == 404 and nm == ["owner-b", "1"] and B["email"] not in seen,
-          f"owner A: GET /user/{{B}} -> {r1}, PUT /user/{{B}} -> {r2} (row untouched), list excludes B",
+          f"owner A: GET /user/uuid/{{B}} -> {r1}, PUT /user/uuid/{{B}} -> {r2} (row untouched), list excludes B",
           f"GET -> {r1}, PUT -> {r2}, B row={nm}, B in list={B['email'] in seen}")
     # XF-007 (delete) has no HTTP route for tenant-scoped rows -> cargo evidence (see cargo_scenarios)
 
     # XF-008: tenant role with no tenant claim is refused before any handler
     orphan = fx.orphan
-    probes = [("GET", "/user", None), ("GET", f"/user/{orphan['id']}", None),
+    probes = [("GET", "/user", None), ("GET", f"/user/uuid/{orphan['uuid']}", None),
               ("PUT", "/user/change-password", {"currentPassword": FIXTURE_PW, "newPassword": "Changed#12345"})]
     codes = [http(m, p, body=b, token=orphan["token"])[0] for m, p, b in probes]
     still = login(orphan["email"], FIXTURE_PW)[0]
@@ -380,7 +381,7 @@ def api_scenarios(fx):
             "user creates TenantUser": http("POST", "/user", token=U["token"], body={
                 "email": f"{TAG}-esc3@hermes.test", "role": "TenantUser", "enabled": True})[0],
         }
-        http("PUT", f"/user/{A['id']}", token=A["token"], body={
+        http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
             "email": A["email"], "name": "owner-a", "role": "SysAdmin", "enabled": True, "tenantId": None})
         role_after = sql(f"SELECT role, tenant_id FROM user WHERE id={A['id']}")[0]
         leaked = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-esc%' OR email LIKE '{TAG}-x1%'")[0][0]
@@ -407,7 +408,7 @@ def api_scenarios(fx):
     ok_db, msg = sql_try(f"UPDATE user SET tenant_id={fx.tA} WHERE role='SysAdmin'")
     ok_ins, msg2 = sql_try(f"INSERT INTO user (uuid,email,password,enabled,tenant_id,role) VALUES "
                            f"(UNHEX(REPLACE(UUID(),'-','')),'{TAG}-boundadmin@hermes.test','x',1,{fx.tA},'SysAdmin')")
-    s, _, _ = http("PUT", f"/user/{adm['id']}", token=adm["token"], body={
+    s, _, _ = http("PUT", f"/user/uuid/{adm['uuid']}", token=adm["token"], body={
         "email": ADMIN_EMAIL, "name": "System Administrator", "role": "SysAdmin", "enabled": True, "tenantId": fx.tA})
     adm_t = sql(f"SELECT tenant_id FROM user WHERE id={adm['id']}")[0][0]
     check("XF-025", not ok_db and not ok_ins and "chk_sysadmin_has_no_tenant" in (msg + msg2) and adm_t == "NULL",

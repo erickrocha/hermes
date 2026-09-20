@@ -125,9 +125,9 @@ pub async fn add(
 #[utoipa::path(
     post,
     tag = "User",
-    path = "/user/{id}/invite",
+    path = "/user/uuid/{uuid}/invite",
     params(
-        ("id" = i32, Path, description = "User ID")
+        ("uuid" = String, Path, description = "User UUID")
     ),
     responses(
         (status = 204, description = "A new invitation was issued and any outstanding one was superseded"),
@@ -148,11 +148,11 @@ pub async fn reissue_invite(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
-    Path(id): Path<i64>,
+    Path(uuid): Path<String>,
 ) -> HttpResponse<StatusCode> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
     let existing = use_case
-        .find_by_id(id)
+        .find_by_uuid(uuid)
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
@@ -269,27 +269,27 @@ pub async fn list_all(
 #[utoipa::path(
     get,
     tag = "User",
-    path = "/user/{id}",
+    path = "/user/uuid/{uuid}",
     params(
-        ("id" = i32, Path, description = "User ID")
+        ("uuid" = String, Path, description = "User UUID")
     ),
     responses(
         (status = 200, description = "User found", body = UserJson),
-        (status = 404, description = "User not found", body = NotFoundErrorJson),
+        (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn get_by_id(
+pub async fn get_by_uuid(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
-    Path(id): Path<i64>,
+    Path(uuid): Path<String>,
 ) -> HttpResponse<Json<UserJson>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
     let user = use_case
-        .find_by_id(id)
+        .find_by_uuid(uuid)
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
@@ -312,15 +312,15 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
     tag = "User",
-    path = "/user/{id}",
+    path = "/user/uuid/{uuid}",
     params(
-        ("id" = i32, Path, description = "User ID")
+        ("uuid" = String, Path, description = "User UUID")
     ),
     request_body = UserJson,
     responses(
         (status = 200, description = "User updated", body = UserJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
-        (status = 404, description = "User not found", body = NotFoundErrorJson),
+        (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
     ),
@@ -330,12 +330,18 @@ pub async fn update(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
-    Path(id): Path<i64>,
+    Path(uuid): Path<String>,
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<Json<UserJson>> {
     reject_unknown_role(&payload.role, &locale)?;
     let mut domain = UserMapper::domain(payload);
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
+
+    let existing = use_case
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+    let id = existing.id.unwrap_or_default();
 
     if current_user.id == Some(id) && !domain.enabled {
         return Err(ExceptionResponse::BadRequest(
@@ -343,11 +349,6 @@ pub async fn update(
             ErrorKey::InvalidParameterValue,
         ));
     }
-
-    let existing = use_case
-        .find_by_id(id)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
 
     // EPIC-IA-05-S01/HRMS-117/HRMS-118: an unbound platform administrator, or
     // the tenant owner of that exact tenant -- nobody else may touch this

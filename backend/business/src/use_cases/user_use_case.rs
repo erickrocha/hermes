@@ -173,6 +173,32 @@ impl UserUseCase {
         }
     }
 
+    /// HRMS-204/AD-010 (OBS-TP-05): the UUID is an account's public
+    /// identifier. The internal id stays the database key and the value the
+    /// authorization rules compare, so this only changes how a caller names
+    /// the account -- not who may reach it.
+    pub async fn find_by_uuid(&self, uuid: String) -> Result<User, BusinessError> {
+        log::info!("[UserUseCase::find_by_uuid] Executing for uuid: {}", uuid);
+
+        let entity = self
+            .gateway
+            .find_by_uuid(uuid.clone())
+            .await
+            .map_err(|e| {
+                let msg = format!("Database error: {}", e);
+                log::error!("[UserUseCase::find_by_uuid] {}", msg);
+                BusinessError::new(msg)
+            })?;
+
+        match entity {
+            Some(model) => Ok(UserEntityMapper::from_model(model)),
+            None => {
+                log::error!("[UserUseCase::find_by_uuid] User not found with uuid: {}", uuid);
+                Err(BusinessError::new("User not found".to_string()))
+            }
+        }
+    }
+
     /// PD-028: uma página de usuários mais o total. O escopo de tenant vem do
     /// gateway (`tenant_select`), não de um filtro repetido aqui.
     pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<User>, u64), BusinessError> {

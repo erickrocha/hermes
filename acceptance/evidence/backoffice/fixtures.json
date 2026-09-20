@@ -4,22 +4,22 @@
   "admin": "admin@hermes.dev",
   "adminPassword": "LocalDevOnly123!",
   "plan": {
-    "id": 3,
-    "uuid": "dbf50d6e-1347-43eb-9f9a-68f8cc48502d",
+    "id": 1,
+    "uuid": "cbe03830-79fa-4125-8a64-1b75296505f0",
     "name": "qa-bo-flat",
     "priceInCents": 1234567,
     "availableUsers": 10,
     "periodDays": 30,
     "paymentDate": "2026-09-19",
-    "createdAt": "2026-09-20T00:08:42",
+    "createdAt": "2026-09-20T01:39:15",
     "createdBy": "admin@hermes.dev",
-    "updatedAt": "2026-09-20T00:08:42",
+    "updatedAt": "2026-09-20T01:39:15",
     "updatedBy": "admin@hermes.dev"
   },
   "tenants": {
     "tm": {
-      "id": 30,
-      "uuid": "8ec2f78b-c6c1-40fd-876c-691b0ac3c01d",
+      "id": 1,
+      "uuid": "e10f5bc1-e10d-47ee-b242-f1680f2e0ebd",
       "businessName": "qa-bo-Transmega",
       "companyName": "qa-bo-Transmega Ltda",
       "taxId": "QABO0000000001",
@@ -35,14 +35,14 @@
       "province": "TX",
       "city": "Austin",
       "zipcode": null,
-      "createdAt": "2026-09-20T00:08:42",
+      "createdAt": "2026-09-20T01:39:15",
       "createdBy": "admin@hermes.dev",
-      "updatedAt": "2026-09-20T00:08:42",
+      "updatedAt": "2026-09-20T01:39:15",
       "updatedBy": "admin@hermes.dev"
     },
     "acme": {
-      "id": 31,
-      "uuid": "ba4a7571-8a9a-4119-8a8e-b880ab127372",
+      "id": 2,
+      "uuid": "0b27619c-f27e-4258-bf21-21fdd0d02072",
       "businessName": "qa-bo-acme",
       "companyName": "qa-bo-acme Ltda",
       "taxId": "QABO0000000002",
@@ -58,9 +58,9 @@
       "province": "TX",
       "city": "Austin",
       "zipcode": null,
-      "createdAt": "2026-09-20T00:08:42",
+      "createdAt": "2026-09-20T01:39:15",
       "createdBy": "admin@hermes.dev",
-      "updatedAt": "2026-09-20T00:08:42",
+      "updatedAt": "2026-09-20T01:39:15",
       "updatedBy": "admin@hermes.dev"
     }
   },
@@ -69,6 +69,6 @@
   "userTm": "qa-bo-user-tm@hermes.test",
   "invite": {
     "email": "qa-bo-pg-00@hermes.test",
-    "token": "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJIUzUxMiJ9.eyJzdWIiOiAicWEtYm8tcGctMDBAaGVybWVzLnRlc3QiLCAiZXhwIjogMTc4OTg2MzUzNCwgInR5cCI6ICJpbnZpdGUifQ._rvvV_3V4b3dqFxvrx0gFaqxZ-CyC5DpCN4gHCMmGYU3nkWS4UuCrzYIZrTrfzbiI5cGWKgxAh9bn3hLF9k6JA"
+    "token": "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJIUzUxMiJ9.eyJzdWIiOiAicWEtYm8tcGctMDBAaGVybWVzLnRlc3QiLCAiZXhwIjogMTc4OTg2ODk2OCwgInR5cCI6ICJpbnZpdGUifQ.wbD7PcCoLCqORkpzdbrhPzjSNdczcYKeXUm9-L5RtXxuUoB3cLpoe3B3PkkDXiUs2X1koh_ytIlw4NNZPOPqyQ"
   }
 }

@@ -288,7 +288,7 @@ async function step(sid, fn, page) {
     await shot(admin, 'BO-022-plans-list')
     const token = await admin.evaluate(() => JSON.parse(localStorage.getItem('hermes.session')).accessToken)
     const p = (await fetch(`${API}/business-plan?page=0&pageSize=5&search=qa-bo-ui-plan`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json())).items[0]
-    await admin.goto(`${BASE}/plans/${p.id}/edit`); await admin.waitForSelector('form input[step="0.01"]')
+    await admin.goto(`${BASE}/plans/${p.uuid}/edit`); await admin.waitForSelector('form input[step="0.01"]')
     const shown = await admin.$eval('form input[step="0.01"]', (e) => e.value)
     rec('BO-022', p.priceInCents === 19990 && shown === '199.90',
       `typed 199.90 -> stored ${p.priceInCents} cents; list shows "${cell}"; editor reopens with ${shown}`)
