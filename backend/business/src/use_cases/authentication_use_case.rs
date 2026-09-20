@@ -205,6 +205,7 @@ impl AuthenticationUseCase {
             user_id: claims.user_id,
             role: claims.role,
             tenant_id: claims.tenant_id,
+            tenant_uuid: None,
         }
     }
 

@@ -26,7 +26,7 @@ export function Shell({ children }: { children: ReactNode }) {
   // load -- that made the identity appear only by accident, and not at all
   // once the dashboard stopped listing tenants (DEF-BO-07). A SysAdmin has no
   // tenant of their own, so they keep the vendor's default identity.
-  useEffect(() => { if (session.tenantId) dispatch(loadCurrentTenant(session.tenantId)) }, [dispatch, session.tenantId])
+  useEffect(() => { if (session.tenantUuid) dispatch(loadCurrentTenant(session.tenantUuid)) }, [dispatch, session.tenantUuid])
   useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
   const links = [

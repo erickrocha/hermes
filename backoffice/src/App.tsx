@@ -41,8 +41,8 @@ export default function App() {
     <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
     <Route path="/tenants" element={<Protected><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:id/edit" element={<Protected><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:id/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
+    <Route path="/tenants/:uuid/edit" element={<Protected><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/plans/:id/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />

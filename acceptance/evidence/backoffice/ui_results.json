@@ -69,13 +69,13 @@
   "BO-014",
   "ui",
   "PASS",
-  "owner: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/204/subscription->/"
+  "owner: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/8ec2f78b-c6c1-40fd-876c-691b0ac3c01d/subscription->/"
  ],
  [
   "BO-014",
   "ui",
   "PASS",
-  "user: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/204/subscription->/"
+  "user: nav=[Overview, Tenants, Users]; cards=[Registered tenants, Users]; /plans->/ /plans/new->/ /system-settings->/ /tenants/new->/ /tenants/8ec2f78b-c6c1-40fd-876c-691b0ac3c01d/subscription->/"
  ],
  [
   "BO-013",
@@ -171,7 +171,7 @@
   "BO-033",
   "ui",
   "PASS",
-  "hermes.session.uuid=9524c668-d42a-4e19-968b-4cc57c5d12bc, email=qa-bo-owner-tm@hermes.test"
+  "hermes.session.uuid=7255454f-9ddc-4ddc-be32-1b61734b8036, email=qa-bo-owner-tm@hermes.test"
  ],
  [
   "BO-040",

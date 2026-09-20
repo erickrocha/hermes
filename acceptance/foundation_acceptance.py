@@ -114,6 +114,13 @@ def sql(query, db=DB_NAME, root=False):
     return [line.split("\t") for line in out.stdout.splitlines()]
 
 
+def tenant_uuid(tid):
+    """HRMS-204/OBS-TP-05: tenant URLs use the public uuid; numeric ids
+    remain request-body values and database keys."""
+    rows = sql(f"SELECT LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))) FROM tenant WHERE id={int(tid)}")
+    return rows[0][0] if rows else "00000000-0000-4000-8000-000000000000"
+
+
 def sql_try(query, db=DB_NAME):
     try:
         return True, sql(query, db)
@@ -359,7 +366,7 @@ def api_scenarios(fx):
             ("TenantOwner GET /business-plan", A, "GET", "/business-plan", None),
             ("TenantOwner POST /province", A, "POST", "/province", {"acronym": "QZ", "name": "x", "countryCode": "US"}),
             ("TenantOwner POST /city", A, "POST", "/city", {"provinceId": 1, "name": f"{TAG}-city"}),
-            ("TenantOwner POST /tenant/{A}/plan", A, "POST", f"/tenant/{fx.tA}/plan", {"businessPlanId": 1}),
+            ("TenantOwner POST /tenant/uuid/{A}/plan", A, "POST", f"/tenant/uuid/{tenant_uuid(fx.tA)}/plan", {"businessPlanId": 1}),
         ]
         got = {name: http(m, p, body=b, token=who["token"])[0] for name, who, m, p, b in matrix}
         check("XF-020", all(c in (403, 404) for c in got.values()),

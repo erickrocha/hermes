@@ -111,6 +111,13 @@ def sql(query, db=DB_NAME, root=False):
     return [line.split("\t") for line in out.stdout.splitlines()]
 
 
+def tenant_uuid(tid):
+    """HRMS-204/OBS-TP-05: tenant URLs use the public uuid; numeric ids
+    remain request-body values and database keys."""
+    rows = sql(f"SELECT LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))) FROM tenant WHERE id={int(tid)}")
+    return rows[0][0] if rows else "00000000-0000-4000-8000-000000000000"
+
+
 def dotenv(path=os.path.join(BACKEND, ".env")):
     values = {}
     for line in open(path):
@@ -343,7 +350,7 @@ def hierarchy(fx):
           f"owner A POST /user TenantUser -> {s} {u}")
     s_list, seen = users_seen(A["token"])
     c = jwt_payload(A1["token"]) if A1 else {}
-    st = http("GET", f"/tenant/{fx.tA}", token=A1["token"])[0] if A1 else None
+    st = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=A1["token"])[0] if A1 else None
     check("IA-014", A1 and {A1["email"], A2["email"]} <= seen and c.get("role") == "TenantUser"
           and c.get("tenant_id") == fx.tA and st == 200,
           f"owner A's list shows the new users; the tenant user activated, signed in (role TenantUser, tenant {fx.tA}) and reads its tenant (200)",
@@ -498,18 +505,18 @@ def hierarchy(fx):
     out = {}
     for who, tok in (("owner", A["token"]), ("user", A1["token"])):
         out[who] = {
-            "GET B": http("GET", f"/tenant/{fx.tB}", token=tok),
-            "GET missing": http("GET", "/tenant/99999999", token=tok),
+            "GET B": http("GET", f"/tenant/uuid/{tb['uuid']}", token=tok),
+            "GET missing": http("GET", f"/tenant/uuid/{uuid.uuid4()}", token=tok),
             "GET B uuid": http("GET", f"/tenant/uuid/{tb['uuid']}", token=tok),
             "GET missing uuid": http("GET", f"/tenant/uuid/{uuid.uuid4()}", token=tok),
-            "GET B plan": http("GET", f"/tenant/{fx.tB}/plan", token=tok),
+            "GET B plan": http("GET", f"/tenant/uuid/{tb['uuid']}/plan", token=tok),
         }
-    put_b = http("PUT", f"/tenant/{fx.tB}", token=A["token"], body={
+    put_b = http("PUT", f"/tenant/uuid/{tb['uuid']}", token=A["token"], body={
         "businessName": f"{TAG}-pwned", "taxId": "QAIA0000000002", "countryCode": "US"})
     b_name = sql(f"SELECT business_name FROM tenant WHERE id={fx.tB}")[0][0]
     s_l, p_l = http("GET", "/tenant?page=0&pageSize=200", token=A["token"])
     ids = [t["id"] for t in p_l.get("items", [])] if s_l == 200 else None
-    own = http("GET", f"/tenant/{fx.tA}", token=A["token"])[0]
+    own = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=A["token"])[0]
     stat = {w: {k: v[0] for k, v in d.items()} for w, d in out.items()}
     same = all(d["GET B"] == d["GET missing"] and d["GET B uuid"][0] == d["GET missing uuid"][0] for d in out.values())
     ok = all(v == 404 for d in stat.values() for v in d.values()) and put_b[0] == 404 and b_name == f"{TAG}-tenant-B" \
@@ -520,7 +527,7 @@ def hierarchy(fx):
 
     # IA-026 -- PD-034: the 404-not-403 answer is documented in the OpenAPI description
     s, doc = http("GET", "/api-docs/openapi.json")
-    paths = ("/tenant/{id}", "/tenant/uuid/{uuid}")
+    paths = ("/tenant/uuid/{uuid}",)
     descs = {}
     if s == 200:
         for p in paths:
@@ -776,7 +783,7 @@ def sessions(fx):
         dead = (http("GET", f"/user/{U['id']}", token=U["token"])[0], http("POST", "/refresh", body={"refreshToken": U["refresh"]})[0])
         s_v = mk_user(fx, fx.ownerB["token"], "reuse-u", "TenantUser")[0]      # a new person, tenant B, same address
         V = activate(fx, em("reuse-u"), "QaNewcomer#2026") if s_v == 201 else None
-        acc = http("GET", f"/tenant/{fx.tA}", token=U["token"])[0]
+        acc = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=U["token"])[0]
         s_r, p_r = http("POST", "/refresh", body={"refreshToken": U["refresh"]})
         got = {k: p_r.get(k) for k in ("userId", "tenantId", "role")} if s_r == 200 else None
         pre = f"user U (tenant A) renamed + disabled (PUT {s_mv}; old tokens then {dead}); owner B creates V in tenant B with U's old address ({s_v})"
@@ -791,7 +798,7 @@ def sessions(fx):
 
     # IA-052 -- SUPERSEDED (HRM-045). Replacement: a new account is usable straight after accepting the invitation.
     cols = [r[0] for r in sql("SELECT column_name FROM information_schema.columns WHERE table_schema='hermes' AND table_name='user'")]
-    reach = http("GET", f"/tenant/{fx.tA}", token=a5["token"])[0]
+    reach = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=a5["token"])[0]
     check("IA-052", "first_login" not in cols and reach == 200,
           f"no first_login column; a freshly activated user reaches the API directly (GET own tenant {reach}) -- the invitation is the password step",
           f"columns {cols}; freshly activated user GET own tenant -> {reach}")

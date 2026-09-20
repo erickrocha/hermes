@@ -273,16 +273,24 @@ def tenant_row(tid, cols="business_name, company_name, tax_id, country_code, bus
     return rows[0] if rows else None
 
 
+def tenant_uuid(tid):
+    """HRMS-204/OBS-TP-05: URL addressing uses the public tenant uuid;
+    the numeric id remains a fixture handle and database key."""
+    rows = sql(f"SELECT LOWER(CONCAT(SUBSTR(HEX(uuid),1,8),'-',SUBSTR(HEX(uuid),9,4),'-',SUBSTR(HEX(uuid),13,4),'-',SUBSTR(HEX(uuid),17,4),'-',SUBSTR(HEX(uuid),21,12))) FROM tenant WHERE id={int(tid)}")
+    return rows[0][0] if rows else "00000000-0000-4000-8000-000000000000"
+
+
 def put_tenant(token, tid, **changes):
     """PUT with the tenant's current representation plus `changes` (a real client edits a record)."""
-    s, cur = http("GET", f"/tenant/{tid}", token=ADM[0])
+    tuid = tenant_uuid(tid)
+    s, cur = http("GET", f"/tenant/uuid/{tuid}", token=ADM[0])
     body = {k: v for k, v in cur.items() if k not in ("createdAt", "createdBy", "updatedAt", "updatedBy")}
     for k, v in changes.items():
         if v is DROP:
             body.pop(k, None)
         else:
             body[k] = v
-    return http("PUT", f"/tenant/{tid}", body=body, token=token)
+    return http("PUT", f"/tenant/uuid/{tuid}", body=body, token=token)
 
 
 DROP = object()
@@ -300,7 +308,7 @@ def epic_01(fx):
     s, p = create_tenant(adm, full)
     fx.full = p if s == 201 else None
     echoed = s == 201 and all(p.get(k) == v for k, v in full.items())
-    s2, g = http("GET", f"/tenant/{p.get('id')}", token=adm) if s == 201 else (0, None)
+    s2, g = http("GET", f"/tenant/uuid/{p.get('uuid')}", token=adm) if s == 201 else (0, None)
     same = s2 == 200 and all(g.get(k) == v for k, v in full.items())
     s3, m = create_tenant(adm, {"businessName": f"{TAG}-minimal", "taxId": "QATP0000000011", "countryCode": "US"})
     s4, f = create_tenant(fx.ownerA["token"], {"businessName": f"{TAG}-by-owner", "taxId": "QATP0000000012", "countryCode": "US"})
@@ -405,20 +413,20 @@ def epic_01(fx):
     oa = fx.ownerA["token"]
     s, pg = http("GET", "/tenant", token=oa)
     own_list = s == 200 and [t["id"] for t in pg["items"]] == [A["id"]] and pg["totalItems"] == 1
-    sb, _ = http("GET", f"/tenant/{fx.B['id']}", token=oa)
+    sb, _ = http("GET", f"/tenant/uuid/{fx.B['uuid']}", token=oa)
     sbu, _ = http("GET", f"/tenant/uuid/{fx.B['uuid']}", token=oa)
     before = tenant_row(fx.B["id"], "business_name, phone, tax_id")
-    spb, _ = http("PUT", f"/tenant/{fx.B['id']}", token=oa, body={
+    spb, _ = http("PUT", f"/tenant/uuid/{fx.B['uuid']}", token=oa, body={
         "businessName": f"{TAG}-pwned", "companyName": "pwned", "taxId": "QATP0000000099", "countryCode": "US"})
     after = tenant_row(fx.B["id"], "business_name, phone, tax_id")
-    so, _ = http("GET", f"/tenant/{A['id']}", token=oa)
+    so, _ = http("GET", f"/tenant/uuid/{A['uuid']}", token=oa)
     # Informational (owner question, not scored): may a TenantUser edit its tenant's legal record?
-    body = {k: v for k, v in http("GET", f"/tenant/{A['id']}", token=adm)[1].items()
+    body = {k: v for k, v in http("GET", f"/tenant/uuid/{A['uuid']}", token=adm)[1].items()
             if k not in ("createdAt", "createdBy", "updatedAt", "updatedBy")}
     body.update(companyName=f"{TAG} A Co", phone="+1 555 0666")
-    su, _ = http("PUT", f"/tenant/{A['id']}", body=body, token=fx.userA["token"])
+    su, _ = http("PUT", f"/tenant/uuid/{A['uuid']}", body=body, token=fx.userA["token"])
     NOTES["tenant_user_put_own_tenant"] = (su, tenant_row(A["id"], "phone, updated_by"))
-    s404 = fx.openapi["paths"]["/tenant/{id}"]["get"]["responses"]["404"]["description"]
+    s404 = fx.openapi["paths"]["/tenant/uuid/{uuid}"]["get"]["responses"]["404"]["description"]
     doc_ok = "PD-034" in s404 or "not disclosed" in s404
     check("TP-008", own_list and sb == 404 and sbu == 404 and spb == 404 and before == after and so == 200 and doc_ok,
           f"owner A list = [A] only; GET B {sb}, GET uuid B {sbu}, PUT B {spb}, B unchanged; own GET {so}; 404 documented as deliberate",
@@ -594,7 +602,7 @@ def epic_03(fx):
     s5, _ = http("DELETE", f"/business-plan/{tmp['id']}", token=adm)
     s6, _ = http("GET", f"/business-plan/{tmp['id']}", token=adm)
     s7, _ = http("DELETE", "/business-plan/999999999", token=adm)
-    http("POST", f"/tenant/{fx.B['id']}/plan", body={"businessPlanId": fx.basic["id"]}, token=adm)
+    http("POST", f"/tenant/uuid/{fx.B['uuid']}/plan", body={"businessPlanId": fx.basic["id"]}, token=adm)
     s8, d8 = http("DELETE", f"/business-plan/{fx.basic['id']}", token=adm)
     s9, _ = http("GET", f"/business-plan/{fx.basic['id']}", token=adm)
     check("TP-050", env_ok and found and s2 == 200 and bu["id"] == fx.basic["id"] and upd and s5 == 204 and s6 == 404
@@ -623,8 +631,8 @@ def epic_03(fx):
 
     tcol = one("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='hermes' "
                "AND table_name='business_plan' AND column_name LIKE '%tenant%'")
-    sa, _ = http("POST", f"/tenant/{fx.A['id']}/plan", body={"businessPlanId": pid}, token=adm)
-    sb, _ = http("POST", f"/tenant/{fx.B['id']}/plan", body={"businessPlanId": pid}, token=adm)
+    sa, _ = http("POST", f"/tenant/uuid/{fx.A['uuid']}/plan", body={"businessPlanId": pid}, token=adm)
+    sb, _ = http("POST", f"/tenant/uuid/{fx.B['uuid']}/plan", body={"businessPlanId": pid}, token=adm)
     both = [tenant_row(fx.A["id"])[4], tenant_row(fx.B["id"])[4]]
     check("TP-052", not any("tenant" in k.lower() for k in fx.P2) and tcol == "0" and sa == 200 and sb == 200
           and both == [str(pid), str(pid)],
@@ -636,8 +644,8 @@ def epic_03(fx):
 def epic_04(fx):
     adm, A, B = fx.adm, fx.A, fx.B
     p1, p2 = fx.P1, fx.P2
-    s, r = http("POST", f"/tenant/{A['id']}/plan", body={"businessPlanId": p1["id"]}, token=adm)
-    s2, g = http("GET", f"/tenant/{A['id']}", token=adm)
+    s, r = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": p1["id"]}, token=adm)
+    s2, g = http("GET", f"/tenant/uuid/{A['uuid']}", token=adm)
     db = tenant_row(A["id"])[4]
     check("TP-060", s == 200 and r.get("id") == p1["id"] and g.get("businessPlanId") == p1["id"] and db == str(p1["id"]),
           f"set plan 200 -> P1; GET tenant businessPlanId={g.get('businessPlanId')}; DB business_plan_id={db}",
@@ -645,7 +653,7 @@ def epic_04(fx):
 
     s, new = create_tenant(adm, {"businessName": f"{TAG}-noplan", "companyName": f"{TAG} No Plan",
                                  "taxId": "QATP0000000060", "countryCode": "US", "businessPlanId": p2["id"]})
-    s1, none = http("GET", f"/tenant/{new.get('id')}/plan", token=adm) if s == 201 else (0, "n/a")
+    s1, none = http("GET", f"/tenant/uuid/{new.get('uuid')}/plan", token=adm) if s == 201 else (0, "n/a")
     plan_after_create = tenant_row(new["id"])[4] if s == 201 else "n/a"
     s2, _ = put_tenant(adm, new["id"], businessPlanId=p2["id"]) if s == 201 else (0, None)
     plan_after_put = tenant_row(new["id"])[4] if s == 201 else "n/a"
@@ -661,11 +669,10 @@ def epic_04(fx):
     s, _ = http("GET", "/tenant-plan", token=adm)
     # The story is that a subscription is *not* a resource of its own: no
     # tenant_plan table, no TenantPlan schema, no /tenant-plan endpoint -- the
-    # current plan is reached only as a sub-resource of a tenant. This used to
-    # pin the exact list `["/tenant/{id}/plan"]`, so the UUID-addressed alias
-    # added for HRMS-204, `/tenant/uuid/{uuid}/plan`, read as a violation even
-    # though it is the same sub-resource reached by the public identifier.
-    # Assert the shape instead of the literal path list.
+    # current plan is reached only as a sub-resource of a tenant. HRMS-204/
+    # OBS-TP-05 removed the numeric-id URL, leaving `/tenant/uuid/{uuid}/plan`
+    # as that sub-resource's public shape. Assert the shape instead of the
+    # literal path list.
     standalone = [p for p in paths if not re.match(r"^/tenant/(uuid/\{uuid\}|\{id\})/plan$", p)]
     check("TP-062", tbl == "0" and paths and not standalone and not schemas and s == 404,
           f"no tenant_plan table; the plan is only a sub-resource of a tenant {paths}; no TenantPlan schema; /tenant-plan {s}",
@@ -673,38 +680,38 @@ def epic_04(fx):
 
     res = []
     for who, tok in (("owner A", fx.ownerA["token"]), ("user A", fx.userA["token"])):
-        s, p = http("POST", f"/tenant/{A['id']}/plan", body={"businessPlanId": p2["id"]}, token=tok)
+        s, p = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": p2["id"]}, token=tok)
         res.append((who, s))
-    body = dict(http("GET", f"/tenant/{A['id']}", token=adm)[1])
+    body = dict(http("GET", f"/tenant/uuid/{A['uuid']}", token=adm)[1])
     for k in ("createdAt", "createdBy", "updatedAt", "updatedBy"):
         body.pop(k, None)
     body.update(businessPlanId=p2["id"], companyName=f"{TAG} A Co")
-    s3, _ = http("PUT", f"/tenant/{A['id']}", body=body, token=fx.ownerA["token"])
+    s3, _ = http("PUT", f"/tenant/uuid/{A['uuid']}", body=body, token=fx.ownerA["token"])
     cur = tenant_row(A["id"])[4]
     check("TP-063", all(r[1] == 403 for r in res) and cur == str(p1["id"]),
           f"POST plan: {res}; owner PUT with businessPlanId -> {s3} but plan stays P1",
           f"POST plan {res}; owner PUT {s3}; current plan={cur} (P1={p1['id']})")
 
-    s, p = http("POST", f"/tenant/{A['id']}/plan", body={"businessPlanId": 999999999}, token=adm)
+    s, p = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": 999999999}, token=adm)
     cur = tenant_row(A["id"])[4]
-    s2, p2r = http("POST", "/tenant/999999999/plan", body={"businessPlanId": p1["id"]}, token=adm)
-    s3, _ = http("POST", f"/tenant/{A['id']}/plan", body={"businessPlanId": p1["id"]})
+    s2, p2r = http("POST", "/tenant/uuid/00000000-0000-4000-8000-000000000000/plan", body={"businessPlanId": p1["id"]}, token=adm)
+    s3, _ = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": p1["id"]})
     check("TP-064", s == 404 and cur == str(p1["id"]) and s2 == 404 and s3 in (401, 403),
-          f"unknown plan 404 ({ek(p)}), plan kept; unknown tenant 404; anonymous {s3}",
+          f"unknown plan 404 ({ek(p)}), plan kept; unknown tenant uuid 404; anonymous {s3}",
           f"unknown plan {s} {ek(p)} (plan kept={cur == str(p1['id'])}); unknown tenant {s2} {ek(p2r)} "
           f"(OpenAPI documents 404 'Tenant or business plan not found'); anonymous {s3}")
 
     got = []
     for who, tok in (("owner A", fx.ownerA["token"]), ("user A", fx.userA["token"])):
-        s, p = http("GET", f"/tenant/{A['id']}/plan", token=tok)
+        s, p = http("GET", f"/tenant/uuid/{A['uuid']}/plan", token=tok)
         got.append((who, s, (p or {}).get("name") if isinstance(p, dict) else p,
                     (p or {}).get("priceInCents") if isinstance(p, dict) else None))
-    sB, _ = http("GET", f"/tenant/{B['id']}/plan", token=fx.ownerA["token"])
+    sB, _ = http("GET", f"/tenant/uuid/{B['uuid']}/plan", token=fx.ownerA["token"])
     check("TP-065", all(g[1] == 200 and g[2] == p1["name"] and g[3] == p1["priceInCents"] for g in got) and sB == 404,
           f"own plan visible: {got}; tenant B's plan -> {sB}", f"{got}; B -> {sB}")
 
-    s, _ = http("POST", f"/tenant/{A['id']}/plan", body={"businessPlanId": p2["id"]}, token=adm)
-    s1, cur = http("GET", f"/tenant/{A['id']}/plan", token=adm)
+    s, _ = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": p2["id"]}, token=adm)
+    s1, cur = http("GET", f"/tenant/uuid/{A['uuid']}/plan", token=adm)
     tables_before = one("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='hermes'")
     # Free P1 from any other fixture reference, then prove nothing (no history row) still holds it.
     refs = one(f"SELECT COUNT(*) FROM tenant WHERE business_plan_id={p1['id']}")

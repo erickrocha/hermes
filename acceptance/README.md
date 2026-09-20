@@ -115,11 +115,20 @@ Extra prerequisites:
   It is used for the stepwise up/down seeding scenarios (RD-020…023).
 - For `--ui` only: the console runs at `http://localhost:5180`, and Playwright (≥ 1.62 with its Chromium) is
   installed somewhere. It is not a hermes dependency. Point `PLAYWRIGHT_MODULE` at that `node_modules/playwright`.
+  If Playwright was installed with a non-default browser location, also export `PLAYWRIGHT_BROWSERS_PATH`;
+  without it the launch fails with "Looks like Playwright was just installed or updated", and every UI
+  scenario is reported BLOCKED with that message as the reason.
+  The host also needs `libnss3` and `libnspr4` for Chromium to start at all. A missing one shows up as
+  `browserType.launch: Target page, context or browser has been closed`; confirm with
+  `ldd <chrome> | grep 'not found'`.
+  `node` must be on `PATH` for the subprocess — several scenarios shell out to `node`/`npm` and report a
+  bare exit 127 when it is not.
 
 ```sh
 python3 acceptance/reference_data_acceptance.py                    # api + lifecycle
 python3 acceptance/reference_data_acceptance.py --skip-lifecycle   # api only (fast)
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright \
+  PLAYWRIGHT_BROWSERS_PATH=/path/to/browsers \
   python3 acceptance/reference_data_acceptance.py --ui             # + console scenarios RD-031, RD-052…054
 ```
 
@@ -146,6 +155,7 @@ What it touches:
 | `HERMES_MIGRATOR` | `backend/target/debug/migration` |
 | `HERMES_CONSOLE` (UI) | `http://localhost:5180` |
 | `PLAYWRIGHT_MODULE` (UI) | `playwright` (resolved from the script's location) |
+| `PLAYWRIGHT_BROWSERS_PATH` (UI) | unset, so Playwright's own default location |
 
 ## Backoffice suite (`backoffice_acceptance.py`, scenarios `BO-0xx`)
 

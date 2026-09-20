@@ -34,11 +34,15 @@ export const canCreateUsers = (role: string) => role === 'SysAdmin' || role === 
 export function TenantsPage() {
   const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
   const { search, setSearch, onPageChange, reload } = usePagedList(loadTenants)
-  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.items.length ? <Loading /> : !tenants.items.length ? <Empty /> : <><div className="tenant-grid">{tenants.items.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span><small>#{tenant.id}</small></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.id && <Link to={`/tenants/${tenant.id}/edit`}><Pencil size={15} />{t('edit')}</Link>}{session.role === 'SysAdmin' && tenant.id && <Link to={`/tenants/${tenant.id}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div><Pagination page={tenants} onPageChange={onPageChange} /></>}</>
+  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.items.length ? <Loading /> : !tenants.items.length ? <Empty /> : <><div className="tenant-grid">{tenants.items.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span><small>#{tenant.id}</small></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.uuid && <Link to={`/tenants/${tenant.uuid}/edit`}><Pencil size={15} />{t('edit')}</Link>}{session.role === 'SysAdmin' && tenant.uuid && <Link to={`/tenants/${tenant.uuid}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div><Pagination page={tenants} onPageChange={onPageChange} /></>}</>
 }
 
 export function TenantEditorPage() {
-  const { id } = useParams()
+  // HRMS-204/OBS-TP-05: tenants are addressed by their public uuid, in the
+  // console's own URL as well as in the API call, so no browser address bar
+  // or API path carries the sequential internal id.
+  const { uuid } = useParams()
+  const id = uuid
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
   const { t, i18n } = useTranslation()
@@ -71,7 +75,7 @@ export function TenantEditorPage() {
       return
     }
     setLoading(true)
-    api.get<Tenant>(`/tenant/${id}`)
+    api.get<Tenant>(`/tenant/uuid/${id}`)
       .then(({ data }) => {
         const country = data.countryCode || localeCountry
         setForm({ ...data, countryCode: country })
@@ -111,7 +115,7 @@ export function TenantEditorPage() {
     setSaving(true)
     setError('')
     try {
-      if (id) await api.put(`/tenant/${id}`, form)
+      if (id) await api.put(`/tenant/uuid/${id}`, form)
       else await api.post('/tenant', form)
       navigate('/tenants')
     } catch (cause) {
@@ -217,9 +221,9 @@ export function SubscriptionPage() {
   // array. Reading it as an array made `plans.flatMap` throw and -- with no
   // error boundary above it -- unmounted the whole console, so the operator
   // saw a blank screen instead of the plan picker.
-  const { id } = useParams(); const tenantId = Number(id); const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [businessPlanId, setBusinessPlanId] = useState<number | null>(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/${tenantId}`), api.get<Page<BusinessPlan>>('/business-plan', { params: { page: 0, pageSize: 200 } }), api.get<BusinessPlan | null>(`/tenant/${tenantId}/plan`).catch(() => ({ data: null }))]).then(([tenantResult, plansResult, planResult]) => { const available = plansResult.data.items ?? []; setTenant(tenantResult.data); setPlans(available); setBusinessPlanId(planResult.data?.id ?? available[0]?.id ?? null) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
-  const save = async (event: FormEvent) => { event.preventDefault(); if (!businessPlanId) return; setSaving(true); setError(''); try { await api.post(`/tenant/${tenantId}/plan`, { businessPlanId }); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
+  const { uuid } = useParams(); const tenantId = uuid; const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [businessPlanId, setBusinessPlanId] = useState<number | null>(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/uuid/${tenantId}`), api.get<Page<BusinessPlan>>('/business-plan', { params: { page: 0, pageSize: 200 } }), api.get<BusinessPlan | null>(`/tenant/uuid/${tenantId}/plan`).catch(() => ({ data: null }))]).then(([tenantResult, plansResult, planResult]) => { const available = plansResult.data.items ?? []; setTenant(tenantResult.data); setPlans(available); setBusinessPlanId(planResult.data?.id ?? available[0]?.id ?? null) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
+  const save = async (event: FormEvent) => { event.preventDefault(); if (!businessPlanId) return; setSaving(true); setError(''); try { await api.post(`/tenant/uuid/${tenantId}/plan`, { businessPlanId }); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
   return <><PageHeader title={`${t('subscription')} · ${tenant ? tenantName(tenant) : ''}`} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}><label className="span-2">{t('plans')}<Combobox filterable value={businessPlanId} options={plans.flatMap((plan) => plan.id ? [{ value: plan.id, label: `${plan.name} · ${money(plan.priceInCents, i18n.language)}` }] : [])} onChange={(value) => setBusinessPlanId(value)} /></label></Form></section></>
 }

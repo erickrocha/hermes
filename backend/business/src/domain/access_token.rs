@@ -13,6 +13,10 @@ pub struct AccessToken {
     pub user_id: i64,
     pub role: Role,
     pub tenant_id: Option<i64>,
+    /// HRMS-204/OBS-TP-05: the session tenant's public identifier. Resolved by
+    /// the endpoint after the token is minted; it is deliberately not a JWT
+    /// claim, since nothing authorizes on it.
+    pub tenant_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

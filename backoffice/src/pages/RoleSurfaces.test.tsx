@@ -12,13 +12,13 @@ import { emptyPage } from '../types'
 import type { Session, Tenant, User } from '../types'
 
 const session = (role: Session['role'], tenantId: number | null): Session =>
-  ({ accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: `${role}@transmega.com`, uuid: `${role}-uuid`, name: role, userId: 9, role, tenantId })
+  ({ accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: `${role}@transmega.com`, uuid: `${role}-uuid`, name: role, userId: 9, role, tenantId, tenantUuid: tenantId ? 'tenant-42-uuid' : null })
 
 const sysAdmin = session('SysAdmin', null)
 const owner = session('TenantOwner', 42)
 const member = session('TenantUser', 42)
 
-const tenant: Tenant = { id: 42, businessName: 'Transmega Logística', companyName: 'Transmega', taxId: '11222333000181', email: 'ops@transmega.com', phone: '', website: '', addressLine1: '', addressLine2: '', locality: 'Santos', administrativeArea: 'SP', postalCode: '', countryCode: 'BR' }
+const tenant: Tenant = { id: 42, uuid: 'tenant-42-uuid', businessName: 'Transmega Logística', companyName: 'Transmega', taxId: '11222333000181', email: 'ops@transmega.com', phone: '', website: '', addressLine1: '', addressLine2: '', locality: 'Santos', administrativeArea: 'SP', postalCode: '', countryCode: 'BR' }
 const member1: User = { id: 9, name: 'Coordinator', email: 'coord@transmega.com', enabled: true, role: 'TenantUser', tenantId: 42 }
 
 const dataState = {
@@ -119,7 +119,7 @@ describe('subscription screen reads the page envelope (DEF-BO-03)', () => {
 
   it('lists the available plans instead of crashing', async () => {
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
-      if (url === '/tenant/42') return { data: tenant }
+      if (url === '/tenant/uuid/tenant-42-uuid') return { data: tenant }
       if (url === '/business-plan') return { data: { items: [{ id: 3, name: 'Fleet Pro', priceInCents: 149900, availableUsers: 25, periodDays: 30, paymentDate: '2025-01-10' }], totalItems: 1, totalPages: 1, page: 0, pageSize: 200 } }
       return { data: null }
     }) as never)
@@ -127,8 +127,8 @@ describe('subscription screen reads the page envelope (DEF-BO-03)', () => {
     const store = configureStore({ reducer: { auth: (state = { session: sysAdmin, loading: false, error: '' }) => state, data: (state = dataState) => state } })
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={['/tenants/42/subscription']}>
-          <Routes><Route path="/tenants/:id/subscription" element={<SubscriptionPage />} /></Routes>
+        <MemoryRouter initialEntries={['/tenants/tenant-42-uuid/subscription']}>
+          <Routes><Route path="/tenants/:uuid/subscription" element={<SubscriptionPage />} /></Routes>
         </MemoryRouter>
       </Provider>
     )

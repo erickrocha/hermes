@@ -176,7 +176,7 @@ async function step(sid, fn, page) {
       const cards = await page.$$eval('.metric-card small', (s) => s.map((x) => x.textContent))
       await shot(page, `BO-014-${who}-dashboard`)
       const redirects = []
-      for (const p of ['/plans', '/plans/new', '/system-settings', '/tenants/new', `/tenants/${fx.tenants.tm.id}/subscription`]) {
+      for (const p of ['/plans', '/plans/new', '/system-settings', '/tenants/new', `/tenants/${fx.tenants.tm.uuid}/subscription`]) {
         await page.goto(`${BASE}${p}`); await page.waitForTimeout(500)
         redirects.push(`${p}->${new URL(page.url()).pathname}`)
       }
@@ -192,7 +192,7 @@ async function step(sid, fn, page) {
     const empty = await user.$('.state-box')
     await shot(user, 'BO-013-tenant-user-users-page')
     await user.goto(`${BASE}/tenants`); await user.waitForTimeout(1200)
-    const edit = await user.$(`a[href="/tenants/${fx.tenants.tm.id}/edit"]`)
+    const edit = await user.$(`a[href="/tenants/${fx.tenants.tm.uuid}/edit"]`)
     await shot(user, 'BO-013-tenant-user-tenants-page')
     const dashCount = await (async () => { await user.goto(`${BASE}/`); await user.waitForSelector('.metric-card'); return user.$$eval('.metric-card strong', (s) => s.map((x) => x.textContent)) })()
     rec('BO-013', !newUser, `TenantUser offered: "New user" on /users=${!!newUser} (list empty=${!!empty}); "Edit" on own tenant card=${!!edit}; dashboard counts=[${dashCount}]`)
@@ -268,7 +268,7 @@ async function step(sid, fn, page) {
     rec('BO-020', !!t && t.countryCode === 'US' && t.administrativeArea === 'TX' && t.locality === 'Austin',
       `saved tenant: ${t ? `${t.countryCode}/${t.administrativeArea}/${t.locality}` : `not created (${err})`}`)
     if (t) {
-      await admin.goto(`${BASE}/tenants/${t.id}/edit`); await admin.waitForSelector('form'); await admin.waitForTimeout(1200)
+      await admin.goto(`${BASE}/tenants/${t.uuid}/edit`); await admin.waitForSelector('form'); await admin.waitForTimeout(1200)
       const cc = await admin.$eval('select#tenant-country', (e) => e.value)
       const area = await admin.$eval('form label:has-text("Province") .combobox-control input', (e) => e.value || e.placeholder)
       await shot(admin, 'BO-020-tenant-editor-reopen')
@@ -295,7 +295,7 @@ async function step(sid, fn, page) {
   }, admin)
 
   await step('BO-023', async () => {
-    await admin.goto(`${BASE}/tenants/${fx.tenants.tm.id}/subscription`); await admin.waitForTimeout(2500)
+    await admin.goto(`${BASE}/tenants/${fx.tenants.tm.uuid}/subscription`); await admin.waitForTimeout(2500)
     const body = (await admin.textContent('body')).replace(/\s+/g, ' ').slice(0, 200)
     const hasForm = await admin.$('form')
     // DEF-BO-03's fix made the plan picker a *filterable* Combobox, which shows

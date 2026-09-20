@@ -71,7 +71,10 @@ export const loadCounts = createAsyncThunk('data/counts', async (includePlans: b
 // after some screen had listed tenants -- and never at all once the dashboard
 // stopped loading that list. The session's own tenant is now fetched
 // directly, which is the only thing the theme should ever depend on.
-export const loadCurrentTenant = createAsyncThunk('data/currentTenant', async (tenantId: number) => (await api.get<Tenant>(`/tenant/${tenantId}`)).data)
+//
+// HRMS-204/OBS-TP-05: addressed by the tenant's public uuid, which the login
+// response now carries, so no console URL or API path uses the internal id.
+export const loadCurrentTenant = createAsyncThunk('data/currentTenant', async (tenantUuid: string) => (await api.get<Tenant>(`/tenant/uuid/${tenantUuid}`)).data)
 
 const dataSlice = createSlice({
   name: 'data', initialState: initialData, reducers: {

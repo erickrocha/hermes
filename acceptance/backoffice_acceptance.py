@@ -75,7 +75,7 @@ def seed():
         tenants[key] = must(http("POST", "/tenant", token=adm, body={
             "businessName": name, "companyName": f"{name} Ltda", "taxId": tax, "countryCode": "US",
             "administrativeArea": "TX", "locality": "Austin"}), f"create tenant {name}")
-    must(http("POST", f"/tenant/{tenants['tm']['id']}/plan", token=adm, body={"businessPlanId": plan["id"]}),
+    must(http("POST", f"/tenant/uuid/{tenants['tm']['uuid']}/plan", token=adm, body={"businessPlanId": plan["id"]}),
          "assign plan", ok=(200, 201, 204))
 
     def user(token, email, role, tenant_id):
@@ -124,6 +124,7 @@ def api_checks(fx):
     own = token_for(fx["ownerTm"], PW)
     usr = token_for(fx["userTm"], PW)
     tm, acme = fx["tenants"]["tm"]["id"], fx["tenants"]["acme"]["id"]
+    tm_uuid, acme_uuid = fx["tenants"]["tm"]["uuid"], fx["tenants"]["acme"]["uuid"]
 
     # BO-011: the API reports the TenantUser role the console must represent
     s, _, p = http("GET", "/user?page=0&pageSize=100", token=own)
@@ -149,7 +150,7 @@ def api_checks(fx):
     calls = [("GET", "/business-plan", None), ("POST", "/business-plan", {"name": f"{TAG}-evil", "priceInCents": 1,
              "availableUsers": 1, "periodDays": 1, "paymentDate": "2026-01-01"}),
              ("GET", f"/business-plan/{fx['plan']['id']}", None),
-             ("POST", f"/tenant/{tm}/plan", {"businessPlanId": fx["plan"]["id"]}), ("POST", "/tenant", {
+             ("POST", f"/tenant/uuid/{tm_uuid}/plan", {"businessPlanId": fx["plan"]["id"]}), ("POST", "/tenant", {
                  "businessName": f"{TAG}-evil", "taxId": "QABO0000000099", "countryCode": "US"})]
     res = [(who, m, path, http(m, path, token=tok, body=b)[0]) for who, tok in (("owner", own), ("user", usr))
            for m, path, b in calls]
@@ -169,10 +170,10 @@ def api_checks(fx):
            f"GET plan -> priceInCents={p and p.get('priceInCents')} (created as 1234567)")
 
     # BO-023: a tenant has one current plan (single object, not a list)
-    s1, _, p1 = http("GET", f"/tenant/{tm}/plan", token=adm)
-    s2, _, p2 = http("GET", f"/tenant/{acme}/plan", token=adm)
+    s1, _, p1 = http("GET", f"/tenant/uuid/{tm_uuid}/plan", token=adm)
+    s2, _, p2 = http("GET", f"/tenant/uuid/{acme_uuid}/plan", token=adm)
     record("BO-023", "api", s1 == 200 and isinstance(p1, dict) and p1.get("id") == fx["plan"]["id"],
-           f"GET /tenant/TM/plan -> {s1} {type(p1).__name__} id={isinstance(p1, dict) and p1.get('id')}; "
+           f"GET /tenant/uuid/TM/plan -> {s1} {type(p1).__name__} id={isinstance(p1, dict) and p1.get('id')}; "
            f"tenant without plan -> {s2} {str(p2)[:80]}")
 
     # BO-030: an invalid/expired token is answered 401 -- the trigger the console reacts to

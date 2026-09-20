@@ -39,6 +39,7 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             user_id: access_token.user_id,
             role: access_token.role,
             tenant_id: access_token.tenant_id,
+            tenant_uuid: access_token.tenant_uuid,
         }
     }
 
@@ -54,6 +55,7 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             user_id: u.user_id,
             role: u.role,
             tenant_id: u.tenant_id,
+            tenant_uuid: u.tenant_uuid,
         }
     }
 }

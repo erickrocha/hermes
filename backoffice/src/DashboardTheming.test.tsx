@@ -10,8 +10,8 @@ import { applyTheme } from './theme'
 import { emptyPage } from './types'
 import type { Session, Tenant } from './types'
 
-const owner: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42 }
-const transmega: Tenant = { id: 42, businessName: 'Transmega Logística', companyName: 'Transmega', taxId: '11222333000181', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode: 'BR' }
+const owner: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42, tenantUuid: 'tenant-42-uuid' }
+const transmega: Tenant = { id: 42, uuid: 'tenant-42-uuid', businessName: 'Transmega Logística', companyName: 'Transmega', taxId: '11222333000181', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode: 'BR' }
 
 const renderDashboard = () => render(
   <Provider store={store}>
@@ -36,7 +36,7 @@ describe('dashboard and tenant theming against the live store', () => {
   // loading that list (DEF-BO-07).
   it('themes the console from the session tenant, without needing a tenant list', async () => {
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
-      if (url === '/tenant/42') return { data: transmega }
+      if (url === '/tenant/uuid/tenant-42-uuid') return { data: transmega }
       return { data: { ...emptyPage(), totalItems: 29 } }
     }) as never)
 
@@ -52,7 +52,7 @@ describe('dashboard and tenant theming against the live store', () => {
   it('counts records without overwriting the page the list screens read', async () => {
     const totals: Record<string, number> = { '/tenant': 29, '/user': 7 }
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
-      if (url === '/tenant/42') return { data: transmega }
+      if (url === '/tenant/uuid/tenant-42-uuid') return { data: transmega }
       return { data: { ...emptyPage(), totalItems: totals[url] ?? 0, pageSize: 1 } }
     }) as never)
 

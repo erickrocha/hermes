@@ -11,6 +11,7 @@ export interface Session {
   userId: number
   role: Role
   tenantId?: number | null
+  tenantUuid?: string | null
 }
 
 export interface Tenant {
