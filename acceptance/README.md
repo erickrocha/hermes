@@ -10,6 +10,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `foundation_acceptance.py` | Foundation (`EPIC-XF-01…09`, scenarios `XF-0xx`) |
 | `reference_data_acceptance.py` (+ `reference_data_ui.mjs`) | Reference data (`EPIC-RD-01…03` + QA-added `PD-027-S01…S06`, scenarios `RD-0xx`) |
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
+| `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 
 ## Prerequisites
 
@@ -192,3 +193,60 @@ test-account passwords.
 
 **Deliberate race checks.** BO-064 and BO-065 delay one API response inside the browser, so that an
 out-of-order answer happens every time instead of only on a slow network.
+
+---
+
+## Fleet telemetry (`fleet_telemetry_acceptance.py`, scenarios `FT-00x`)
+
+Covers `EPIC-FT-01` (`HRMS-900…905`). Scenarios:
+`02-system_requirements/hermes/fleet-telemetry_acceptance_tests.md`. Log:
+`fleet-telemetry_test_execution_log.md`.
+
+```sh
+python3 acceptance/fleet_telemetry_acceptance.py
+python3 acceptance/fleet_telemetry_acceptance.py --json out.json
+```
+
+**It needs none of the prerequisites above** — no dev database, no running API, no console, no
+network, and no PinME credential. `cargo` and Python 3 are enough. That is a property of the slice,
+not a gap: `HRMS-905` forbids persisting tracking data until its consumer is stated (and that
+consumer is `operacao-trm`'s **open D-01**), so there is no table, no entity and no HTTP surface to
+drive. The deliverable is an ingestion boundary plus its rules, so the suite verifies it at source
+level:
+
+- **SRC** — structural inspection of the delivered crates (which file may know the provider exists,
+  which layers must stay provider-agnostic, that no write path was added).
+- **CARGO** — the crate's own behavioural tests, executed, with their **pass counts asserted**. The
+  provider's wire behaviour is covered there, against a loopback HTTP server the adapter's tests
+  start themselves.
+- **DOC** — `docs/TRACKING.md`, the `HRMS-901` contract record.
+
+It writes nothing and touches no shared state, so it is always safe to run alongside other suites.
+Exit code is 1 if any story fails.
+
+### Two things to know before editing it
+
+- **Structural scans route through `code_only()`**, which strips Rust comments but **keeps string
+  literals**. Without it, a comment explaining "we deliberately do *not* take the platform grant"
+  fails the very check confirming we did not — and the cheap fix would be deleting the explanation.
+  Literals are kept because the provider's wire vocabulary (`/positions`, `ignitionOn`, …) lives in
+  them and is exactly what `FT-003` hunts for.
+- **Negative checks carry existence guards.** A scan that matches nothing because a file was renamed
+  must FAIL, not pass vacuously, so `FT-003` requires ≥ 4 boundary tokens to be present and
+  `FT-005`/`FT-006` require a non-trivial file length. Likewise, cargo filters need the **full**
+  module path (`use_cases::vehicle_tracking_use_case::tests::…`): with `--exact`, a wrong prefix
+  matches 0 tests and still prints `test result: ok`, which is why the scenarios assert a count.
+
+### `ft_mutation_check.py`
+
+Six of the seven scenarios are structural, so this harness proves they discriminate. It applies
+seven mutations — each reintroducing the exact violation one scenario exists to catch — and requires
+that scenario to turn FAIL.
+
+```sh
+python3 acceptance/ft_mutation_check.py
+```
+
+**It edits source files in place** and restores them in a `finally` block, then re-asserts the
+baseline. Run it on a clean tree; if it is ever interrupted, check `git status` before trusting the
+working copy.

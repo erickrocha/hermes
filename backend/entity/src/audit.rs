@@ -51,6 +51,28 @@ pub async fn run_as_platform<F: Future>(fut: F) -> F::Output {
     run_with_user(Some(actor), fut).await
 }
 
+/// HRMS-903: a *named* tenant scope for work that runs outside a request.
+///
+/// Until this existed, out-of-request code had exactly two options: inherit
+/// `Denied` (D-05's default) or take `run_as_platform` and get the whole
+/// platform. Anything that legitimately acts for **one** tenant had to reach
+/// for the platform-wide grant, which is the accident U-016 was raised about —
+/// scope acquired by omission rather than named.
+///
+/// `actor` names the component in `created_by`/`updated_by`, so a row written
+/// by a background component is attributable to it rather than to `system`.
+/// The scope is `Tenant(tenant_id)` and nothing wider: `enforce_tenant` stamps
+/// that tenant, and a read through `tenant_select` is filtered to it.
+pub async fn run_for_tenant<F: Future>(tenant_id: i64, actor: &str, fut: F) -> F::Output {
+    let actor = AuditUser {
+        id: 0,
+        email: actor.to_string(),
+        tenant_id: Some(tenant_id),
+        enforce_tenant: true,
+    };
+    run_with_user(Some(actor), fut).await
+}
+
 /// Runs `fut` with `user` visible to `stamp_audit` via the `CURRENT_USER` task-local.
 /// Must wrap the request future in the auth middleware for `before_save` to see it.
 pub async fn run_with_user<F: Future>(user: Option<AuditUser>, fut: F) -> F::Output {
@@ -165,7 +187,7 @@ macro_rules! impl_tenant_auditable_before_save {
 
 #[cfg(test)]
 mod tests {
-    use super::{enforce_tenant, run_as_platform, run_with_user, tenant_scope, AuditUser, TenantActiveModel, TenantScope};
+    use super::{enforce_tenant, run_as_platform, run_for_tenant, run_with_user, tenant_scope, AuditUser, TenantActiveModel, TenantScope};
 
     /// A minimal `TenantActiveModel` double, so `enforce_tenant`'s effect can
     /// be asserted without a real SeaORM entity or a database.
@@ -259,5 +281,31 @@ mod tests {
         let model = FakeTenantModel { tenant_id: Some(999) };
         let stamped = run_as_platform(enforce_tenant(model)).await.expect("platform write is allowed");
         assert_eq!(stamped.tenant_id, Some(999));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_names_one_tenant_and_grants_nothing_wider() {
+        // HRMS-903: o ponto da ingestão de rastreamento. Antes disso, código
+        // fora de requisição só podia escolher entre Denied e a plataforma
+        // inteira; agir por um tenant exigia o alcance total.
+        let scope = run_for_tenant(42, "fleet-telemetry", async { tenant_scope() }).await;
+        assert_eq!(scope, TenantScope::Tenant(42));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_stamps_its_tenant_over_whatever_the_model_carried() {
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_for_tenant(42, "fleet-telemetry", enforce_tenant(model))
+            .await
+            .expect("a named tenant scope may write");
+        assert_eq!(stamped.tenant_id, Some(42));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_does_not_leak_scope_to_the_surrounding_code() {
+        // O escopo vale só dentro do future. Depois dele, o padrão D-05 volta.
+        let inner = run_for_tenant(42, "fleet-telemetry", async { tenant_scope() }).await;
+        assert_eq!(inner, TenantScope::Tenant(42));
+        assert_eq!(tenant_scope(), TenantScope::Denied);
     }
 }
