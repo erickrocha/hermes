@@ -313,18 +313,23 @@ re-run; both follow.
 Two outputs:
 
 - **A WCAG 2.1 AA contrast audit** of the 22 foreground/background pairs the console genuinely
-  renders — composed by reading `styles/main.scss`, not guessed. At the time of writing **8 fail**,
-  the worst being the primary button's white label on `#ff5b00` (**3.11:1**, AA wants 4.5:1).
+  renders — composed by reading `styles/main.scss`, not guessed. It originally found **8 failing**,
+  the worst being the primary button's white label on `#ff5b00` (**3.11:1**, AA wants 4.5:1). Those
+  were fixed under the 2026-09-21 sign-off and it now reports **24 of 24 passing**.
 - **A self-contained HTML review sheet** (`--html`) that renders the sign-in screen and dashboard
   in the proposed colours, with no network dependency, so it can be e-mailed to a non-technical
   approver who should not have to read a hex table to judge a design.
 
-**This is a quality finding, not a requirement violation.** hermes has no accessibility requirement
-— no WCAG clause anywhere in `requirements.md` — so nothing here fails any accepted requirement.
-It is surfaced because it affects the console's most-used control and because approving a palette
-is the moment to decide it knowingly. The audit prints darker accents that would pass; note that
-`--accent-hover` (`#c2410c`, 5.18:1) is *already in the palette*, so the usual fix introduces no
-new colour to approve.
+**This was a quality finding, not a requirement violation.** hermes has no accessibility requirement
+— no WCAG clause anywhere in `requirements.md` — so nothing here failed any accepted requirement.
+It was surfaced because it affected the console's most-used control and because approving a palette
+is the moment to decide it knowingly. The fix kept `--accent-primary` at `#ff5b00` as the brand
+fill and introduced `--accent-text` (`#c2410c`, already in the palette as `--accent-hover`, so no
+new colour), `--accent-deep` and `--input-border`.
+
+**The audit is the report; `theme.test.ts` is the guard.** Seven tests there compute contrast from
+the palette directly, so a future palette edit that reintroduces an illegible pair **fails a test**
+rather than waiting for somebody to remember to run this script. They are mutation-checked.
 
 ### How `PR-012` closes
 
@@ -334,6 +339,8 @@ new colour to approve.
    filled in, and
 2. `backoffice/src/theme.ts` no longer marks the palette `DRAFT`.
 
-When both hold it reports PASS and names the approver in its evidence. Both branches are exercised.
-The sign-off record is in the outer SDD workspace; if hermes is checked out standalone the file is
-absent and `PR-012` says so rather than failing.
+When both hold it reports PASS and names the approver in its evidence. Both branches were
+exercised. **It now passes** — approved by the Project Owner on 2026-09-21, per `D-12`, which had
+already decided the owner signs on Transmega's behalf. The sign-off record lives in the outer SDD
+workspace; if hermes is checked out standalone the file is absent and `PR-012` says so rather than
+failing.

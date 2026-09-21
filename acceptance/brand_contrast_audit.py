@@ -81,17 +81,17 @@ def contrast(fg, bg):
 # of `linear-gradient(--panel-from, --panel-to)` can still be illegible over
 # the light end, and the user sees both.
 PAIRS = [
-    ("Primary button label", "#ffffff", "--accent-primary", ".btn.primary (12.5px upper, 600)", "normal"),
-    ("Primary button label (gradient end)", "#ffffff", "--accent-hover", ".btn.primary", "normal"),
-    ("Secondary button label", "--accent-primary", "#ffffff", ".btn.secondary", "normal"),
-    ("Tertiary button label", "--accent-primary", "--tint-accent", ".btn.tertiary", "normal"),
-    ("Active tab label", "--accent-primary", "#ffffff", ".tab.active", "normal"),
-    ("Language switcher", "--accent-primary", "#ffffff", ".auth-language", "normal"),
+    ("Primary button label", "#ffffff", "--accent-text", ".btn.primary (12.5px upper, 600)", "normal"),
+    ("Primary button label (gradient end)", "#ffffff", "--accent-deep", ".btn.primary", "normal"),
+    ("Secondary button label", "--accent-text", "#ffffff", ".btn.secondary", "normal"),
+    ("Tertiary button label", "--accent-text", "--tint-accent", ".btn.tertiary", "normal"),
+    ("Active tab label", "--accent-text", "#ffffff", ".tab.active", "normal"),
+    ("Language switcher", "--accent-text", "#ffffff", ".auth-language", "normal"),
     ("Body text on app background", "--text-body", "--bg-primary", "body", "normal"),
     ("Headings on app background", "--text-heading", "--bg-primary", "h1-h3", "normal"),
     ("Body text on white cards", "--text-body", "#ffffff", ".modal, .auth-card", "normal"),
     ("Metric value", "--text-heading", "#ffffff", ".metric-card strong", "normal"),
-    ("Metric icon glyph", "--accent-primary", "--tint-accent-strong", ".metric-icon.blue", "ui"),
+    ("Metric icon glyph", "--accent-text", "--tint-accent-strong", ".metric-icon.blue", "ui"),
     ("Sidebar text", "--sidebar-text", "--sidebar-from", ".sidebar", "normal"),
     ("Sidebar link", "--sidebar-link", "--sidebar-from", ".sidebar a", "normal"),
     ("Sidebar link (gradient end)", "--sidebar-link", "--sidebar-to", ".sidebar a", "normal"),
@@ -102,7 +102,12 @@ PAIRS = [
     ("Auth panel body (gradient end)", "--auth-panel-text", "--auth-panel-to", ".auth-panel", "normal"),
     ("Auth headline emphasis", "--auth-panel-highlight", "--auth-panel-to", ".auth-copy h1 em", "large"),
     ("Auth brand mark", "--accent-secondary", "--auth-panel-from", ".auth-brand span", "ui"),
-    ("Input border", "--border-color", "#ffffff", ".form-grid input", "ui"),
+    ("Input border", "--input-border", "#ffffff", ".form-grid input", "ui"),
+    # Kept in the audit: the brand fill is still used where it is legitimate,
+    # so a later change that reverts the split shows up here rather than
+    # silently passing.
+    ("Brand mark glyph (large graphic)", "#ffffff", "--accent-primary", ".brand-mark", "ui"),
+    ("Active tab underline", "--accent-primary", "#ffffff", ".tab.active border", "ui"),
 ]
 
 THRESHOLD = {"normal": 4.5, "large": 3.0, "ui": 3.0}

@@ -67,3 +67,83 @@ describe('applyTheme (EPIC-BO-01-S01/S02)', () => {
     expect(root.getPropertyValue('--accent-primary-rgb')).toBe('')
   })
 })
+
+// EPIC-XF-10-S09 (HRMS-409): the approved palette is legible, and stays that
+// way. `--accent-primary` is the brand colour and is deliberately too light to
+// carry text -- white on #ff5b00 is 3.11:1 where AA wants 4.5:1 -- so the
+// console reads its foregrounds from the derived shades instead. Without this
+// test that split survives only as a convention, and the next palette edit
+// quietly undoes it; acceptance/brand_contrast_audit.py catches the same thing
+// but only when somebody remembers to run it.
+describe('palette legibility (EPIC-XF-10-S09)', () => {
+  const channel = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+
+  const luminance = (hex: string) => {
+    const [r, g, b] = hexToRgbTriple(hex).split(',').map(Number)
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+  }
+
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+    return (hi + 0.05) / (lo + 0.05)
+  }
+
+  const colour = (key: keyof typeof transmegaTheme.variables) => {
+    const value = transmegaTheme.variables[key]
+    expect(value, `${key} missing from the theme`).toBeTruthy()
+    return value as string
+  }
+
+  it('reproduces a known contrast ratio, so the maths itself is trustworthy', () => {
+    expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 5)
+    expect(contrast('#ffffff', '#ffffff')).toBeCloseTo(1, 5)
+    // The failure that prompted the split.
+    expect(contrast('#ffffff', '#ff5b00')).toBeLessThan(4.5)
+  })
+
+  it('carries a white label on the primary button at AA, across the whole gradient', () => {
+    expect(contrast('#ffffff', colour('--accent-text'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast('#ffffff', colour('--accent-deep'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('reads as body text on white and on the accent tints at AA', () => {
+    const text = colour('--accent-text')
+    expect(contrast(text, '#ffffff')).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(text, colour('--tint-accent'))).toBeGreaterThanOrEqual(4.5)
+    // The metric icon is a glyph, so it is held to the 3:1 asked of a UI component.
+    expect(contrast(text, colour('--tint-accent-strong'))).toBeGreaterThanOrEqual(3)
+  })
+
+  it('marks a form field at the 3:1 a UI component needs', () => {
+    expect(contrast(colour('--input-border'), '#ffffff')).toBeGreaterThanOrEqual(3)
+  })
+
+  it('keeps the welcome and sign-in panel text legible over both ends of their gradients', () => {
+    const panel = colour('--panel-text')
+    expect(contrast(panel, colour('--panel-from'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(panel, colour('--panel-to'))).toBeGreaterThanOrEqual(4.5)
+    const auth = colour('--auth-panel-text')
+    expect(contrast(auth, colour('--auth-panel-from'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(auth, colour('--auth-panel-to'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('leaves the brand colour itself untouched, so the fix did not rebrand the console', () => {
+    expect(colour('--accent-primary')).toBe('#ff5b00')
+  })
+
+  it('applies the derived shades at runtime, not just declares them', () => {
+    applyTheme(transmegaTheme)
+    const root = document.documentElement.style
+    const derived = ['--accent-text', '--accent-deep', '--input-border'] as const
+    derived.forEach((key) => {
+      expect(root.getPropertyValue(key).trim(), `${key} not applied`).toBe(colour(key))
+    })
+    applyTheme(null)
+    derived.forEach((key) => {
+      expect(root.getPropertyValue(key), `${key} left behind`).toBe('')
+    })
+  })
+})

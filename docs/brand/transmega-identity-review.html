@@ -4,9 +4,11 @@
 <title>Transmega — console identity review</title>
 <style>
   :root {
+      --accent-deep: #9a3412;
       --accent-hover: #c2410c;
       --accent-primary: #ff5b00;
       --accent-secondary: #f59e0b;
+      --accent-text: #c2410c;
       --auth-panel-from: #1c1917;
       --auth-panel-highlight: #fdba74;
       --auth-panel-text: #ffedd5;
@@ -14,9 +16,10 @@
       --bg-primary: #f8f8f7;
       --border-color: #e0ded9;
       --brand-mark-to: #f97316;
+      --input-border: #8a8178;
       --panel-from: #7c2d12;
       --panel-text: #ffedd5;
-      --panel-to: #ea580c;
+      --panel-to: #c2410c;
       --sidebar-from: #1c1917;
       --sidebar-link: #d6d3d1;
       --sidebar-text: #f5f5f4;
@@ -122,7 +125,7 @@
 <p class="sub">How the hermes backoffice looks with the palette currently in the code.
 Everything below is rendered from those exact colour values.</p>
 
-<div class="banner draft"><b>DRAFT — NOT APPROVED.</b> These colours were inferred from a read-only survey of the Operação TRM web app. They have not been confirmed by Transmega. This sheet exists to get that confirmation.</div><div class="banner warn"><b>8 of 22 colour pairs fall below WCAG 2.1 AA.</b> This project has no accessibility requirement, so this is advice rather than a defect — but it affects the most-used control in the console, so it should be decided deliberately. See the table at the bottom.</div>
+
 
 <h2>1. Sign-in screen</h2>
 <div class="mock"><div class="mockbar">hermes — sign in</div>
@@ -176,9 +179,11 @@ Everything below is rendered from those exact colour values.</p>
 </div></div>
 
 <h2>3. The palette</h2>
-<div class="swatches"><figure class="sw"><div class="chip" style="background:#c2410c"></div><figcaption><b>--accent-hover</b><code>#c2410c</code></figcaption></figure>
+<div class="swatches"><figure class="sw"><div class="chip" style="background:#9a3412"></div><figcaption><b>--accent-deep</b><code>#9a3412</code></figcaption></figure>
+<figure class="sw"><div class="chip" style="background:#c2410c"></div><figcaption><b>--accent-hover</b><code>#c2410c</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#ff5b00"></div><figcaption><b>--accent-primary</b><code>#ff5b00</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#f59e0b"></div><figcaption><b>--accent-secondary</b><code>#f59e0b</code></figcaption></figure>
+<figure class="sw"><div class="chip" style="background:#c2410c"></div><figcaption><b>--accent-text</b><code>#c2410c</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#1c1917"></div><figcaption><b>--auth-panel-from</b><code>#1c1917</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#fdba74"></div><figcaption><b>--auth-panel-highlight</b><code>#fdba74</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#ffedd5"></div><figcaption><b>--auth-panel-text</b><code>#ffedd5</code></figcaption></figure>
@@ -186,9 +191,10 @@ Everything below is rendered from those exact colour values.</p>
 <figure class="sw"><div class="chip" style="background:#f8f8f7"></div><figcaption><b>--bg-primary</b><code>#f8f8f7</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#e0ded9"></div><figcaption><b>--border-color</b><code>#e0ded9</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#f97316"></div><figcaption><b>--brand-mark-to</b><code>#f97316</code></figcaption></figure>
+<figure class="sw"><div class="chip" style="background:#8a8178"></div><figcaption><b>--input-border</b><code>#8a8178</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#7c2d12"></div><figcaption><b>--panel-from</b><code>#7c2d12</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#ffedd5"></div><figcaption><b>--panel-text</b><code>#ffedd5</code></figcaption></figure>
-<figure class="sw"><div class="chip" style="background:#ea580c"></div><figcaption><b>--panel-to</b><code>#ea580c</code></figcaption></figure>
+<figure class="sw"><div class="chip" style="background:#c2410c"></div><figcaption><b>--panel-to</b><code>#c2410c</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#1c1917"></div><figcaption><b>--sidebar-from</b><code>#1c1917</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#d6d3d1"></div><figcaption><b>--sidebar-link</b><code>#d6d3d1</code></figcaption></figure>
 <figure class="sw"><div class="chip" style="background:#f5f5f4"></div><figcaption><b>--sidebar-text</b><code>#f5f5f4</code></figcaption></figure>
@@ -204,28 +210,30 @@ Everything below is rendered from those exact colour values.</p>
 <table>
 <thead><tr><th>Pair</th><th>Foreground</th><th>Background</th><th class="num">Ratio</th>
 <th class="num">Needs</th><th>Verdict</th><th>Where</th></tr></thead>
-<tbody><tr class="bad"><td>Primary button label</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td class="num">3.11:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.btn.primary (12.5px upper, 600)</code></td></tr>
-<tr class=""><td>Primary button label (gradient end)</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td class="num">5.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.btn.primary</code></td></tr>
-<tr class="bad"><td>Secondary button label</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">3.11:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.btn.secondary</code></td></tr>
-<tr class="bad"><td>Tertiary button label</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#fff1e8"></span><code>#fff1e8</code></td><td class="num">2.82:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.btn.tertiary</code></td></tr>
-<tr class="bad"><td>Active tab label</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">3.11:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.tab.active</code></td></tr>
-<tr class="bad"><td>Language switcher</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">3.11:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.auth-language</code></td></tr>
+<tbody><tr class=""><td>Primary button label</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td class="num">5.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.btn.primary (12.5px upper, 600)</code></td></tr>
+<tr class=""><td>Primary button label (gradient end)</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#9a3412"></span><code>#9a3412</code></td><td class="num">7.31:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.btn.primary</code></td></tr>
+<tr class=""><td>Secondary button label</td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">5.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.btn.secondary</code></td></tr>
+<tr class=""><td>Tertiary button label</td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td><span class="dot" style="background:#fff1e8"></span><code>#fff1e8</code></td><td class="num">4.69:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.btn.tertiary</code></td></tr>
+<tr class=""><td>Active tab label</td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">5.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.tab.active</code></td></tr>
+<tr class=""><td>Language switcher</td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">5.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.auth-language</code></td></tr>
 <tr class=""><td>Body text on app background</td><td><span class="dot" style="background:#5f6368"></span><code>#5f6368</code></td><td><span class="dot" style="background:#f8f8f7"></span><code>#f8f8f7</code></td><td class="num">5.69:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">body</code></td></tr>
 <tr class=""><td>Headings on app background</td><td><span class="dot" style="background:#111111"></span><code>#111111</code></td><td><span class="dot" style="background:#f8f8f7"></span><code>#f8f8f7</code></td><td class="num">17.77:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">h1-h3</code></td></tr>
 <tr class=""><td>Body text on white cards</td><td><span class="dot" style="background:#5f6368"></span><code>#5f6368</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">6.05:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.modal, .auth-card</code></td></tr>
 <tr class=""><td>Metric value</td><td><span class="dot" style="background:#111111"></span><code>#111111</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">18.88:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.metric-card strong</code></td></tr>
-<tr class="bad"><td>Metric icon glyph</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#ffe8d9"></span><code>#ffe8d9</code></td><td class="num">2.64:1</td><td class="num">3.0:1</td><td>FAILS AA</td><td><code class="sel">.metric-icon.blue</code></td></tr>
+<tr class=""><td>Metric icon glyph</td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td><span class="dot" style="background:#ffe8d9"></span><code>#ffe8d9</code></td><td class="num">4.39:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.metric-icon.blue</code></td></tr>
 <tr class=""><td>Sidebar text</td><td><span class="dot" style="background:#f5f5f4"></span><code>#f5f5f4</code></td><td><span class="dot" style="background:#1c1917"></span><code>#1c1917</code></td><td class="num">16.03:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.sidebar</code></td></tr>
 <tr class=""><td>Sidebar link</td><td><span class="dot" style="background:#d6d3d1"></span><code>#d6d3d1</code></td><td><span class="dot" style="background:#1c1917"></span><code>#1c1917</code></td><td class="num">11.74:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.sidebar a</code></td></tr>
 <tr class=""><td>Sidebar link (gradient end)</td><td><span class="dot" style="background:#d6d3d1"></span><code>#d6d3d1</code></td><td><span class="dot" style="background:#0c0a09"></span><code>#0c0a09</code></td><td class="num">13.26:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.sidebar a</code></td></tr>
 <tr class=""><td>Welcome panel body</td><td><span class="dot" style="background:#ffedd5"></span><code>#ffedd5</code></td><td><span class="dot" style="background:#7c2d12"></span><code>#7c2d12</code></td><td class="num">8.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.welcome-panel</code></td></tr>
-<tr class="bad"><td>Welcome panel body (gradient end)</td><td><span class="dot" style="background:#ffedd5"></span><code>#ffedd5</code></td><td><span class="dot" style="background:#ea580c"></span><code>#ea580c</code></td><td class="num">3.11:1</td><td class="num">4.5:1</td><td>FAILS AA</td><td><code class="sel">.welcome-panel</code></td></tr>
-<tr class=""><td>Welcome panel heading</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#ea580c"></span><code>#ea580c</code></td><td class="num">3.56:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.welcome-panel h2 (32px)</code></td></tr>
+<tr class=""><td>Welcome panel body (gradient end)</td><td><span class="dot" style="background:#ffedd5"></span><code>#ffedd5</code></td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td class="num">4.52:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.welcome-panel</code></td></tr>
+<tr class=""><td>Welcome panel heading</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#c2410c"></span><code>#c2410c</code></td><td class="num">5.18:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.welcome-panel h2 (32px)</code></td></tr>
 <tr class=""><td>Auth panel body</td><td><span class="dot" style="background:#ffedd5"></span><code>#ffedd5</code></td><td><span class="dot" style="background:#1c1917"></span><code>#1c1917</code></td><td class="num">15.26:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.auth-panel</code></td></tr>
 <tr class=""><td>Auth panel body (gradient end)</td><td><span class="dot" style="background:#ffedd5"></span><code>#ffedd5</code></td><td><span class="dot" style="background:#7c2d12"></span><code>#7c2d12</code></td><td class="num">8.18:1</td><td class="num">4.5:1</td><td>PASS</td><td><code class="sel">.auth-panel</code></td></tr>
 <tr class=""><td>Auth headline emphasis</td><td><span class="dot" style="background:#fdba74"></span><code>#fdba74</code></td><td><span class="dot" style="background:#7c2d12"></span><code>#7c2d12</code></td><td class="num">5.56:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.auth-copy h1 em</code></td></tr>
 <tr class=""><td>Auth brand mark</td><td><span class="dot" style="background:#f59e0b"></span><code>#f59e0b</code></td><td><span class="dot" style="background:#1c1917"></span><code>#1c1917</code></td><td class="num">8.14:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.auth-brand span</code></td></tr>
-<tr class="bad"><td>Input border</td><td><span class="dot" style="background:#e0ded9"></span><code>#e0ded9</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">1.34:1</td><td class="num">3.0:1</td><td>FAILS AA</td><td><code class="sel">.form-grid input</code></td></tr></tbody></table>
+<tr class=""><td>Input border</td><td><span class="dot" style="background:#8a8178"></span><code>#8a8178</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">3.82:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.form-grid input</code></td></tr>
+<tr class=""><td>Brand mark glyph (large graphic)</td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td class="num">3.11:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.brand-mark</code></td></tr>
+<tr class=""><td>Active tab underline</td><td><span class="dot" style="background:#ff5b00"></span><code>#ff5b00</code></td><td><span class="dot" style="background:#ffffff"></span><code>#ffffff</code></td><td class="num">3.11:1</td><td class="num">3.0:1</td><td>PASS</td><td><code class="sel">.tab.active border</code></td></tr></tbody></table>
 
 <div class="sign">
 <h2>What we need from Transmega</h2>
