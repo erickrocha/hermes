@@ -12,6 +12,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 | `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
+| `brand_contrast_audit.py` | Brand palette audit + customer review sheet (`EPIC-XF-10-S09`) — **not a scenario suite**, an advisory report |
 
 ## Prerequisites
 
@@ -295,3 +296,44 @@ What it does assert, at artefact level:
 
 Several checks are **negative** (no secret, no `latest`, no root user). Each also asserts its
 subject still exists, so a check that matches nothing because a file moved fails rather than passes.
+## Brand palette audit (`brand_contrast_audit.py`)
+
+Supports `EPIC-XF-10-S09` — getting Transmega to sign off the tenant palette. **This is not a
+scenario suite and awards no PASS.** It is a report plus a deliverable.
+
+```sh
+python3 acceptance/brand_contrast_audit.py
+python3 acceptance/brand_contrast_audit.py --html docs/brand/transmega-identity-review.html
+```
+
+It **reads the palette out of `backoffice/src/theme.ts`** rather than restating it, so neither the
+audit nor the review sheet can drift from what the console actually renders. Change a colour and
+re-run; both follow.
+
+Two outputs:
+
+- **A WCAG 2.1 AA contrast audit** of the 22 foreground/background pairs the console genuinely
+  renders — composed by reading `styles/main.scss`, not guessed. At the time of writing **8 fail**,
+  the worst being the primary button's white label on `#ff5b00` (**3.11:1**, AA wants 4.5:1).
+- **A self-contained HTML review sheet** (`--html`) that renders the sign-in screen and dashboard
+  in the proposed colours, with no network dependency, so it can be e-mailed to a non-technical
+  approver who should not have to read a hex table to judge a design.
+
+**This is a quality finding, not a requirement violation.** hermes has no accessibility requirement
+— no WCAG clause anywhere in `requirements.md` — so nothing here fails any accepted requirement.
+It is surfaced because it affects the console's most-used control and because approving a palette
+is the moment to decide it knowingly. The audit prints darker accents that would pass; note that
+`--accent-hover` (`#c2410c`, 5.18:1) is *already in the palette*, so the usual fix introduces no
+new colour to approve.
+
+### How `PR-012` closes
+
+`PR-012` is bound to evidence, not to opinion. It reports BLOCKED until **both**:
+
+1. `02-system_requirements/hermes/transmega-brand-signoff.md` has its **"Approved by (name)"** field
+   filled in, and
+2. `backoffice/src/theme.ts` no longer marks the palette `DRAFT`.
+
+When both hold it reports PASS and names the approver in its evidence. Both branches are exercised.
+The sign-off record is in the outer SDD workspace; if hermes is checked out standalone the file is
+absent and `PR-012` says so rather than failing.

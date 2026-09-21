@@ -43,6 +43,14 @@ RUNBOOK = os.path.join(REPO, "docs", "RUNBOOK-CUTOVER.md")
 OPERATIONS = os.path.join(REPO, "docs", "OPERATIONS.md")
 GITIGNORE = os.path.join(REPO, ".gitignore")
 WEB_LIB = os.path.join(BACKEND, "web", "src", "lib.rs")
+THEME_TS = os.path.join(REPO, "backoffice", "src", "theme.ts")
+BRAND_REVIEW = os.path.join(REPO, "docs", "brand", "transmega-identity-review.html")
+# The sign-off record lives in the outer SDD workspace, which contains this repo
+# as a submodule. Absent when hermes is checked out standalone -- PR-012 then
+# reports BLOCKED rather than failing, because the evidence is genuinely absent.
+SIGNOFF = os.path.join(os.path.dirname(os.path.dirname(REPO)),
+                       "02-system_requirements", "hermes",
+                       "transmega-brand-signoff.md")
 
 STORIES = {
     "EPIC-XF-10-S01": ["PR-001", "PR-002"],
@@ -350,11 +358,48 @@ def pr_011():
 
 # ------------------------------------------------------------ S09
 def pr_012():
-    """Transmega brand sign-off -- a human dependency, not an artefact."""
+    """Transmega brand sign-off — a human dependency, checked against evidence.
+
+    Deliberately NOT a source-structure check. The question is whether a named
+    person at the customer approved the palette, so the scenario is bound to
+    the sign-off record's completed fields and to the DRAFT marker in the
+    source. It flips to PASS when the evidence exists, not when someone says
+    it does.
+    """
+    signoff = SIGNOFF
+    theme = read(THEME_TS)
+
+    # The palette is still self-declared as provisional.
+    still_draft = "DRAFT" in theme.upper()
+
+    doc = read(signoff)
+    approved_by = ""
+    if doc:
+        m = re.search(r"^\|\s*Approved by \(name\)\s*\|(.*)\|\s*$", doc, re.M)
+        approved_by = m.group(1).strip() if m else ""
+
+    if approved_by and not still_draft:
+        return check("PR-012", True,
+                     f"palette approved by '{approved_by}' per transmega-brand-signoff.md, "
+                     "and theme.ts no longer marks it DRAFT", "")
+
+    reason = []
+    if not os.path.exists(BRAND_REVIEW):
+        reason.append("the review sheet docs/brand/transmega-identity-review.html has not been "
+                      "generated (run acceptance/brand_contrast_audit.py --html)")
+    if not doc:
+        reason.append("the sign-off record 02-system_requirements/hermes/"
+                      "transmega-brand-signoff.md is absent")
+    elif not approved_by:
+        reason.append("the sign-off record's 'Approved by (name)' field is empty")
+    if still_draft:
+        reason.append("backoffice/src/theme.ts still marks the palette DRAFT")
+
     record("PR-012", "NOT RUN",
-           "BLOCKED: sign-off on the Transmega palette is a customer decision. The palette in "
-           "commit 8acb161 is still a draft and EPIC-BO-01 being green hides that. Cannot be "
-           "asserted from the repository; must be evidenced by written approval.")
+           "BLOCKED: " + "; ".join(reason) + ". Sign-off is a customer decision and cannot be "
+           "asserted from the repository. Send docs/brand/transmega-identity-review.html to "
+           "Transmega; see transmega-brand-signoff.md §3 for the three questions and §6 for the "
+           "record to complete.")
 
 
 # ------------------------------------------------------------ shell + cargo
