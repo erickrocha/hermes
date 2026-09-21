@@ -20,7 +20,18 @@ services:
   # environment-independent — see backoffice/Dockerfile.
   # ---------------------------------------------------------------------
   traefik:
-    image: traefik:v3.2.1
+    # v3.6.1 is a FLOOR, not a preference. Traefik's Docker provider pinned
+    # Docker API v1.24 until v3.6.1; Docker Engine 29 raised the daemon's
+    # minimum to v1.40 and refuses anything older. On v3.2.1 the provider
+    # therefore never connected at all — "client version 1.24 is too old" on
+    # a one-second retry loop — so Traefik started healthy, held :80 and
+    # :443 open, and routed NOTHING. Every request returned a 404 from
+    # Traefik itself. Upstream: traefik/traefik#12253, fixed in v3.6.1.
+    #
+    # Found by the 2026-09-21 local deploy rehearsal, not by review: the
+    # failure is invisible to `docker compose config` and to anything that
+    # does not actually start the stack and send a request through it.
+    image: traefik:v3.6.6
     restart: unless-stopped
     command:
       - --providers.docker=true

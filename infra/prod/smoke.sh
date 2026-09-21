@@ -34,11 +34,18 @@ printf '\nSmoke verification against %s\n\n' "$BASE_URL"
 
 # --- 1. health (is it up, and can it reach the database?) -------------------
 health_body="$(mktemp)"
+# Assigned up front because the trap below is armed before the login check
+# runs: under `set -u` an early fail() would otherwise make the trap itself
+# error on an unbound $login_body and skip the cleanup it exists to do.
+login_body=""
 trap 'rm -f "$health_body" "$login_body" 2>/dev/null || true' EXIT
 
+# `|| true`, never `|| echo "000"`: --write-out has already printed a
+# http_code of 000 by the time curl fails, so echoing another one produced
+# the misleading six-digit "000000" seen in the 2026-09-21 rehearsal.
 health_code="$(curl --silent --show-error --location --max-time 15 \
     --output "$health_body" --write-out '%{http_code}' \
-    "${BASE_URL}/api/health" || echo "000")"
+    "${BASE_URL}/api/health" || true)"
 
 [ "$health_code" = "200" ] \
     || fail "GET /api/health returned ${health_code} (expected 200). Body: $(cat "$health_body")"
@@ -53,7 +60,7 @@ login_code="$(curl --silent --show-error --location --max-time 15 \
     --output "$login_body" --write-out '%{http_code}' \
     --request POST "${BASE_URL}/api/login" \
     --data-urlencode "email=${EMAIL}" \
-    --data-urlencode "password=${PASSWORD}" || echo "000")"
+    --data-urlencode "password=${PASSWORD}" || true)"
 
 [ "$login_code" = "200" ] \
     || fail "POST /api/login returned ${login_code} (expected 200). The SysAdmin seed, the token secrets or the routing are wrong."
@@ -64,7 +71,7 @@ pass "POST /api/login -> 200 with an access token"
 
 # --- 3. the console is actually served --------------------------------------
 console_code="$(curl --silent --show-error --location --max-time 15 \
-    --output /dev/null --write-out '%{http_code}' "${BASE_URL}/" || echo "000")"
+    --output /dev/null --write-out '%{http_code}' "${BASE_URL}/" || true)"
 [ "$console_code" = "200" ] \
     || fail "GET / returned ${console_code} (expected 200) — the console is not being served"
 pass "GET / -> 200, console served"

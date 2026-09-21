@@ -1,0 +1,68 @@
+# EPIC-XF-10 — LOCAL REHEARSAL OVERLAY. NOT A PRODUCTION FILE.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.rehearsal.yml ...
+#
+# Why it exists: every step of the deploy path except TLS issuance can be
+# exercised on a laptop, but the production routers are bound to `websecure`
+# with a Let's Encrypt resolver, and Let's Encrypt cannot issue for a host
+# with no public DNS. Without this overlay the rehearsal stops at a
+# certificate error and the routing, prefix-strip and console-serving
+# behaviour underneath it stays unproven.
+#
+# It ADDS a parallel pair of plain-HTTP routers rather than editing the
+# production ones. That is deliberate: compose merges label sequences by key,
+# so a label cannot be *removed* by an overlay — an earlier attempt to move
+# the real routers onto `web` left `tls.certresolver` behind and produced
+# TLS-only routers on an HTTP entrypoint, which match nothing and 404. Adding
+# separate routers keeps the production labels under test exactly as written.
+#
+# The only production behaviour suppressed here is the :80 -> :443 redirect,
+# which would otherwise bounce every rehearsal request to a port with no
+# trusted certificate.
+#
+# WHAT A GREEN REHEARSAL WITH THIS FILE DOES *NOT* PROVE:
+#   - that Let's Encrypt issues a certificate for the real domain
+#   - that the :80 -> :443 redirect works
+#   - anything about HSTS, cipher suites or certificate renewal
+# Those need the real hostname on the real host and are the first things to
+# check during the cutover rehearsal (docs/RUNBOOK-CUTOVER.md).
+
+services:
+  traefik:
+    # Restated in full because compose replaces sequences rather than merging
+    # them. Identical to the production command except the two redirection
+    # flags, which are omitted.
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?ACME_EMAIL is required}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --accesslog=true
+      - --log.level=INFO
+
+  api:
+    environment:
+      # The console is served over http in a rehearsal, so the origin the API
+      # advertises has to match or a browser request would be refused for a
+      # reason that has nothing to do with what is being tested.
+      CORS_ALLOWED_ORIGINS: http://${HERMES_DOMAIN}
+      BACKOFFICE_BASE_URL: http://${HERMES_DOMAIN}
+    labels:
+      - traefik.http.routers.hermes-api-http.rule=Host(`${HERMES_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.hermes-api-http.entrypoints=web
+      - traefik.http.routers.hermes-api-http.service=hermes-api
+      # The same middleware instance the production router uses, so the
+      # prefix strip under test is the real one.
+      - traefik.http.routers.hermes-api-http.middlewares=hermes-api-strip
+
+  console:
+    labels:
+      - traefik.http.routers.hermes-console-http.rule=Host(`${HERMES_DOMAIN}`)
+      - traefik.http.routers.hermes-console-http.entrypoints=web
+      - traefik.http.routers.hermes-console-http.service=hermes-console
+      # Same relative priority as production: /api must win the overlap.
+      - traefik.http.routers.hermes-console-http.priority=1
+
