@@ -10,3 +10,4 @@ pub mod login_request;
 pub mod refresh_token_request;
 pub mod page_json;
 pub mod reference_json;
+pub mod vehicle_json;

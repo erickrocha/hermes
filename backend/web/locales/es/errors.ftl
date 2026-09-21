@@ -32,3 +32,7 @@ import-duplicate-city-in-file = ciudad duplicada en el archivo
 import-duplicate-acronym-in-file = sigla duplicada en el archivo
 import-city-already-exists = ya existe una ciudad con este nombre en esta provincia
 import-province-already-exists = ya existe una provincia con esta sigla en este país
+vehicle-not-found = Vehículo no encontrado
+vehicle-forbidden = No tiene permiso para gestionar vehículos
+invalid-vehicle-status = El estado del vehículo debe ser Active, Maintenance, Transit, Reserved o Inactive
+duplicate-plate = Ya existe un vehículo registrado con esta matrícula

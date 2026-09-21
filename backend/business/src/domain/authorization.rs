@@ -153,6 +153,48 @@ pub fn can_administer_user(actor: &User, _target_id: Option<i64>, target_tenant_
         || (actor.role == Role::TenantOwner && actor.tenant_id == target_tenant_id)
 }
 
+/// EPIC-FO-01-S04 (HRMS-923, PD-019): who may register, edit or retire a
+/// vehicle. Deliberately *not* a new hierarchy -- it is the one the platform
+/// already enforces for users, read one level down: an unbound platform
+/// administrator acts across tenants, a tenant owner administers their own
+/// tenant, and a `TenantUser` administers nothing (HRMS-117's rule, applied
+/// to fleet records rather than to accounts).
+///
+/// PD-026's Driver and Mechanic roles do not exist yet (`Role` has three
+/// variants), so nothing here anticipates them: when they arrive they change
+/// the body of this function and not its call sites, which is the whole point
+/// of PD-020.
+pub fn can_administer_vehicle(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.role == Role::TenantOwner
+            && actor.tenant_id.is_some()
+            && actor.tenant_id == vehicle_tenant_id)
+}
+
+/// `POST /vehicle` -- the create side of [`can_administer_vehicle`], asked
+/// before any vehicle exists to compare tenants against. An unbound platform
+/// administrator names the owning tenant; a tenant owner may only ever create
+/// inside their own, so one without a tenant creates nothing.
+pub fn can_create_vehicle(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    actor.role == Role::TenantOwner
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+/// EPIC-FO-01-S04/S05 (HRMS-923, HRMS-924): reading a vehicle is wider than
+/// administering it -- a `TenantUser` is a member of the fleet's tenant and
+/// needs to see it (a driver looking up their own vehicle is this case), they
+/// simply may not change it. Cross-tenant is not a narrower permission but no
+/// visibility at all, which is why `vehicle_endpoint` answers 404 there and
+/// not 403 (PD-034).
+pub fn can_read_vehicle(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == vehicle_tenant_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,8 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn reading_your_own_record_is_allowed_where_administering_it_is_not() {
-        let member_of_1 = User { id: Some(20), ..user(Role::TenantUser, Some(1)) };
+    fn reading_your_own_record_is_allowed_where_administering_it_is_not() {        let member_of_1 = User { id: Some(20), ..user(Role::TenantUser, Some(1)) };
         assert!(can_read_user_record(&member_of_1, Some(20), Some(1)));
         assert!(!can_read_user_record(&member_of_1, Some(99), Some(1)));
         assert!(!can_read_user_record(&member_of_1, Some(99), Some(2)));
@@ -311,5 +352,77 @@ mod tests {
         let owner_of_1 = User { id: Some(10), ..user(Role::TenantOwner, Some(1)) };
         assert!(can_read_user_record(&owner_of_1, Some(99), Some(1)));
         assert!(!can_read_user_record(&owner_of_1, Some(99), Some(2)));
+    }
+
+    /// EPIC-FO-01-S04 (HRMS-923): the role x operation matrix for the vehicle
+    /// register. Every combination is asserted, including the cross-tenant
+    /// cells -- those are the ones D-09 exists for, and the ones the endpoint
+    /// turns into 404 rather than 403 (PD-034).
+    #[test]
+    fn vehicle_administration_matrix() {
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_administer_vehicle(&sysadmin, Some(1)));
+        assert!(can_administer_vehicle(&sysadmin, Some(999)));
+
+        let owner_of_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_administer_vehicle(&owner_of_1, Some(1)));
+        assert!(!can_administer_vehicle(&owner_of_1, Some(2)));
+        assert!(!can_administer_vehicle(&owner_of_1, None));
+
+        // HRMS-117's rule read one level down: a tenant user administers no
+        // record, a vehicle in their own tenant included.
+        let member_of_1 = user(Role::TenantUser, Some(1));
+        assert!(!can_administer_vehicle(&member_of_1, Some(1)));
+        assert!(!can_administer_vehicle(&member_of_1, Some(2)));
+
+        // A tenant-bound SysAdmin is not unbound (U-019 is still open on
+        // whether the state should exist) -- it administers nothing.
+        let bound_sysadmin = user(Role::SysAdmin, Some(1));
+        assert!(!can_administer_vehicle(&bound_sysadmin, Some(1)));
+
+        // An owner with no tenant has no fleet to administer.
+        let unbound_owner = user(Role::TenantOwner, None);
+        assert!(!can_administer_vehicle(&unbound_owner, None));
+        assert!(!can_administer_vehicle(&unbound_owner, Some(1)));
+    }
+
+    #[test]
+    fn vehicle_creation_matrix() {
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_create_vehicle(&sysadmin, Some(1)));
+        // HRMS-921: an unbound administrator has no tenant of their own, so
+        // an unnamed tenant would produce a vehicle nobody owns.
+        assert!(!can_create_vehicle(&sysadmin, None));
+
+        let owner_of_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_create_vehicle(&owner_of_1, None));
+        assert!(can_create_vehicle(&owner_of_1, Some(1)));
+        assert!(!can_create_vehicle(&owner_of_1, Some(2)));
+
+        let member_of_1 = user(Role::TenantUser, Some(1));
+        assert!(!can_create_vehicle(&member_of_1, None));
+        assert!(!can_create_vehicle(&member_of_1, Some(1)));
+
+        let unbound_owner = user(Role::TenantOwner, None);
+        assert!(!can_create_vehicle(&unbound_owner, None));
+    }
+
+    #[test]
+    fn reading_a_vehicle_is_wider_than_administering_it_but_never_crosses_a_tenant() {
+        let member_of_1 = user(Role::TenantUser, Some(1));
+        assert!(can_read_vehicle(&member_of_1, Some(1)));
+        assert!(!can_administer_vehicle(&member_of_1, Some(1)));
+        assert!(!can_read_vehicle(&member_of_1, Some(2)));
+
+        let owner_of_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_read_vehicle(&owner_of_1, Some(1)));
+        assert!(!can_read_vehicle(&owner_of_1, Some(2)));
+
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_read_vehicle(&sysadmin, Some(1)));
+        assert!(can_read_vehicle(&sysadmin, Some(999)));
+
+        // A row with no owner is readable by nobody but the platform.
+        assert!(!can_read_vehicle(&owner_of_1, None));
     }
 }

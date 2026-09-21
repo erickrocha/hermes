@@ -32,3 +32,7 @@ import-duplicate-city-in-file = duplicate city within the file
 import-duplicate-acronym-in-file = duplicate acronym within the file
 import-city-already-exists = a city with this name already exists in this province
 import-province-already-exists = a province with this acronym already exists in this country
+vehicle-not-found = Vehicle not found
+vehicle-forbidden = You are not allowed to manage vehicles
+invalid-vehicle-status = Vehicle status must be one of Active, Maintenance, Transit, Reserved or Inactive
+duplicate-plate = A vehicle with this plate is already registered

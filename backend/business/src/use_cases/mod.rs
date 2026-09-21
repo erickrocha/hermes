@@ -7,3 +7,4 @@ pub mod authentication_use_case;
 pub mod account_invite_use_case;
 pub mod reference_import;
 pub mod vehicle_tracking_use_case;
+pub mod vehicle_use_case;

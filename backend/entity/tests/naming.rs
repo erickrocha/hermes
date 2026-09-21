@@ -65,6 +65,9 @@ fn every_current_entity_is_named_in_english() {
     assert_entity_is_english(entity::business_plan_entity::Entity);
     assert_entity_is_english(entity::province_entity::Entity);
     assert_entity_is_english(entity::city_entity::Entity);
+    // EPIC-FO-01: the fleet vocabulary AD-019 was written about arrives here
+    // -- `vehicle`, not `veiculo`; `plate`, not `placa`.
+    assert_entity_is_english(entity::vehicle_entity::Entity);
 }
 
 #[test]

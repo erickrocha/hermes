@@ -5,3 +5,4 @@ pub mod business_plan_entity;
 pub mod prelude;
 pub mod province_entity;
 pub mod city_entity;
+pub mod vehicle_entity;

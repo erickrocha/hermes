@@ -10,6 +10,7 @@ use crate::routes::business_plan_routes::business_plan_routes;
 use crate::routes::resource_routes::resources_routes;
 use crate::routes::tenant_routes::tenant_routes;
 use crate::routes::user_routes::user_routes;
+use crate::routes::vehicle_routes::vehicle_routes;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderValue, Method, StatusCode, header};
@@ -76,7 +77,11 @@ impl Modify for SecurityAddon {
         endpoints::city_endpoint::get_by_province,
         endpoints::city_endpoint::get_by_id,
         endpoints::city_endpoint::save,
-        endpoints::city_endpoint::import
+        endpoints::city_endpoint::import,
+        endpoints::vehicle_endpoint::add,
+        endpoints::vehicle_endpoint::list_all,
+        endpoints::vehicle_endpoint::get_by_uuid,
+        endpoints::vehicle_endpoint::update
 	),
 	components(
 		schemas(
@@ -93,6 +98,7 @@ impl Modify for SecurityAddon {
 			endpoints::json::business_plan_json::BusinessPlanJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
+            endpoints::json::vehicle_json::VehicleJson,
 		),
 	),
 	tags(
@@ -381,6 +387,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/business-plan", business_plan_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
+        .nest("/vehicle", vehicle_routes(state.clone()))
         .layer(cors)
         .with_state(state);
 
@@ -519,6 +526,7 @@ mod openapi_contract_tests {
             "tenant_routes" => "/tenant",
             "business_plan_routes" => "/business-plan",
             "user_routes" => "/user",
+            "vehicle_routes" => "/vehicle",
             _ => "",
         }
     }

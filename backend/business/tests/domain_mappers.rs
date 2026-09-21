@@ -9,11 +9,13 @@ use business::domain::access_token::ClaimsBuilder;
 use business::domain::business_plan::{BusinessPlan, BusinessPlanEntityMapper};
 use business::domain::city::{City, CityEntityMapper};
 use business::domain::enums::Role;
+use business::domain::enums::VehicleStatus;
 use business::domain::province::{Province, ProvinceEntityMapper};
 use business::domain::tenant::{Tenant, TenantEntityMapper};
 use business::domain::user::{User, UserEntityMapper};
+use business::domain::vehicle::{Vehicle, VehicleEntityMapper};
 use chrono::{NaiveDate, TimeZone, Utc};
-use entity::{business_plan_entity, city_entity, province_entity, tenant_entity, user_entity};
+use entity::{business_plan_entity, city_entity, province_entity, tenant_entity, user_entity, vehicle_entity};
 use sea_orm::{ActiveValue, IntoActiveModel};
 use std::str::FromStr;
 
@@ -254,8 +256,99 @@ fn province_and_city_round_trip_through_their_mappers() {
     );
 }
 
-// ---------------------------------------------------------------- Claims
+// ---------------------------------------------------------------- Vehicle
 
+/// EPIC-FO-01-S03 (HRMS-922, D-23(b)): the vocabulary round-trips, and a
+/// status the platform does not know is an error rather than a silent
+/// `Active`. That distinction is the whole reason the vocabulary was stated.
+#[test]
+fn vehicle_statuses_round_trip_and_an_unknown_one_is_rejected() {
+    for status in [
+        VehicleStatus::Active,
+        VehicleStatus::Maintenance,
+        VehicleStatus::Transit,
+        VehicleStatus::Reserved,
+        VehicleStatus::Inactive,
+    ] {
+        assert_eq!(VehicleStatus::from_str(&status.to_string()), Ok(status));
+    }
+    assert_eq!(VehicleStatus::from_str(" Transit "), Ok(VehicleStatus::Transit));
+    assert!(VehicleStatus::from_str("Parked").is_err());
+    assert!(VehicleStatus::from_str("active").is_err(), "the vocabulary is case-sensitive");
+    assert!(VehicleStatus::from_str("").is_err());
+    assert_eq!(VehicleStatus::default(), VehicleStatus::Active);
+}
+
+fn vehicle_model() -> vehicle_entity::Model {
+    vehicle_entity::Model {
+        id: 10,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        plate: "ABC1D23".into(),
+        model: "Volvo FH".into(),
+        status: "Maintenance".into(),
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[test]
+fn vehicle_round_trips_through_the_mapper() {
+    let vehicle: Vehicle = VehicleEntityMapper::from_model(vehicle_model());
+    assert_eq!(vehicle.id, Some(10));
+    assert_eq!(vehicle.uuid.as_deref(), Some(UUID));
+    assert_eq!(vehicle.tenant_id, Some(42));
+    assert_eq!(vehicle.plate, "ABC1D23");
+    assert_eq!(vehicle.status, VehicleStatus::Maintenance);
+    assert_eq!(vehicle.created_at, Some(at().naive_utc()));
+
+    let active = VehicleEntityMapper::build_active_model(vehicle.clone());
+    assert_eq!(active.plate, ActiveValue::Set("ABC1D23".into()));
+    assert_eq!(active.status, ActiveValue::Set("Maintenance".into()));
+    // Stamped by `impl_tenant_auditable_before_save!`, never by the mapper.
+    assert!(matches!(active.created_at, ActiveValue::NotSet));
+    assert!(matches!(active.created_by, ActiveValue::NotSet));
+    assert!(matches!(active.updated_at, ActiveValue::NotSet));
+
+    assert_eq!(
+        VehicleEntityMapper::from_active_model(vehicle_model().into_active_model()),
+        vehicle
+    );
+
+    // The partial-ActiveModel fallback, which is what a freshly built (not yet
+    // saved) model takes.
+    let partial = VehicleEntityMapper::from_active_model(active);
+    assert_eq!(partial.plate, "ABC1D23");
+    assert_eq!(partial.status, VehicleStatus::Maintenance);
+    assert_eq!(partial.created_at, None);
+}
+
+#[test]
+fn a_new_vehicle_leaves_id_and_uuid_for_the_database() {
+    let mut vehicle = VehicleEntityMapper::from_model(vehicle_model());
+    vehicle.id = None;
+    vehicle.uuid = None;
+    let active = VehicleEntityMapper::build_active_model(vehicle);
+    assert!(matches!(active.id, ActiveValue::NotSet));
+    assert!(matches!(active.uuid, ActiveValue::NotSet));
+}
+
+#[test]
+fn a_stored_status_the_vocabulary_no_longer_knows_degrades_instead_of_panicking() {
+    // Writes cannot create one (the edge refuses it), so this only ever
+    // happens to a row written before a value was removed -- a read must not
+    // be the thing that fails.
+    let mut model = vehicle_model();
+    model.status = "Impounded".into();
+    assert_eq!(
+        VehicleEntityMapper::from_model(model).status,
+        VehicleStatus::Active
+    );
+}
+
+// ---------------------------------------------------------------- Claims
 #[test]
 fn claims_builder_requires_its_fields() {
     let claims = ClaimsBuilder::new()

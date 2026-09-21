@@ -7,12 +7,14 @@ use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::user_json::UserJson;
+use crate::endpoints::json::vehicle_json::VehicleJson;
 use business::domain::access_token::AccessToken;
 use business::domain::city::City;
-use business::domain::enums::Role;
+use business::domain::enums::{Role, VehicleStatus};
 use business::domain::province::Province;
 use business::domain::tenant::Tenant;
 use business::domain::user::User;
+use business::domain::vehicle::Vehicle;
 
 pub trait Mapper<T, U> {
     fn json(t: T) -> U;
@@ -203,8 +205,7 @@ impl Mapper<Province, ProvinceJson> for ProvinceMapper {
     }
 }
 
-pub struct CityMapper;
-impl Mapper<City, CityJson> for CityMapper {
+pub struct CityMapper;impl Mapper<City, CityJson> for CityMapper {
     fn json(t: City) -> CityJson {
         CityJson {
             id: t.id,
@@ -224,12 +225,62 @@ impl Mapper<City, CityJson> for CityMapper {
     }
 }
 
+/// EPIC-FO-01-S05 (HRMS-924): the vehicle's HTTP shape <-> domain seam.
+pub struct VehicleMapper;
+impl Mapper<Vehicle, VehicleJson> for VehicleMapper {
+    fn json(t: Vehicle) -> VehicleJson {
+        VehicleJson {
+            id: t.id,
+            uuid: t.uuid,
+            tenant_id: t.tenant_id,
+            plate: t.plate,
+            model: t.model,
+            status: t.status.to_string(),
+            created_at: t.created_at,
+            created_by: t.created_by,
+            updated_at: t.updated_at,
+            updated_by: t.updated_by,
+        }
+    }
+
+    fn domain(u: VehicleJson) -> Vehicle {
+        Vehicle {
+            id: u.id,
+            uuid: u.uuid,
+            tenant_id: u.tenant_id,
+            plate: u.plate,
+            model: u.model,
+            // Endpoints call `reject_unknown_vehicle_status` first (HRMS-922);
+            // this default is never reached with an unknown value.
+            status: VehicleStatus::from_str(&u.status).unwrap_or_default(),
+            created_at: u.created_at,
+            created_by: u.created_by,
+            updated_at: u.updated_at,
+            updated_by: u.updated_by,
+        }
+    }
+}
+
 /// DEF-XF-06 (owner, 2026-09-18): a role the platform doesn't know is refused
 /// with 403 Forbidden -- never silently defaulted, never a panic.
 pub fn reject_unknown_role(role: &str, locale: &Locale) -> Result<(), ExceptionResponse> {
     Role::from_str(role)
         .map(|_| ())
         .map_err(|_| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidParameterValue))
+}
+
+/// EPIC-FO-01-S03 (HRMS-922, D-23(b)): a status outside the stated vocabulary
+/// is refused, which is the whole point of stating one -- `Role`'s
+/// `unwrap_or_default` behaviour would quietly file every misspelling as
+/// `Active`, and two depots would go on using two spellings anyway.
+///
+/// 400 rather than `reject_unknown_role`'s 403: an unknown status is a
+/// malformed field, not a permission the caller lacks. An empty status is
+/// included -- registering a vehicle states its status (HRMS-920).
+pub fn reject_unknown_vehicle_status(status: &str, locale: &Locale) -> Result<(), ExceptionResponse> {
+    VehicleStatus::from_str(status)
+        .map(|_| ())
+        .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidVehicleStatus))
 }
 
 #[cfg(test)]
@@ -273,5 +324,65 @@ mod role_guard_tests {
                 "{role:?} must be refused with 403"
             );
         }
+    }
+}
+
+/// EPIC-FO-01-S03 (HRMS-922, D-23(b)).
+#[cfg(test)]
+mod vehicle_status_guard_tests {
+    use super::{reject_unknown_vehicle_status, Mapper, VehicleMapper};
+    use crate::commons::exception_response::ExceptionResponse;
+    use crate::commons::i18n::Locale;
+    use crate::endpoints::json::vehicle_json::VehicleJson;
+    use business::domain::enums::VehicleStatus;
+
+    fn json(status: &str) -> VehicleJson {
+        VehicleJson {
+            id: None,
+            uuid: None,
+            tenant_id: Some(1),
+            plate: "ABC1D23".to_string(),
+            model: "Volvo FH".to_string(),
+            status: status.to_string(),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn the_five_stated_statuses_pass_and_anything_else_is_a_bad_request() {
+        let locale = Locale::from_accept_language(None);
+        for status in ["Active", "Maintenance", "Transit", "Reserved", "Inactive"] {
+            assert!(
+                reject_unknown_vehicle_status(status, &locale).is_ok(),
+                "{status} must be accepted"
+            );
+        }
+        // An unknown status is refused rather than filed as `Active`: a
+        // silently defaulted value is exactly the two-spellings problem
+        // HRMS-922 exists to prevent. An absent status counts as unknown.
+        for status in ["Parked", "", "active", "Manutencao", "Sold"] {
+            assert!(
+                matches!(
+                    reject_unknown_vehicle_status(status, &locale),
+                    Err(ExceptionResponse::BadRequest(..))
+                ),
+                "{status:?} must be refused with 400"
+            );
+        }
+    }
+
+    #[test]
+    fn a_vehicle_round_trips_through_the_json_mapper() {
+        let domain = VehicleMapper::domain(json("Maintenance"));
+        assert_eq!(domain.status, VehicleStatus::Maintenance);
+        assert_eq!(domain.plate, "ABC1D23");
+        assert_eq!(domain.tenant_id, Some(1));
+
+        let back = VehicleMapper::json(domain);
+        assert_eq!(back.status, "Maintenance");
+        assert_eq!(back.model, "Volvo FH");
     }
 }

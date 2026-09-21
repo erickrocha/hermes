@@ -14,8 +14,9 @@ use entity::audit;
 // two in the compiler — but since D-09 there IS a test that pairs them:
 // `business/tests/tenant_scoping_rule.rs` fails if an entity carrying a
 // `tenant_id` skips either half. `UserGateway` is the reference
-// implementation to copy when a new tenant-owned table is added. Today
-// `user` is the only entity using the tenant macro; see D-7 in
+// implementation to copy when a new tenant-owned table is added. Since
+// EPIC-FO-01 (HRMS-921) `vehicle` is the second entity using the tenant
+// macro, and it was added under that test rather than before it; see D-7 in
 // `01-project_truth/hermes/04-unknowns/open-questions.md`.
 
 #[async_trait]

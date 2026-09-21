@@ -99,6 +99,17 @@ pub enum ErrorKey {
     /// Used where an empty result would otherwise be indistinguishable from a
     /// broken query.
     UnexpectedError,
+    /// EPIC-FO-01-S05 (HRMS-924, PD-034): also what a caller outside the
+    /// vehicle's tenant is told -- deliberately the same answer as a plate
+    /// that was never registered.
+    VehicleNotFound,
+    /// HRMS-923: a role that may read the fleet but not change it.
+    VehicleForbidden,
+    /// HRMS-922 (D-23(b)): a status outside the stated vocabulary.
+    InvalidVehicleStatus,
+    /// HRMS-925 (D-23(c)): this plate is already registered in the caller's
+    /// own tenant. Never raised for another tenant's vehicle.
+    DuplicatePlate,
 }
 
 impl ErrorKey {
@@ -125,6 +136,10 @@ impl ErrorKey {
             ErrorKey::ProvinceNotFound => "ProvinceNotFound",
             ErrorKey::UserCreationForbidden => "UserCreationForbidden",
             ErrorKey::UnexpectedError => "UnexpectedError",
+            ErrorKey::VehicleNotFound => "VehicleNotFound",
+            ErrorKey::VehicleForbidden => "VehicleForbidden",
+            ErrorKey::InvalidVehicleStatus => "InvalidVehicleStatus",
+            ErrorKey::DuplicatePlate => "DuplicatePlate",
         }
     }
 
@@ -151,6 +166,10 @@ impl ErrorKey {
             ErrorKey::ProvinceNotFound => "province-not-found",
             ErrorKey::UserCreationForbidden => "user-creation-forbidden",
             ErrorKey::UnexpectedError => "unexpected-error",
+            ErrorKey::VehicleNotFound => "vehicle-not-found",
+            ErrorKey::VehicleForbidden => "vehicle-forbidden",
+            ErrorKey::InvalidVehicleStatus => "invalid-vehicle-status",
+            ErrorKey::DuplicatePlate => "duplicate-plate",
         }
     }
 }
@@ -288,9 +307,37 @@ mod tests {
         assert_eq!(Locale::from_accept_language(Some("es-MX")).language_id(), langid!("es"));
     }
 
+    /// EPIC-FO-01 (HRMS-922/924/925): the fleet keys exist in every bundle.
+    /// A missing one does not fail the request -- `translate` falls back to a
+    /// generic English sentence and logs -- so nothing but a test notices that
+    /// a Portuguese or Spanish reader is being told the wrong thing.
     #[test]
-    fn a_differing_region_on_both_sides_still_does_not_match() {
-        // pt-PT não é atendido pelo bundle pt-BR; cai no fallback.
+    fn every_vehicle_error_is_worded_in_every_bundle() {
+        let keys = [
+            ErrorKey::VehicleNotFound,
+            ErrorKey::VehicleForbidden,
+            ErrorKey::InvalidVehicleStatus,
+            ErrorKey::DuplicatePlate,
+        ];
+        let generic = "An unexpected error occurred";
+        for tag in ["en", "pt-BR", "es"] {
+            let locale = Locale::from_accept_language(Some(tag));
+            for key in keys {
+                let message = translate(locale.clone(), key);
+                assert_ne!(message, generic, "{tag} is missing {}", key.message_id());
+                assert!(!message.is_empty());
+            }
+        }
+
+        // And they are actually translated, not the English text copied over.
+        assert_ne!(
+            translate(Locale::from_accept_language(Some("en")), ErrorKey::DuplicatePlate),
+            translate(Locale::from_accept_language(Some("pt-BR")), ErrorKey::DuplicatePlate)
+        );
+    }
+
+    #[test]
+    fn a_differing_region_on_both_sides_still_does_not_match() {        // pt-PT não é atendido pelo bundle pt-BR; cai no fallback.
         assert_eq!(Locale::from_accept_language(Some("pt-PT")).language_id(), langid!("en"));
     }
 

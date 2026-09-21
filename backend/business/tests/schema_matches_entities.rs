@@ -13,7 +13,7 @@
 //!
 //!     DATABASE_URL=mysql://... cargo test -p business --test schema_matches_entities -- --ignored
 
-use entity::{business_plan_entity, city_entity, province_entity, tenant_entity, user_entity};
+use entity::{business_plan_entity, city_entity, province_entity, tenant_entity, user_entity, vehicle_entity};
 use sea_orm::{Database, EntityTrait, QuerySelect};
 
 #[tokio::test]
@@ -28,6 +28,7 @@ async fn every_entity_can_be_read_from_the_migrated_schema() {
         ("business_plan", business_plan_entity::Entity::find().limit(1).all(&db).await.err()),
         ("province", province_entity::Entity::find().limit(1).all(&db).await.err()),
         ("city", city_entity::Entity::find().limit(1).all(&db).await.err()),
+        ("vehicle", vehicle_entity::Entity::find().limit(1).all(&db).await.err()),
     ]
     .into_iter()
     .filter_map(|(table, error)| error.map(|e| format!("{table}: {e}")))

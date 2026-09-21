@@ -871,3 +871,230 @@ async fn changing_sysadmin_email_repoints_the_same_account_instead_of_adding_one
     assert!(sql.contains("UPDATE"), "{sql}");
     assert!(!sql.contains("INSERT"), "no second administrator: {sql}");
 }
+
+// ================================================================ vehicles
+//
+// EPIC-FO-01 (HRMS-920...925, D-09/D-20): the vehicle register through its
+// real gateway. The tenant scope is what these pin down -- the SQL the mock
+// records is the evidence that every read and write carries it.
+
+use business::domain::enums::VehicleStatus;
+use business::domain::vehicle::Vehicle;
+use business::gateway::vehicle_gateway::VehicleGateway;
+use business::use_cases::vehicle_use_case::{VehicleUseCase, DUPLICATE_PLATE};
+use entity::vehicle_entity;
+
+fn vehicle_row(id: i64, tenant_id: i64, plate: &str, status: &str) -> vehicle_entity::Model {
+    vehicle_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        plate: plate.into(),
+        model: "Volvo FH".into(),
+        status: status.into(),
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+fn new_vehicle(plate: &str, model: &str, status: VehicleStatus, tenant_id: Option<i64>) -> Vehicle {
+    Vehicle {
+        id: None,
+        uuid: None,
+        tenant_id,
+        plate: plate.into(),
+        model: model.into(),
+        status,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn registering_a_vehicle_normalises_its_plate_and_stamps_the_callers_tenant() {
+    // HRMS-920/HRMS-925: one spelling per plate. HRMS-921/D-06: the owning
+    // tenant is the caller's own, never one the payload named.
+    let db = mock()
+        .append_query_results([Vec::<vehicle_entity::Model>::new()]) // no duplicate plate
+        .append_exec_results([inserted(10)])
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
+        .into_connection();
+
+    let created = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(db.clone()))
+            .create(new_vehicle("  abc1d23 ", " Volvo FH ", VehicleStatus::Active, Some(999))),
+    )
+    .await
+    .expect("a tenant owner registers a vehicle");
+
+    assert_eq!(created.plate, "ABC1D23");
+    assert_eq!(created.tenant_id, Some(42));
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("ABC1D23"), "{sql}");
+    assert!(!sql.contains("999"), "the payload's tenant must never be written: {sql}");
+}
+
+#[tokio::test]
+async fn a_plate_already_registered_in_the_same_tenant_is_refused_before_any_insert() {
+    // HRMS-925/D-23(c): the duplicate lookup is tenant-scoped, so it can only
+    // ever report a collision inside the caller's own fleet -- a global check
+    // would answer "taken" for another customer's vehicle.
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
+        .into_connection();
+
+    let refused = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(db.clone()))
+            .create(new_vehicle("abc1d23", "Volvo FH", VehicleStatus::Active, None)),
+    )
+    .await
+    .expect_err("a duplicate plate is refused");
+    assert_eq!(refused.message, DUPLICATE_PLATE);
+
+    let sql = format!("{:?}", log(db));
+    assert!(!sql.contains("INSERT"), "nothing may be written: {sql}");
+    assert!(sql.contains("tenant_id") && sql.contains("42"), "the check is scoped: {sql}");
+}
+
+#[tokio::test]
+async fn a_vehicle_without_a_plate_or_a_model_never_reaches_the_database() {
+    let blank_plate = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(mock().into_connection()))
+            .create(new_vehicle("   ", "Volvo FH", VehicleStatus::Active, None)),
+    )
+    .await;
+    assert!(blank_plate.is_err());
+
+    let blank_model = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(mock().into_connection()))
+            .create(new_vehicle("ABC1D23", "  ", VehicleStatus::Active, None)),
+    )
+    .await;
+    assert!(blank_model.is_err());
+}
+
+#[tokio::test]
+async fn every_vehicle_read_is_filtered_to_the_callers_tenant() {
+    // HRMS-921/D-09: the read half of the rule, observed on the SQL the
+    // gateway actually issues rather than on the rows it happens to return.
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Maintenance")]])
+        .into_connection();
+    let use_case = VehicleUseCase::new(VehicleGateway::new(db.clone()));
+
+    let found = run_with_user(Some(owner(42)), use_case.find_by_uuid(UUID.into())).await.unwrap();
+    assert_eq!(found.status, VehicleStatus::Active);
+    assert_eq!(run_with_user(Some(owner(42)), use_case.find_by_id(10)).await.unwrap().id, Some(10));
+    assert_eq!(run_with_user(Some(owner(42)), use_case.find_all()).await.unwrap().len(), 1);
+
+    let sql = format!("{:?}", log(db));
+    assert_eq!(sql.matches("42").count(), 3, "every read carries the tenant scope: {sql}");
+}
+
+#[tokio::test]
+async fn paging_vehicles_is_scoped_and_searches_plate_and_model() {
+    // PD-028: paging must not become the read path that escapes the scope.
+    let db = mock()
+        .append_query_results(count(1))
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
+        .into_connection();
+
+    let (vehicles, total) = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(db.clone())).find_page(0, 25, Some("ABC")),
+    )
+    .await
+    .expect("a page of the caller's own fleet");
+    assert_eq!((vehicles.len(), total), (1, 1));
+
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("tenant_id") && sql.contains("42"), "{sql}");
+    assert!(sql.contains("plate"), "{sql}");
+    assert!(sql.contains("model"), "{sql}");
+    assert!(sql.contains("LIKE"), "the search term reaches the database: {sql}");
+}
+
+#[tokio::test]
+async fn a_caller_outside_any_tenant_scope_finds_no_vehicle_at_all() {
+    // D-05: without a request scope the read is Denied, not unrestricted.
+    let db = mock()
+        .append_query_results([Vec::<vehicle_entity::Model>::new()])
+        .into_connection();
+    let refused = VehicleUseCase::new(VehicleGateway::new(db.clone()))
+        .find_by_uuid(UUID.into())
+        .await;
+    assert!(refused.is_err(), "an unscoped caller reads nothing");
+    assert!(format!("{:?}", log(db)).contains("1 = 0"));
+}
+
+#[tokio::test]
+async fn editing_a_vehicle_cannot_move_it_to_another_tenant() {
+    // HRMS-921: a vehicle never changes hands through an edit.
+    let existing = vehicle_row(10, 42, "ABC1D23", "Active");
+    let db = mock()
+        .append_query_results([[existing.clone()]]) // find_by_id
+        .append_query_results([[existing]]) // duplicate check finds itself
+        .append_exec_results([inserted(10)])
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Maintenance")]])
+        .into_connection();
+
+    let updated = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(db.clone()))
+            .update(10, new_vehicle("abc1d23", "Volvo FH", VehicleStatus::Maintenance, Some(999))),
+    )
+    .await
+    .expect("its own tenant owner may edit it");
+
+    assert_eq!(updated.tenant_id, Some(42));
+    assert_eq!(updated.status, VehicleStatus::Maintenance);
+    let sql = format!("{:?}", log(db));
+    assert!(!sql.contains("999"), "the payload's tenant must be ignored: {sql}");
+}
+
+#[tokio::test]
+async fn reusing_another_vehicles_plate_while_editing_is_refused() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // find_by_id
+        .append_query_results([[vehicle_row(11, 42, "XYZ4E56", "Active")]]) // the plate is another row's
+        .into_connection();
+
+    let refused = run_with_user(
+        Some(owner(42)),
+        VehicleUseCase::new(VehicleGateway::new(db.clone()))
+            .update(10, new_vehicle("xyz4e56", "Volvo FH", VehicleStatus::Active, None)),
+    )
+    .await
+    .expect_err("a plate already carried by another vehicle is refused");
+    assert_eq!(refused.message, DUPLICATE_PLATE);
+    assert!(!format!("{:?}", log(db)).contains("UPDATE"));
+}
+
+#[tokio::test]
+async fn vehicle_database_failures_surface_as_errors_not_as_empty_results() {
+    // DEF-XF-02's class of bug, for the fleet reads.
+    let vehicles = VehicleUseCase::new(VehicleGateway::new(failing(5)));
+    assert!(run_with_user(Some(owner(42)), vehicles.find_by_id(1)).await.is_err());
+    assert!(run_with_user(Some(owner(42)), vehicles.find_by_uuid(UUID.into())).await.is_err());
+    assert!(run_with_user(Some(owner(42)), vehicles.find_all()).await.is_err());
+    assert!(run_with_user(Some(owner(42)), vehicles.find_page(0, 25, None)).await.is_err());
+    assert!(
+        run_with_user(
+            Some(owner(42)),
+            VehicleUseCase::new(VehicleGateway::new(failing(1)))
+                .create(new_vehicle("ABC1D23", "Volvo FH", VehicleStatus::Active, None))
+        )
+        .await
+        .is_err()
+    );
+}

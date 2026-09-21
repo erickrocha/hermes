@@ -6,3 +6,4 @@ pub mod tenant_endpoint;
 pub mod business_plan_endpoint;
 pub mod auth_endpoint;
 pub mod province_endpoint;
+pub mod vehicle_endpoint;

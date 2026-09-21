@@ -9,3 +9,4 @@ pub mod access_token;
 pub mod province;
 pub mod city;
 pub mod vehicle_tracking;
+pub mod vehicle;
