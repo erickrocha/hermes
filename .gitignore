@@ -1,1 +1,14 @@
 .idea
+
+# EPIC-XF-10-S03 (HRMS-040): the production secret file lives on the
+# production host and never in version control. `.env.example` next to it is
+# the committed contract and contains no secret.
+infra/prod/.env
+infra/prod/.env.*
+!infra/prod/.env.example
+
+# Database dumps taken by deploy.sh are the rollback position; they contain
+# live tenant data and must not be committed if one is ever copied out of the
+# volume for inspection.
+*.sql.gz
+infra/prod/backups/

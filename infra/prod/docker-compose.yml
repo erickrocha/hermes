@@ -1,0 +1,175 @@
+# EPIC-XF-10-S02/S03/S06 (HRMS-039, HRMS-040, HRMS-045) — the production
+# environment, per D-18: a single VPS running Docker Compose behind Traefik.
+#
+# Read this file as the answer to "what runs in production, and how is it
+# rebuilt after a total loss". Everything environment-specific is a variable
+# resolved from `.env` next to this file (HRMS-040); nothing here contains a
+# credential, so this file is safe in version control and `.env` never is.
+#
+# Deploy is `infra/prod/deploy.sh`, not `docker compose up` by hand — the
+# ordering below (migrate, then start) is the part that must not be improvised.
+
+name: hermes
+
+services:
+  # ---------------------------------------------------------------------
+  # Edge. Terminates TLS and puts the API and the console on ONE origin:
+  #   https://$HERMES_DOMAIN/api/... -> api (prefix stripped)
+  #   https://$HERMES_DOMAIN/...     -> console
+  # That single-origin arrangement is what lets the console image stay
+  # environment-independent — see backoffice/Dockerfile.
+  # ---------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.2.1
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?ACME_EMAIL is required}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --accesslog=true
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only: Traefik needs to watch container labels, it never needs to
+      # control the daemon. A writable docker socket in a public-facing
+      # container is root on the host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------
+  # Data. Not published to the host: only the compose network reaches it.
+  # ---------------------------------------------------------------------
+  mariadb:
+    image: mariadb:11.8
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is required}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-hermes}
+      MARIADB_USER: ${MARIADB_USER:-hermes}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?MARIADB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      # Backups land here so the runbook's rollback position is a real file on
+      # a real volume rather than an instruction to remember something.
+      - mariadb-backups:/backups
+    logging: *logging
+
+  # ---------------------------------------------------------------------
+  # HRMS-045 / PD-033: migration is a deploy STEP, not a boot side effect.
+  #
+  # `restart: "no"` and a profile keep it out of the running set: it is run
+  # explicitly by deploy.sh and must exit 0 before the API is started. The API
+  # refuses to boot on a schema that is behind (see web/src/lib.rs), so getting
+  # this order wrong fails loudly instead of serving on a stale schema.
+  #
+  # ROLLBACK POSITION: migrations are forward-only here. The rollback for a bad
+  # schema change is the pre-deploy database dump taken by deploy.sh into
+  # `mariadb-backups`, restored per docs/RUNBOOK-CUTOVER.md. That is a
+  # deliberate choice over `Migrator::down`: an untested down-migration run
+  # against live data is not a safer position than a restore from ten minutes
+  # ago. It is also why deploy.sh refuses to run without a fresh dump.
+  # ---------------------------------------------------------------------
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    profiles: ["deploy"]
+    restart: "no"
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    logging: *logging
+
+  # ---------------------------------------------------------------------
+  # The API. Same image as `migrate`, so the schema is never applied by a
+  # binary built from a different commit than the one about to serve it.
+  # ---------------------------------------------------------------------
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      HOST: 0.0.0.0
+      PORT: 8080
+      # Anything other than `development` turns Swagger UI and the OpenAPI
+      # document off and makes CORS_ALLOWED_ORIGINS mandatory at boot.
+      APP_ENV: production
+      CORS_ALLOWED_ORIGINS: https://${HERMES_DOMAIN:?HERMES_DOMAIN is required}
+      BACKOFFICE_BASE_URL: https://${HERMES_DOMAIN}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:?ACCESS_TOKEN_SECRET is required}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:?REFRESH_TOKEN_SECRET is required}
+      ACCESS_TOKEN_HOURS: ${ACCESS_TOKEN_HOURS:-3}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-7}
+      SYSADMIN_EMAIL: ${SYSADMIN_EMAIL:?SYSADMIN_EMAIL is required}
+      SYSADMIN_PASSWORD: ${SYSADMIN_PASSWORD:?SYSADMIN_PASSWORD is required}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      # EPIC-FT-01 (D-15): PinME. Absent values simply leave ingestion unused.
+      TRACKING_API_BASE_URL: ${TRACKING_API_BASE_URL:-}
+      TRACKING_API_USER: ${TRACKING_API_USER:-}
+      TRACKING_API_PASSWORD: ${TRACKING_API_PASSWORD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hermes-api.rule=Host(`${HERMES_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.hermes-api.entrypoints=websecure
+      - traefik.http.routers.hermes-api.tls.certresolver=letsencrypt
+      # The backend serves /login, /tenant, ... at the root; /api is an edge
+      # concern only, so it is stripped before the request reaches the API.
+      - traefik.http.routers.hermes-api.middlewares=hermes-api-strip
+      - traefik.http.middlewares.hermes-api-strip.stripprefix.prefixes=/api
+      - traefik.http.services.hermes-api.loadbalancer.server.port=8080
+      # HRMS-042: Traefik stops routing to an instance whose database is gone,
+      # rather than serving 500s from it.
+      - traefik.http.services.hermes-api.loadbalancer.healthcheck.path=/health
+      - traefik.http.services.hermes-api.loadbalancer.healthcheck.interval=15s
+    logging: *logging
+
+  # ---------------------------------------------------------------------
+  # The console. Catch-all: anything not under /api.
+  # ---------------------------------------------------------------------
+  console:
+    image: ${CONSOLE_IMAGE:?CONSOLE_IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    depends_on:
+      - api
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hermes-console.rule=Host(`${HERMES_DOMAIN}`)
+      # Lower priority than the API router, so /api wins the overlap.
+      - traefik.http.routers.hermes-console.priority=1
+      - traefik.http.routers.hermes-console.entrypoints=websecure
+      - traefik.http.routers.hermes-console.tls.certresolver=letsencrypt
+      - traefik.http.services.hermes-console.loadbalancer.server.port=8080
+    logging: *logging
+
+volumes:
+  mariadb-data:
+  mariadb-backups:
+  letsencrypt:

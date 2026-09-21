@@ -11,12 +11,14 @@ use crate::routes::resource_routes::resources_routes;
 use crate::routes::tenant_routes::tenant_routes;
 use crate::routes::user_routes::user_routes;
 use axum::Router;
-use axum::http::{HeaderValue, Method, header};
+use axum::extract::State;
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::routing::get;
 use business::sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
 use migration::{Migrator, MigratorTrait};
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -113,6 +115,77 @@ fn welcome_route() -> Router<AppState> {
         Router::new().route("/", get(welcome))
     } else {
         Router::new().route("/", get(|| async { "Hermes API" }))
+    }
+}
+
+/// EPIC-XF-10-S05 (HRMS-042): the endpoint a deployment is verified against.
+///
+/// Deliberately **not** in `routes/*.rs` and **not** in `ApiDoc`, following
+/// `welcome_route`'s precedent: `documented_paths_match_the_registered_routes`
+/// compares the OpenAPI document against the literals in `routes/*.rs`, so an
+/// operational route registered there without a `#[utoipa::path]` would fail
+/// that test, and documenting it would put a liveness probe in the tenant-facing
+/// API contract. It is infrastructure, not product surface.
+///
+/// It answers *"can this instance serve a request that needs the database"*,
+/// not merely *"is the process up"* — a process that is listening but cannot
+/// reach MariaDB is exactly the post-deploy failure `HRMS-042` exists to catch,
+/// and it is the state a container orchestrator would otherwise call healthy.
+/// How long the probe waits for the database before calling it unreachable.
+///
+/// This bound is not decoration. Without it the probe inherits SeaORM's
+/// connection-acquire timeout — measured at **~10.1s** against a stopped
+/// MariaDB — while the two things that actually consume this endpoint allow
+/// far less: the image's `HEALTHCHECK` gives it 5s, and Traefik's load-balancer
+/// health check defaults to 5s as well. The result was the worst of both
+/// worlds: the endpoint computed the correct 503 but nobody ever read it,
+/// because both checkers had already timed out.
+///
+/// A timeout and a 503 are not the same signal. `docs/OPERATIONS.md` asks the
+/// on-call to distinguish "the process is gone" from "the process is up but the
+/// database is unreachable", and that distinction only survives if the probe
+/// answers inside the window it is given.
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn health_route() -> Router<AppState> {
+    Router::new().route(
+        "/health",
+        get(|State(state): State<AppState>| async move {
+            let probe = state.conn.execute_unprepared("SELECT 1");
+
+            let reachable = match tokio::time::timeout(HEALTH_PROBE_TIMEOUT, probe).await {
+                Ok(Ok(_)) => true,
+                Ok(Err(error)) => {
+                    log::error!("Health check failed: database unreachable ({error})");
+                    false
+                }
+                Err(_elapsed) => {
+                    log::error!(
+                        "Health check failed: database did not respond within {}s",
+                        HEALTH_PROBE_TIMEOUT.as_secs()
+                    );
+                    false
+                }
+            };
+
+            health_response(reachable)
+        }),
+    )
+}
+
+/// The mapping `HRMS-042` actually turns on, kept pure so it is tested without
+/// a database: an instance that cannot reach MariaDB must answer **503**, not
+/// 200. A health endpoint that returns 200 whenever the process is listening
+/// tells a deploy script nothing it did not already know from the port being
+/// open.
+fn health_response(database_reachable: bool) -> (StatusCode, &'static str) {
+    if database_reachable {
+        (StatusCode::OK, r#"{"status":"ok","database":"up"}"#)
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"status":"degraded","database":"down"}"#,
+        )
     }
 }
 
@@ -302,6 +375,7 @@ async fn start() -> anyhow::Result<()> {
     let app = app
         // Public routes (no authentication)
         .merge(welcome_route())
+        .merge(health_route())
         .merge(auth_routes(state.clone()))
         .merge(resources_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
@@ -461,9 +535,83 @@ mod openapi_contract_tests {
     }
 }
 
+/// EPIC-XF-10-S05 (HRMS-042).
 #[cfg(test)]
-mod environment_gates_tests {
-    use super::{is_development, parse_allowed_origins, resolve_cors_origins};
+mod health_endpoint_tests {
+    use super::{HEALTH_PROBE_TIMEOUT, health_response};
+    use axum::http::StatusCode;
+
+    /// Guards the bug this endpoint actually shipped with, which an in-process
+    /// test could never have caught: the probe returned the correct 503, but
+    /// only after ~10.1s, because it inherited SeaORM's connection-acquire
+    /// timeout. Both consumers give it 5s — the image `HEALTHCHECK` and
+    /// Traefik's load-balancer health check — so the 503 was computed and then
+    /// thrown away, and the observable behaviour was a timeout.
+    ///
+    /// 4s leaves headroom under the tighter of the two windows. If someone
+    /// raises `HEALTH_PROBE_TIMEOUT` past it, they must also raise both
+    /// checkers, and this test is where they find that out.
+    #[test]
+    fn the_probe_answers_inside_the_window_its_checkers_allow() {
+        assert!(
+            HEALTH_PROBE_TIMEOUT.as_secs() < 4,
+            "HEALTH_PROBE_TIMEOUT is {}s; the image HEALTHCHECK and Traefik both \
+             allow 5s, so a probe at or above that window reports a timeout \
+             instead of the 503 it computed",
+            HEALTH_PROBE_TIMEOUT.as_secs()
+        );
+    }
+
+    #[test]
+    fn a_reachable_database_is_healthy() {
+        let (status, body) = health_response(true);
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(r#""status":"ok""#), "body was {body}");
+    }
+
+    /// The case the endpoint exists for. A deploy that leaves the API listening
+    /// but unable to reach MariaDB — wrong `DATABASE_URL`, database container
+    /// not up yet, credentials rotated without the app being told — is the
+    /// failure `HRMS-042` must report as failed rather than as silently running.
+    #[test]
+    fn an_unreachable_database_is_not_healthy() {
+        let (status, body) = health_response(false);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body.contains(r#""database":"down""#), "body was {body}");
+    }
+
+    /// `/health` is intentionally absent from both `routes/*.rs` and `ApiDoc`.
+    /// `openapi_contract_tests::documented_paths_match_the_registered_routes`
+    /// compares those two sets exactly, so registering the operational route in
+    /// `routes/` without documenting it would turn that test red. This pins the
+    /// arrangement so a later move does not break the contract test in a way
+    /// that looks unrelated to whoever moved it.
+    #[test]
+    fn health_is_operational_surface_not_api_contract() {
+        let routes_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");
+        for entry in std::fs::read_dir(&routes_dir).expect("routes directory is readable") {
+            let file = entry.expect("readable dir entry").path();
+            if file.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&file).expect("readable route file");
+            assert!(
+                !source.contains("\"/health\""),
+                "{} registers /health; it must stay in lib.rs and out of the OpenAPI document",
+                file.display()
+            );
+        }
+
+        use utoipa::OpenApi as _;
+        assert!(
+            !super::ApiDoc::openapi().paths.paths.contains_key("/health"),
+            "/health must not appear in the tenant-facing API contract"
+        );
+    }
+}
+
+#[cfg(test)]
+mod environment_gates_tests {    use super::{is_development, parse_allowed_origins, resolve_cors_origins};
 
     #[test]
     fn only_unset_or_development_counts_as_development() {

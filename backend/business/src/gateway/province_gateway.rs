@@ -7,7 +7,7 @@ use entity::province_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{Condition, 
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, QueryTrait,
+    QueryOrder, QuerySelect,
 };
 
 pub struct ProvinceGateway {

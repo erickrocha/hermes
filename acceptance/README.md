@@ -11,6 +11,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `reference_data_acceptance.py` (+ `reference_data_ui.mjs`) | Reference data (`EPIC-RD-01…03` + QA-added `PD-027-S01…S06`, scenarios `RD-0xx`) |
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
+| `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
 
 ## Prerequisites
 
@@ -250,3 +251,47 @@ python3 acceptance/ft_mutation_check.py
 **It edits source files in place** and restores them in a `finally` block, then re-asserts the
 baseline. Run it on a clean tree; if it is ever interrupted, check `git status` before trusting the
 working copy.
+
+## Production readiness (`production_readiness_acceptance.py`, scenarios `PR-0xx`)
+
+Covers `EPIC-XF-10` (`HRMS-038…045`), the slice that gives hermes a path to production per `D-18`
+(single VPS, Docker Compose, Traefik). Log: `production-readiness_test_execution_log.md`.
+
+```sh
+python3 acceptance/production_readiness_acceptance.py
+python3 acceptance/production_readiness_acceptance.py --skip-cargo
+python3 acceptance/production_readiness_acceptance.py --json out.json
+```
+
+**It needs no running stack** — no dev database, no API, no console, no VPS. Python 3 and `cargo`
+are enough (`bash` for the two syntax checks). It writes nothing and is always safe to run.
+
+**Read the scope limit before reading the result.** Most of what `EPIC-XF-10` is *for* can only be
+proven against a real host: that Let's Encrypt issues a certificate for the real domain, that the
+cutover runbook's timings survive contact with production, that Transmega approves the palette.
+This suite asserts none of that, and deliberately does not award a PASS to anything it cannot
+observe — `PR-012` is reported **BLOCKED**, not passed. A green run here means *the artefacts hold
+the properties they claim*, not *hermes is in production*.
+
+What it does assert, at artefact level:
+
+- **IMAGES** — both Dockerfiles are multi-stage with pinned (non-`latest`) bases, ship no build
+  toolchain, build `--locked`, and run unprivileged.
+- **ENVIRONMENT** — one compose file defines the whole stack; only the edge publishes ports, so
+  MariaDB is unreachable from outside; every mandatory setting appears in `.env.example`; no `.env`
+  is tracked by git and the example holds placeholders rather than values.
+- **PIPELINE** — `release.yml` verifies before it builds, publishes an immutable tag, and gates
+  deployment behind `workflow_dispatch` plus a protected environment.
+- **HEALTH** — `/health` probes the database and answers 503 when it is unreachable, **and answers
+  within the window its checkers allow**. That second clause exists because of a real defect: the
+  endpoint originally returned a correct 503 only after ~10.1s, inheriting SeaORM's
+  connection-acquire timeout, while the image `HEALTHCHECK` and Traefik both give it 5s — so the
+  correct answer was computed and then discarded, and what everyone observed was a timeout. Source
+  inspection could not have caught that; running the stack did.
+- **ORDERING** — `migrate` is a profiled one-shot step on the same image as the API, and `deploy.sh`
+  dumps, then migrates, then starts, in that order.
+- **DOCUMENTATION** — the cutover runbook and `docs/OPERATIONS.md` contain the things `HRMS-043` and
+  `HRMS-044` actually name, including a recipient per monitored condition.
+
+Several checks are **negative** (no secret, no `latest`, no root user). Each also asserts its
+subject still exists, so a check that matches nothing because a file moved fails rather than passes.
