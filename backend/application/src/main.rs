@@ -45,28 +45,28 @@ impl Modify for SecurityAddon {
 
 #[derive(OpenApi)]
 #[openapi(
-	modifiers(&SecurityAddon),
-	paths(
-		endpoints::auth_endpoint::sign_in,
-		endpoints::auth_endpoint::refresh_token,
-		endpoints::auth_endpoint::accept_invite,
-		endpoints::tenant_endpoint::add,
-		endpoints::tenant_endpoint::get_by_uuid,
-		endpoints::tenant_endpoint::list_all,
-		endpoints::tenant_endpoint::update_by_uuid,
-		endpoints::tenant_endpoint::add_plan_by_uuid,
-		endpoints::tenant_endpoint::get_active_plan_by_uuid,
-		endpoints::business_plan_endpoint::add,
-		endpoints::business_plan_endpoint::list_all,
-		endpoints::business_plan_endpoint::get_by_uuid,
-		endpoints::business_plan_endpoint::update,
-		endpoints::business_plan_endpoint::delete,
-		endpoints::user_endpoint::get_by_uuid,
-		endpoints::user_endpoint::add,
-		endpoints::user_endpoint::list_all,
-		endpoints::user_endpoint::update,
-		endpoints::user_endpoint::reissue_invite,
-		endpoints::user_endpoint::change_password,
+    modifiers(&SecurityAddon),
+    paths(
+        endpoints::auth_endpoint::sign_in,
+        endpoints::auth_endpoint::refresh_token,
+        endpoints::auth_endpoint::accept_invite,
+        endpoints::tenant_endpoint::add,
+        endpoints::tenant_endpoint::get_by_uuid,
+        endpoints::tenant_endpoint::list_all,
+        endpoints::tenant_endpoint::update_by_uuid,
+        endpoints::tenant_endpoint::add_plan_by_uuid,
+        endpoints::tenant_endpoint::get_active_plan_by_uuid,
+        endpoints::business_plan_endpoint::add,
+        endpoints::business_plan_endpoint::list_all,
+        endpoints::business_plan_endpoint::get_by_uuid,
+        endpoints::business_plan_endpoint::update,
+        endpoints::business_plan_endpoint::delete,
+        endpoints::user_endpoint::get_by_uuid,
+        endpoints::user_endpoint::add,
+        endpoints::user_endpoint::list_all,
+        endpoints::user_endpoint::update,
+        endpoints::user_endpoint::reissue_invite,
+        endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
         endpoints::province_endpoint::list_countries,
         endpoints::province_endpoint::list_page,
@@ -82,28 +82,28 @@ impl Modify for SecurityAddon {
         endpoints::vehicle_endpoint::list_all,
         endpoints::vehicle_endpoint::get_by_uuid,
         endpoints::vehicle_endpoint::update
-	),
-	components(
-		schemas(
-			endpoints::json::user_json::UserJson,
-			endpoints::json::login_request::LoginRequest,
-			endpoints::auth_endpoint::AcceptInviteJson,
-			endpoints::json::change_password_request::ChangePasswordRequest,
-			endpoints::json::refresh_token_request::RefreshTokenRequest,
-			endpoints::json::access_token_json::AccessTokenJson,
-			endpoints::json::tenant_json::TenantJson,
-			endpoints::json::tenant_json::SetTenantPlanJson,
-			endpoints::json::business_plan_json::CreateBusinessPlanJson,
-			endpoints::json::business_plan_json::UpdateBusinessPlanJson,
-			endpoints::json::business_plan_json::BusinessPlanJson,
+    ),
+    components(
+        schemas(
+            endpoints::json::user_json::UserJson,
+            endpoints::json::login_request::LoginRequest,
+            endpoints::auth_endpoint::AcceptInviteJson,
+            endpoints::json::change_password_request::ChangePasswordRequest,
+            endpoints::json::refresh_token_request::RefreshTokenRequest,
+            endpoints::json::access_token_json::AccessTokenJson,
+            endpoints::json::tenant_json::TenantJson,
+            endpoints::json::tenant_json::SetTenantPlanJson,
+            endpoints::json::business_plan_json::CreateBusinessPlanJson,
+            endpoints::json::business_plan_json::UpdateBusinessPlanJson,
+            endpoints::json::business_plan_json::BusinessPlanJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
             endpoints::json::vehicle_json::VehicleJson,
-		),
-	),
-	tags(
+        ),
+    ),
+    tags(
         (name = "Hermes", description = "REST API for Hermes")
-	)
+    )
 )]
 struct ApiDoc;
 
@@ -340,7 +340,7 @@ async fn start() -> anyhow::Result<()> {
     entity::audit::run_as_platform(
         business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection),
     )
-    .await;
+        .await;
 
     let state = AppState {
         conn: Arc::new(connection),
@@ -635,7 +635,7 @@ mod environment_gates_tests {    use super::{is_development, parse_allowed_origi
         let origins = parse_allowed_origins(Some(
             " https://app.hermes.io , https://admin.hermes.io ".to_string(),
         ))
-        .expect("two valid origins");
+            .expect("two valid origins");
         assert_eq!(origins.len(), 2);
         assert_eq!(origins[0], "https://app.hermes.io");
         assert_eq!(origins[1], "https://admin.hermes.io");

@@ -1,7 +1,12 @@
 [package]
-name = "web"
+name = "application"
 version = "0.1.0"
 edition = "2024"
+default-run = "hermes"
+
+[[bin]]
+name = "hermes"
+path = "src/main.rs"
 
 [dependencies]
 business = { path = "../business" }

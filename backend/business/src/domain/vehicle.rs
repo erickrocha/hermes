@@ -3,8 +3,8 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
 use crate::domain::enums::VehicleStatus;
 use chrono::NaiveDateTime;
-use entity::vehicle_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
+use entity::vehicle_entity::{ActiveModel, Model};
 
 /// EPIC-FO-01-S01 (HRMS-920): a vehicle is a plate, a model and a status,
 /// owned by exactly one tenant (HRMS-921).
