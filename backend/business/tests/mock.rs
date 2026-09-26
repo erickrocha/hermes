@@ -10,7 +10,7 @@
 
 use business::commons::gateway::Gateway;
 use business::gateway::user_gateway::UserGateway;
-use entity::audit::{run_with_user, AuditUser};
+use entity::audit::{AuditUser, run_with_user};
 use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
 fn user(tenant_id: Option<i64>, enforce_tenant: bool) -> AuditUser {
@@ -36,8 +36,14 @@ async fn tenant_scoped_find_by_id_sends_the_tenant_filter_to_the_database() {
     let log: &[Transaction] = &db.into_transaction_log();
     assert_eq!(log.len(), 1, "exactly one query should have been sent");
     let sql = format!("{:?}", log[0]);
-    assert!(sql.contains("tenant_id"), "query did not filter by tenant_id: {sql}");
-    assert!(sql.contains("42"), "query did not filter by the actor's tenant id: {sql}");
+    assert!(
+        sql.contains("tenant_id"),
+        "query did not filter by tenant_id: {sql}"
+    );
+    assert!(
+        sql.contains("42"),
+        "query did not filter by the actor's tenant id: {sql}"
+    );
 }
 
 #[tokio::test]
@@ -55,7 +61,9 @@ async fn unrestricted_scope_sends_no_tenant_filter_to_the_database() {
     let log: &[Transaction] = &db.into_transaction_log();
     assert_eq!(log.len(), 1);
     assert!(
-        !format!("{:?}", log[0]).to_lowercase().contains("tenant_id ="),
+        !format!("{:?}", log[0])
+            .to_lowercase()
+            .contains("tenant_id ="),
         "an unbound administrator's query should carry no tenant_id filter: {:?}",
         log[0]
     );

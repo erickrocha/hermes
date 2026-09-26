@@ -13,22 +13,51 @@
 //!
 //!     DATABASE_URL=mysql://... cargo test -p business --test schema_matches_entities -- --ignored
 
-use entity::{business_plan_entity, city_entity, province_entity, tenant_entity, user_entity, vehicle_entity};
+use entity::{
+    business_plan_entity, city_entity, province_entity, tenant_entity, user_entity, vehicle_entity,
+};
 use sea_orm::{Database, EntityTrait, QuerySelect};
 
 #[tokio::test]
 #[ignore = "needs DATABASE_URL pointing at a migrated database"]
 async fn every_entity_can_be_read_from_the_migrated_schema() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must point at a migrated database");
+    let url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL must point at a migrated database");
     let db = Database::connect(&url).await.expect("database reachable");
 
     let failures: Vec<String> = [
-        ("user", user_entity::Entity::find().limit(1).all(&db).await.err()),
-        ("tenant", tenant_entity::Entity::find().limit(1).all(&db).await.err()),
-        ("business_plan", business_plan_entity::Entity::find().limit(1).all(&db).await.err()),
-        ("province", province_entity::Entity::find().limit(1).all(&db).await.err()),
-        ("city", city_entity::Entity::find().limit(1).all(&db).await.err()),
-        ("vehicle", vehicle_entity::Entity::find().limit(1).all(&db).await.err()),
+        (
+            "user",
+            user_entity::Entity::find().limit(1).all(&db).await.err(),
+        ),
+        (
+            "tenant",
+            tenant_entity::Entity::find().limit(1).all(&db).await.err(),
+        ),
+        (
+            "business_plan",
+            business_plan_entity::Entity::find()
+                .limit(1)
+                .all(&db)
+                .await
+                .err(),
+        ),
+        (
+            "province",
+            province_entity::Entity::find()
+                .limit(1)
+                .all(&db)
+                .await
+                .err(),
+        ),
+        (
+            "city",
+            city_entity::Entity::find().limit(1).all(&db).await.err(),
+        ),
+        (
+            "vehicle",
+            vehicle_entity::Entity::find().limit(1).all(&db).await.err(),
+        ),
     ]
     .into_iter()
     .filter_map(|(table, error)| error.map(|e| format!("{table}: {e}")))

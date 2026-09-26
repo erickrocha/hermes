@@ -109,7 +109,10 @@ mod tests {
     fn accepts_a_valid_cpf_in_any_formatting() {
         assert_eq!(normalize("529.982.247-25").as_deref(), Some("52998224725"));
         assert_eq!(normalize("52998224725").as_deref(), Some("52998224725"));
-        assert_eq!(normalize(" 529 982 247 25 ").as_deref(), Some("52998224725"));
+        assert_eq!(
+            normalize(" 529 982 247 25 ").as_deref(),
+            Some("52998224725")
+        );
     }
 
     #[test]
@@ -151,7 +154,10 @@ mod tests {
             validate_and_normalize("BR", "529.982.247-25"),
             TaxIdOutcome::Valid("52998224725".to_string())
         );
-        assert_eq!(validate_and_normalize("BR", "00000000000"), TaxIdOutcome::Invalid);
+        assert_eq!(
+            validate_and_normalize("BR", "00000000000"),
+            TaxIdOutcome::Invalid
+        );
     }
 
     #[test]
@@ -164,7 +170,13 @@ mod tests {
 
     #[test]
     fn a_country_with_no_registered_validator_is_unsupported_not_rejected() {
-        assert_eq!(validate_and_normalize("US", "12-3456789"), TaxIdOutcome::Unsupported);
-        assert_eq!(validate_and_normalize("US", "anything at all"), TaxIdOutcome::Unsupported);
+        assert_eq!(
+            validate_and_normalize("US", "12-3456789"),
+            TaxIdOutcome::Unsupported
+        );
+        assert_eq!(
+            validate_and_normalize("US", "anything at all"),
+            TaxIdOutcome::Unsupported
+        );
     }
 }

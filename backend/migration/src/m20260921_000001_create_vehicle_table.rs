@@ -59,15 +59,9 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_index(
-                Index::drop()
-                    .name("uq_vehicle_tenant_plate")
-                    .table(Vehicle::Table)
-                    .to_owned(),
-            )
-            .await?;
-
+        // Dropping the table drops its indexes with it. Dropping
+        // `uq_vehicle_tenant_plate` first fails on MariaDB (error 1553): the
+        // index leads with `tenant_id` and backs the tenant foreign key.
         manager
             .drop_table(Table::drop().table(Vehicle::Table).to_owned())
             .await

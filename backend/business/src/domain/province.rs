@@ -78,8 +78,14 @@ mod tests {
     #[test]
     fn rejects_anything_that_is_not_two_ascii_letters() {
         for bad in ["", "B", "BRA", "B1", "  ", "BR "] {
-            if bad == "BR " { continue; }
-            assert_eq!(normalize_country_code(bad), None, "{bad:?} should be rejected");
+            if bad == "BR " {
+                continue;
+            }
+            assert_eq!(
+                normalize_country_code(bad),
+                None,
+                "{bad:?} should be rejected"
+            );
         }
     }
 }

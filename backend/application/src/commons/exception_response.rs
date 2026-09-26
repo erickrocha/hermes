@@ -19,6 +19,9 @@ pub enum ExceptionResponse {
 
     InternalServerError(Locale, ErrorKey),
 
+    /// A dependency outside hermes (the tracking provider) did not answer.
+    ServiceUnavailable(Locale, ErrorKey),
+
     /// PD-027: 400 cujo corpo é uma mensagem já formada, não uma chave de
     /// i18n. Existe para a importação de dados de referência, onde o valor da
     /// resposta é *qual linha* foi recusada e por quê — detalhe por natureza
@@ -57,6 +60,9 @@ impl IntoResponse for ExceptionResponse {
             }
             ExceptionResponse::InternalServerError(locale, key) => {
                 (axum::http::StatusCode::INTERNAL_SERVER_ERROR, locale, key)
+            }
+            ExceptionResponse::ServiceUnavailable(locale, key) => {
+                (axum::http::StatusCode::SERVICE_UNAVAILABLE, locale, key)
             }
             ExceptionResponse::BadRequestMessage(..) => unreachable!("handled above"),
         };

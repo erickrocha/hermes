@@ -3,7 +3,7 @@
 
 Interface-level, stdlib only (patterns copied from foundation_acceptance.py):
   api     -- black-box HTTP against the running dev API (default http://127.0.0.1:8081)
-  scratch -- starts the built `hermes_server` on port 8094 against a scratch database
+  scratch -- starts the built `hermes` on port 8094 against a scratch database
              `hermes_acc_ia` for behaviour that needs a different configuration
              (default token lifetimes, boot-seed password, full debug log)
   cargo   -- the repository's own tests, only where a property has no interface
@@ -27,7 +27,7 @@ DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brut
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc_ia"
 SCRATCH_PORT = int(os.environ.get("HERMES_IA_SCRATCH_PORT", "8094"))
-BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes_server"))
+BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes"))
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 ADMIN_PASSWORD = os.environ.get("HERMES_ADMIN_PASSWORD", "LocalDevOnly123!")
 TAG = "qa-ia"
@@ -49,7 +49,11 @@ STORIES = {
     "EPIC-IA-07-S01": ["IA-060"], "EPIC-IA-07-S02": ["IA-061", "IA-062", "IA-067"],
     "EPIC-IA-07-S03": ["IA-063", "IA-064"], "EPIC-IA-07-S04": ["IA-065"], "EPIC-IA-07-S05": ["IA-066"],
     "EPIC-IA-08-S01": ["IA-070", "IA-071"],
+    "EPIC-IA-09-S01": ["IA-090"], "EPIC-IA-09-S02": ["IA-091", "IA-092"],
+    "EPIC-IA-09-S03": ["IA-093", "IA-094"], "EPIC-IA-09-S04": ["IA-095"],
+    "EPIC-IA-09-S05": ["IA-096", "IA-097"], "EPIC-IA-09-S06": ["IA-098"], "EPIC-IA-09-S07": ["IA-099"],
 }
+NOT_BUILT = {"EPIC-IA-09-S04": "per-endpoint role statement in the OpenAPI contract not yet written (plan: pending)"}
 SUPERSEDED = {
     "EPIC-IA-06-S02": "HRM-045 descoped in the 2026-09-18 ratification walk (first_login redundant under D-07)",
     "EPIC-IA-08-S01": "EPIC-IA-08 descoped (D-04, leftovers); the replacement property (no public /signup, /legal/documents) is still checked",
@@ -245,6 +249,11 @@ def seed(fx):
 
 
 def cleanup():
+    mine_t = f"SELECT id FROM tenant WHERE business_name LIKE '{TAG}-%'"
+    sql(f"DELETE FROM vehicle_assignment WHERE tenant_id IN ({mine_t})")
+    sql(f"DELETE FROM vehicle WHERE tenant_id IN ({mine_t}) OR plate LIKE 'QAIA%'")
+    sql(f"DELETE FROM city WHERE name LIKE '{TAG}-%'")
+    sql(f"DELETE FROM province WHERE name LIKE '{TAG}-%'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
     sql(f"DELETE FROM business_plan WHERE name LIKE '{TAG}-%'")
@@ -269,20 +278,29 @@ def hierarchy(fx):
         s, p = http("GET", f"/user?page=0&pageSize=200&search={TAG}", token=token)
         return s, ({u["email"] for u in p.get("items", [])} if s == 200 and isinstance(p, dict) else set())
 
-    # IA-001 -- exactly three roles; anything else refused, nothing stored
+    # IA-001 -- the role vocabulary; anything else refused, nothing stored.
+    # EPIC-IA-09 (PD-026, D-22, 2026-09-24) superseded "exactly three roles": Driver and
+    # Mechanic are now roles a tenant owner creates in their own tenant -- and only a tenant
+    # owner (the platform administrator gets 403, as for TenantUser).
     s_sa, u_sa = mk_user(fx, adm["token"], "sysadmin2", "SysAdmin")
     fx.sysadmin2_created = u_sa if s_sa == 201 else None
     ok3 = s_sa == 201 and fx.owner_create["a"][0] == 201 and fx.user_create["user-a1"][0] == 201
     bad = {}
-    for r in ("Driver", "Mechanic", "Admin", "sysadmin", ""):
+    for r in ("Admin", "sysadmin", "driver", ""):
         bad[r or "<empty>"] = mk_user(fx, adm["token"], f"role-{r.lower() or 'empty'}", r, fx.tA)[0]
-    bad["owner:Driver"] = mk_user(fx, A["token"], "role-driver-o", "Driver")[0]
+    for r in ("Driver", "Mechanic"):
+        bad[f"sysadmin:{r}"] = mk_user(fx, adm["token"], f"role-{r.lower()}-sa", r, fx.tA)[0]
     stored = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-role-%'")[0][0]
+    ops = {r: mk_user(fx, A["token"], f"ops-{r.lower()}", r)[0] for r in ("Driver", "Mechanic")}
+    ops_rows = {r[0]: r[1] for r in sql(f"SELECT role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-ops-%'")}
+    ops_ok = all(c == 201 for c in ops.values()) and ops_rows == {"Driver": str(fx.tA), "Mechanic": str(fx.tA)}
     roles = {r[0] for r in sql(f"SELECT DISTINCT role FROM user WHERE email LIKE '{TAG}-%'")}
-    check("IA-001", ok3 and all(c == 403 for c in bad.values()) and stored == "0"
-          and roles <= {"SysAdmin", "TenantOwner", "TenantUser"},
-          f"SysAdmin/TenantOwner/TenantUser each created (201); unknown roles {bad} all 403, none stored; roles in DB {sorted(roles)}",
-          f"3 roles created={ok3} (SysAdmin {s_sa}); unknown-role statuses {bad}; stored={stored}; roles={sorted(roles)}")
+    check("IA-001", ok3 and ops_ok and all(c == 403 for c in bad.values()) and stored == "0"
+          and roles <= {"SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic"},
+          f"SysAdmin/TenantOwner/TenantUser each created (201); owner A creates Driver/Mechanic {ops} in tenant A; "
+          f"unknown roles and SysAdmin-created operational roles {bad} all 403, none stored; roles in DB {sorted(roles)}",
+          f"3 roles created={ok3} (SysAdmin {s_sa}); owner ops roles {ops} rows {ops_rows}; refused {bad}; "
+          f"stored={stored}; roles={sorted(roles)}")
 
     # IA-002 -- every non-administrator has a tenant
     s1, p1 = mk_user(fx, adm["token"], "owner-notenant", "TenantOwner")
@@ -942,6 +960,289 @@ def invitations(fx):
           f"documented public operations = {public}", f"documented public operations = {public}")
 
 
+# ---------------------------------------------------------------- EPIC-IA-09 (PD-026, D-22): Driver and Mechanic
+def _vehicle(token, plate):
+    s, v = http("POST", "/vehicle", token=token, body={"plate": plate, "model": f"{TAG}-truck", "status": "Active"})
+    if s != 201:
+        raise RuntimeError(f"fixture vehicle {plate} -> {s} {v}")
+    return v
+
+
+def _is_2xx(s):
+    return 200 <= s < 300
+
+
+def operational_roles(fx):
+    """IA-090...IA-099. Every probe a Driver or a Mechanic makes is also made by a TenantUser of the
+    same tenant; D-22 grants neither role anything a TenantUser lacks, so any answer that is *more*
+    (2xx where the TenantUser is refused, or a longer list) is a failure."""
+    adm, A, B, A1, A2 = fx.admin, fx.ownerA, fx.ownerB, fx.userA1, fx.userA2
+    tA_uuid = tenant_uuid(fx.tA)
+
+    # IA-090 / IA-093 -- owner A creates one of each; bound to A whatever the payload omits
+    created = {r: mk_user(fx, A["token"], f"op-{r.lower()}-a", r) for r in ("Driver", "Mechanic")}
+    created["Driver-B"] = mk_user(fx, B["token"], "op-driver-b", "Driver")
+    rows = {r[0]: (r[1], r[2]) for r in sql(
+        f"SELECT email, role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-op-%'")}
+    want = {em("op-driver-a"): ("Driver", str(fx.tA)), em("op-mechanic-a"): ("Mechanic", str(fx.tA)),
+            em("op-driver-b"): ("Driver", str(fx.tB))}
+    body_ok = all(created[r][0] == 201 and created[r][1].get("role") == r and created[r][1].get("tenantId") == fx.tA
+                  for r in ("Driver", "Mechanic"))
+    s_doc, doc = http("GET", "/api-docs/openapi.json")
+    enum = doc.get("components", {}).get("schemas", {}).get("Role", {}).get("enum", []) if s_doc == 200 else []
+    check("IA-090", body_ok and rows == want
+          and set(enum) == {"SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic"},
+          f"owner A POST /user Driver/Mechanic -> 201/201, returned and stored with role as sent and tenant A; "
+          f"owner B's driver stored in B; OpenAPI Role enum {enum}",
+          f"create {({k: (v[0], v[1].get('role') if isinstance(v[1], dict) else v[1]) for k, v in created.items()})}; "
+          f"rows {rows}; OpenAPI Role enum {enum}")
+
+    D = activate(fx, em("op-driver-a")) if created["Driver"][0] == 201 else None
+    M = activate(fx, em("op-mechanic-a")) if created["Mechanic"][0] == 201 else None
+    DB_ = activate(fx, em("op-driver-b")) if created["Driver-B"][0] == 201 else None
+    if not (D and M and DB_):
+        for sid in ("IA-091", "IA-092", "IA-093", "IA-094", "IA-096", "IA-097"):
+            record(sid, "BLOCKED", f"operational-role fixtures could not be created: {created}")
+        return
+
+    # IA-093 -- the hierarchy: owner names another tenant -> refused; nobody else creates them
+    s_x, _ = mk_user(fx, A["token"], "op-driver-x", "Driver", fx.tB)
+    refused = {
+        "owner A Driver tenantId=B": s_x,
+        "TenantUser->Driver": mk_user(fx, A1["token"], "op-x-tu-d", "Driver")[0],
+        "Driver->Driver": mk_user(fx, D["token"], "op-x-d-d", "Driver")[0],
+        "Driver->TenantUser": mk_user(fx, D["token"], "op-x-d-tu", "TenantUser")[0],
+        "Mechanic->Mechanic": mk_user(fx, M["token"], "op-x-m-m", "Mechanic")[0],
+        "Mechanic->TenantOwner": mk_user(fx, M["token"], "op-x-m-to", "TenantOwner", fx.tA)[0],
+    }
+    stray = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-op-x%'")[0][0]
+    claims = {k: (jwt_payload(u["token"]).get("role"), jwt_payload(u["token"]).get("tenant_id")) for k, u in
+              (("driver", D), ("mechanic", M))}
+    check("IA-093", s_x == 400 and all(v == 403 for k, v in refused.items() if k != "owner A Driver tenantId=B")
+          and stray == "0" and claims == {"driver": ("Driver", fx.tA), "mechanic": ("Mechanic", fx.tA)},
+          f"accounts activated through /accept-invite sign in with claims {claims}; "
+          f"outside the hierarchy refused {refused}, nothing stored",
+          f"refused {refused}; stored {stray}; claims {claims}")
+
+    # IA-094 -- the SysAdmin does not create them (403) and no edit reassigns onto (or off) them
+    sa = {r: mk_user(fx, adm["token"], f"op-sa-{r.lower()}", r, fx.tA)[0] for r in ("Driver", "Mechanic")}
+    sa_none = {f"{r} no tenant": mk_user(fx, adm["token"], f"op-sa-{r.lower()}-nt", r)[0] for r in ("Driver", "Mechanic")}
+    sa_stored = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-op-sa-%'")[0][0]
+    edits = {}
+    for who, tok, extra in (("SysAdmin", adm["token"], {"tenantId": fx.tA}), ("owner A", A["token"], {})):
+        # (a SysAdmin promoting anyone to TenantOwner is the existing PD-019 hierarchy, not asked here)
+        targets = [(A2, "Driver"), (A2, "Mechanic"), (D, "TenantUser"), (D, "Mechanic"), (M, "Driver")]
+        if who == "owner A":
+            targets.append((M, "TenantOwner"))
+        for target, new_role in targets:
+            name = user_row(target["id"])[1]
+            body = dict({"email": target["email"], "name": name, "role": new_role, "enabled": True}, **extra)
+            s = http("PUT", f"/user/uuid/{target['uuid']}", token=tok, body=body)[0]
+            edits[f"{who}: {target['email'].split('@')[0][len(TAG) + 1:]}->{new_role}"] = s
+    after = {k: user_row(u["id"])[2:4] for k, u in (("user-a2", A2), ("driver", D), ("mechanic", M))}
+    expect_after = {"user-a2": ["TenantUser", str(fx.tA)], "driver": ["Driver", str(fx.tA)], "mechanic": ["Mechanic", str(fx.tA)]}
+    check("IA-094", all(v == 403 for v in sa.values()) and all(400 <= v < 500 for v in sa_none.values())
+          and sa_stored == "0" and after == expect_after,
+          f"SysAdmin POST /user Driver/Mechanic in tenant A -> {sa}, without tenant -> {sa_none}, nothing stored; "
+          f"{len(edits)} edits requesting a role change onto/off the operational roles answered {sorted(set(edits.values()))} "
+          f"and every role and tenant is unchanged {after}",
+          f"SysAdmin create {sa} / {sa_none}, stored {sa_stored}; edits {edits}; roles after {after} (expected {expect_after})")
+
+    # Fixtures for the capability matrix: a vehicle in each tenant, and a plan to aim at
+    vA = _vehicle(A["token"], "QAIA9A01")
+    vB = _vehicle(B["token"], "QAIA9B01")
+    s_bp, bp = http("POST", "/business-plan", token=adm["token"], body={
+        "name": f"{TAG}-plan-op", "priceInCents": 1000, "availableUsers": 5, "periodDays": 30, "paymentDate": "2026-10-01"})
+    plan_id = bp.get("id") if isinstance(bp, dict) else 0
+    plan_uuid = bp.get("uuid") if isinstance(bp, dict) else str(uuid.uuid4())
+    province_id = (sql("SELECT id FROM province ORDER BY id LIMIT 1") or [["1"]])[0][0]
+    ghost = str(uuid.uuid4())
+
+    tenant_written = {}
+
+    def put_tenant(t, tag):
+        """Try to rename the caller's own tenant; record whether it stuck, then put it back (as owner A)."""
+        s = http("PUT", f"/tenant/uuid/{tA_uuid}", token=t, body={
+            "businessName": f"{TAG}-tenant-A-by-{tag}", "taxId": "QAIA0000000001", "countryCode": "US"})[0]
+        row = sql(f"SELECT business_name, IFNULL(updated_by,'NULL') FROM tenant WHERE id={fx.tA}")[0]
+        tenant_written[tag] = row if row[0] != f"{TAG}-tenant-A" else None
+        http("PUT", f"/tenant/uuid/{tA_uuid}", token=A["token"], body={
+            "businessName": f"{TAG}-tenant-A", "taxId": "QAIA0000000001", "countryCode": "US"})
+        return s, None
+
+    def matrix(u, tag):
+        """(status, list size or None) for each probe, as `u`."""
+        t = u["token"]
+
+        def lst(path):
+            s, p = http("GET", path, token=t)
+            return s, (len(p.get("items", [])) if s == 200 and isinstance(p, dict) else None)
+        r = {
+            "GET /user": lst(f"/user?page=0&pageSize=200&search={TAG}"),
+            "POST /user TenantUser": (mk_user(fx, t, f"op-x-{tag}-tu", "TenantUser")[0], None),
+            "POST /user Driver": (mk_user(fx, t, f"op-x-{tag}-d", "Driver")[0], None),
+            "GET /user/uuid/{peer}": (http("GET", f"/user/uuid/{A2['uuid']}", token=t)[0], None),
+            "GET /user/uuid/{owner}": (http("GET", f"/user/uuid/{A['uuid']}", token=t)[0], None),
+            "PUT /user/uuid/{peer}": (http("PUT", f"/user/uuid/{A2['uuid']}", token=t, body={
+                "email": A2["email"], "name": "user-a2", "role": "TenantUser", "enabled": False})[0], None),
+            "POST /user/uuid/{peer}/invite": (http("POST", f"/user/uuid/{A2['uuid']}/invite", token=t)[0], None),
+            "GET /tenant": lst("/tenant?page=0&pageSize=200"),
+            "POST /tenant": (http("POST", "/tenant", token=t, body={
+                "businessName": f"{TAG}-op-x-{tag}", "taxId": "QAIA0000000099", "countryCode": "US"})[0], None),
+            "PUT /tenant/uuid/{own}": put_tenant(t, tag),
+            "POST /tenant/uuid/{own}/plan": (http("POST", f"/tenant/uuid/{tA_uuid}/plan", token=t,
+                                                  body={"businessPlanId": plan_id})[0], None),
+            "GET /business-plan": lst("/business-plan"),
+            "GET /business-plan/uuid/{p}": (http("GET", f"/business-plan/uuid/{plan_uuid}", token=t)[0], None),
+            "POST /business-plan": (http("POST", "/business-plan", token=t, body={
+                "name": f"{TAG}-plan-x-{tag}", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
+                "paymentDate": "2026-10-01"})[0], None),
+            "PUT /business-plan/uuid/{p}": (http("PUT", f"/business-plan/uuid/{plan_uuid}", token=t, body={
+                "name": f"{TAG}-plan-op", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
+                "paymentDate": "2026-10-01"})[0], None),
+            "DELETE /business-plan/uuid/{p}": (http("DELETE", f"/business-plan/uuid/{plan_uuid}", token=t)[0], None),
+            "POST /province": (http("POST", "/province", token=t, body={
+                "acronym": "QX", "name": f"{TAG}-prov-{tag}", "countryCode": "US"})[0], None),
+            "POST /city": (http("POST", "/city", token=t, body={"provinceId": int(province_id),
+                                                                 "name": f"{TAG}-city-{tag}"})[0], None),
+            "GET /vehicle": lst("/vehicle?page=0&pageSize=200"),
+            "GET /vehicle/uuid/{own}": (http("GET", f"/vehicle/uuid/{vA['uuid']}", token=t)[0], None),
+            "POST /vehicle": (http("POST", "/vehicle", token=t, body={
+                "plate": f"QAIA9X{tag[:2].upper()}", "model": f"{TAG}-x", "status": "Active"})[0], None),
+            "PUT /vehicle/uuid/{own}": (http("PUT", f"/vehicle/uuid/{vA['uuid']}", token=t, body={
+                "plate": vA["plate"], "model": f"{TAG}-pwned", "status": "Inactive"})[0], None),
+            "GET /vehicle/uuid/{own}/assignments": (http("GET", f"/vehicle/uuid/{vA['uuid']}/assignments", token=t)[0], None),
+        }
+        return r
+
+    def more_than(role, base):
+        """Probes where `role` got something the TenantUser did not."""
+        out = {}
+        for k, (s, n) in role.items():
+            bs, bn = base[k]
+            if (_is_2xx(s) and not _is_2xx(bs)) or (n is not None and (bn is None or n > bn)):
+                out[k] = f"{s}/{n} vs TenantUser {bs}/{bn}"
+        return out
+
+    mU, mD, mM = matrix(A1, "tu"), matrix(D, "dr"), matrix(M, "me")
+    fx.op_matrix = {"TenantUser": mU, "Driver": mD, "Mechanic": mM}
+    admin_probes = [k for k in mU if not k.startswith(("GET /vehicle", "GET /vehicle/uuid"))]
+    extra = {"Driver": more_than(mD, mU), "Mechanic": more_than(mM, mU)}
+    # the plain expectation of the brief, independent of the TenantUser comparison
+    denied = {}
+    for role, m in (("Driver", mD), ("Mechanic", mM)):
+        for k in admin_probes:
+            s, n = m[k]
+            if k in ("GET /user", "GET /tenant"):
+                ok = s == 403 or (s == 200 and (n == 0 or k == "GET /tenant" and n <= 1))
+            elif k in ("GET /user/uuid/{peer}", "GET /user/uuid/{owner}", "PUT /user/uuid/{peer}",
+                       "POST /user/uuid/{peer}/invite"):
+                ok = s in (403, 404)
+            else:
+                ok = s == 403
+            if not ok:
+                denied[f"{role} {k}"] = s
+    leaks = sql(f"SELECT 'user', COUNT(*) FROM user WHERE email LIKE '{TAG}-op-x%' UNION ALL "
+                f"SELECT 'tenant', COUNT(*) FROM tenant WHERE business_name LIKE '{TAG}-op-x%' UNION ALL "
+                f"SELECT 'plan', COUNT(*) FROM business_plan WHERE name LIKE '{TAG}-plan-x%' OR "
+                f"(name='{TAG}-plan-op' AND price_in_cents<>1000) UNION ALL "
+                f"SELECT 'province', COUNT(*) FROM province WHERE name LIKE '{TAG}-prov-%' UNION ALL "
+                f"SELECT 'city', COUNT(*) FROM city WHERE name LIKE '{TAG}-city-%'")
+    leaks = {k: v for k, v in leaks if v != "0"}
+    a2_row = user_row(A2["id"])
+    if tenant_written.get("dr") or tenant_written.get("me"):
+        leaks["tenant A record renamed (business_name, updated_by)"] = {k: tenant_written.get(k) for k in ("dr", "me")}
+    fx.ia091_tenant_user_put = (mU["PUT /tenant/uuid/{own}"][0], tenant_written.get("tu"))   # OBS-TP-01, owner question
+    check("IA-091", not extra["Driver"] and not extra["Mechanic"] and not denied and not leaks and a2_row[4] == "1",
+          f"{len(admin_probes)} tenant/user/plan/reference-data administration probes: Driver and Mechanic answered "
+          f"exactly as the TenantUser or less (TenantUser: { {k: v[0] for k, v in mU.items() if k in admin_probes} }); "
+          f"nothing written",
+          f"more than a TenantUser: {extra}; not refused: {denied}; rows written: {leaks}; peer enabled={a2_row[4]} "
+          f"(TenantUser on the same PUT /tenant: {fx.ia091_tenant_user_put} -- OBS-TP-01, open owner question)")
+
+    # IA-092 -- they read their own tenant's vehicles and change none
+    vA_after = sql(f"SELECT model, status FROM vehicle WHERE plate='{vA['plate']}' AND tenant_id={fx.tA}")
+    new_v = sql(f"SELECT COUNT(*) FROM vehicle WHERE plate LIKE 'QAIA9X%'")[0][0]
+    ok = True
+    for m in (mD, mM):
+        ok &= m["GET /vehicle"] == (200, 1) and m["GET /vehicle/uuid/{own}"][0] == 200 \
+            and m["POST /vehicle"][0] == 403 and m["PUT /vehicle/uuid/{own}"][0] == 403 \
+            and m["GET /vehicle/uuid/{own}/assignments"][0] == 200
+    veh = {r: {k: v[0] for k, v in m.items() if "vehicle" in k} for r, m in (("Driver", mD), ("Mechanic", mM))}
+    check("IA-092", ok and vA_after == [[f"{TAG}-truck", "Active"]] and new_v == "0",
+          f"own tenant's vehicle list (1 item = A's only) and record 200, assignment history 200; "
+          f"create/edit 403, nothing written: {veh}",
+          f"{veh}; lists D={mD['GET /vehicle']} M={mM['GET /vehicle']}; A's row {vA_after}; new vehicles {new_v}")
+
+    # IA-096 -- tenant-bound: claims carry A; a request as another tenant's member sees only that tenant
+    lists = {k: sorted(v["id"] for v in (http("GET", "/tenant?page=0&pageSize=200", token=u["token"])[1] or {}).get("items", []))
+             if http("GET", "/tenant?page=0&pageSize=200", token=u["token"])[0] == 200 else "refused"
+             for k, u in (("driver A", D), ("mechanic A", M), ("driver B", DB_))}
+    no_tenant = sql(f"SELECT COUNT(*) FROM user WHERE role IN ('Driver','Mechanic') AND tenant_id IS NULL")[0][0]
+    cb = jwt_payload(DB_["token"])
+    vlist_B = (http("GET", "/vehicle?page=0&pageSize=200", token=DB_["token"])[1] or {}).get("items", [])
+    check("IA-096", no_tenant == "0" and cb.get("tenant_id") == fx.tB
+          and [v["uuid"] for v in vlist_B] == [vB["uuid"]]
+          and all(v in ("refused",) or set(v) <= {fx.tA} for k, v in lists.items() if "A" in k)
+          and (lists["driver B"] == "refused" or set(lists["driver B"]) <= {fx.tB}),
+          f"no Driver/Mechanic in the database without a tenant; driver B's token carries tenant {fx.tB} and B's "
+          f"vehicle list is exactly B's vehicle; tenant lists {lists}",
+          f"tenant-less operational accounts {no_tenant}; driver B claims {cb}; B vehicles {[v.get('plate') for v in vlist_B]}; "
+          f"tenant lists {lists}")
+
+    # IA-097 -- another tenant's records: 404, identical to a missing one
+    out = {}
+    for who, u in (("driver A", D), ("mechanic A", M)):
+        t = u["token"]
+        out[who] = {
+            "vehicle B": http("GET", f"/vehicle/uuid/{vB['uuid']}", token=t),
+            "vehicle ?": http("GET", f"/vehicle/uuid/{ghost}", token=t),
+            "vehicle B assignment": http("GET", f"/vehicle/uuid/{vB['uuid']}/assignment", token=t),
+            "vehicle ? assignment": http("GET", f"/vehicle/uuid/{ghost}/assignment", token=t),
+            "tenant B": http("GET", f"/tenant/uuid/{fx.tenants['B']['uuid']}", token=t),
+            "tenant ?": http("GET", f"/tenant/uuid/{ghost}", token=t),
+            "user B": http("GET", f"/user/uuid/{DB_['uuid']}", token=t),
+            "user ?": http("GET", f"/user/uuid/{ghost}", token=t),
+        }
+    same = all(d["vehicle B"] == d["vehicle ?"] and d["vehicle B assignment"] == d["vehicle ? assignment"]
+               and d["tenant B"] == d["tenant ?"] and d["user B"] == d["user ?"] for d in out.values())
+    st = {w: {k: v[0] for k, v in d.items()} for w, d in out.items()}
+    put_b = http("PUT", f"/vehicle/uuid/{vB['uuid']}", token=D["token"], body={
+        "plate": vB["plate"], "model": f"{TAG}-pwned", "status": "Inactive"})[0]
+    b_row = sql(f"SELECT model, status FROM vehicle WHERE uuid=UNHEX(REPLACE('{vB['uuid']}','-',''))")
+    check("IA-097", same and all(v == 404 for d in st.values() for v in d.values()) and put_b == 404
+          and b_row == [[f"{TAG}-truck", "Active"]],
+          f"tenant B's vehicle, its assignment, tenant B and B's driver answered 404, byte-identical to an unknown "
+          f"uuid, for driver A and mechanic A; PUT B's vehicle -> 404, row unchanged",
+          f"statuses {st}; identical-to-missing={same}; PUT B vehicle {put_b}; row {b_row}")
+
+    # IA-098 -- the names in every language the console speaks, and in the contract
+    loc_dir = os.path.join(REPO, "backoffice", "src", "i18n", "locales")
+    labels = {}
+    for f in ("en.json", "pt.json", "es.json"):
+        d = json.load(open(os.path.join(loc_dir, f)))
+        labels[f[:2]] = (d.get("roleDriver"), d.get("roleMechanic"))
+    translated = all(all(labels[l]) for l in labels) and labels["pt"] != labels["en"] and labels["es"] != labels["en"]
+    check("IA-098", translated and set(enum) >= {"Driver", "Mechanic"},
+          f"console labels {labels}; OpenAPI Role enum carries Driver and Mechanic (vitest ManagementPages.test.tsx "
+          f"covers the role picker and the hidden Tenants/Users menu; recorded in the log)",
+          f"labels {labels}; enum {enum}")
+
+    # IA-095 -- EPIC-IA-09-S04 (per-endpoint role statement in OpenAPI) is not built
+    record("IA-095", "NOT RUN", "EPIC-IA-09-S04 not built (plan: pending) -- no per-endpoint role statement to test")
+
+
+def role_matrix_regression():
+    """IA-099 -- EPIC-IA-09-S07: the role-matrix scenarios accepted against three roles pass
+    again, in the same run, against five."""
+    ids = ["IA-001", "IA-002", "IA-003", "IA-004", "IA-010", "IA-011", "IA-012", "IA-013", "IA-014", "IA-015",
+           "IA-016", "IA-017", "IA-018", "IA-020", "IA-021", "IA-022", "IA-023", "IA-024", "IA-025", "IA-026"]
+    st = {i: RESULTS.get(i, ("NOT RUN",))[0] for i in ids}
+    bad = {k: v for k, v in st.items() if v != "PASS"}
+    check("IA-099", not bad, f"{len(ids)} accepted role-matrix scenarios (IA-001...IA-026) PASS in this run",
+          f"not passing: {bad}")
+
+
 # ---------------------------------------------------------------- scratch instance (port 8094, db hermes_acc_ia)
 CWD = tempfile.mkdtemp(prefix="hermes-acc-ia-")
 
@@ -1065,6 +1366,9 @@ def main():
         sessions(fx)
         print("[invitations / public surface]")
         invitations(fx)
+        print("[operational roles: Driver, Mechanic (EPIC-IA-09)]")
+        operational_roles(fx)
+        role_matrix_regression()
     except Exception:
         traceback.print_exc()
     finally:
@@ -1088,6 +1392,8 @@ def main():
         st = [RESULTS.get(s, ("NOT RUN", ""))[0] for s in sids]
         if story in SUPERSEDED:
             res = "SUPERSEDED"
+        elif story in NOT_BUILT:
+            res = "NOT BUILT"
         elif "FAIL" in st:
             res = "FAIL"
         elif "BLOCKED" in st or "NOT RUN" in st:
@@ -1096,7 +1402,7 @@ def main():
             res = "PASS"
         stories[story] = res
         print(f"  {story}  {res:10} {' '.join(f'{s}={r}' for s, r in zip(sids, st))}")
-    tally = {k: list(stories.values()).count(k) for k in ("PASS", "FAIL", "BLOCKED", "SUPERSEDED")}
+    tally = {k: list(stories.values()).count(k) for k in ("PASS", "FAIL", "BLOCKED", "SUPERSEDED", "NOT BUILT")}
     print(f"\n{len(stories)} stories: {tally}")
     if a.json:
         json.dump({"results": RESULTS, "stories": stories}, open(a.json, "w"), indent=1, default=str)

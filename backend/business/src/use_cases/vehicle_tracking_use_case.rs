@@ -25,7 +25,9 @@
 //! a rule someone later "simplifies".
 
 use crate::domain::business_error::BusinessError;
-use crate::domain::vehicle_tracking::{GeoPoint, IgnitionState, TrackingSource, VehicleTrackingStatus};
+use crate::domain::vehicle_tracking::{
+    GeoPoint, IgnitionState, TrackingSource, VehicleTrackingStatus,
+};
 use crate::gateway::tracking_provider::{ProviderPosition, TrackingProvider};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
@@ -68,7 +70,12 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
         tenant_id: i64,
         device_ids: &[i64],
     ) -> Result<Vec<VehicleTrackingStatus>, BusinessError> {
-        entity::audit::run_for_tenant(tenant_id, TRACKING_ACTOR, self.current_status(device_ids, Utc::now())).await
+        entity::audit::run_for_tenant(
+            tenant_id,
+            TRACKING_ACTOR,
+            self.current_status(device_ids, Utc::now()),
+        )
+        .await
     }
 
     /// The rules, with `now` injected so freshness is testable without
@@ -107,6 +114,8 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
                         reported_at: position.recorded_at,
                         trustworthy: true,
                         position: Some(point(position)),
+                        position_reported_at: position.recorded_at,
+                        position_live: true,
                         odometer_meters: position.odometer_meters,
                     });
                 }
@@ -119,6 +128,7 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
                     let mut unknown = VehicleTrackingStatus::unknown(device_id);
                     if let Some(position) = by_device.get(&device_id) {
                         unknown.position = Some(point(position));
+                        unknown.position_reported_at = position.recorded_at;
                         unknown.odometer_meters = position.odometer_meters;
                     }
                     statuses.push(unknown);
@@ -137,7 +147,11 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
         // "unknown" about the rest.
         let events = self
             .provider
-            .ignition_events(&needs_fallback, now - Duration::hours(EVENT_LOOKBACK_HOURS), now)
+            .ignition_events(
+                &needs_fallback,
+                now - Duration::hours(EVENT_LOOKBACK_HOURS),
+                now,
+            )
             .await
             .unwrap_or_default();
 
@@ -156,7 +170,11 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
 
         for status in statuses.iter_mut() {
             if let Some((occurred_at, ignition)) = newest.get(&status.device_id) {
-                status.ignition = if *ignition { IgnitionState::On } else { IgnitionState::Off };
+                status.ignition = if *ignition {
+                    IgnitionState::On
+                } else {
+                    IgnitionState::Off
+                };
                 status.source = TrackingSource::IgnitionEvent;
                 status.reported_at = Some(*occurred_at);
                 // An ignition transition IS reliable evidence about ignition —
@@ -175,7 +193,10 @@ impl<P: TrackingProvider> VehicleTrackingUseCase<P> {
 }
 
 fn point(position: &ProviderPosition) -> GeoPoint {
-    GeoPoint { latitude: position.latitude, longitude: position.longitude }
+    GeoPoint {
+        latitude: position.latitude,
+        longitude: position.longitude,
+    }
 }
 
 /// The three conditions `D-15` records, together: a position is only evidence
@@ -200,11 +221,13 @@ fn is_trustworthy(position: &ProviderPosition, now: DateTime<Utc>) -> bool {
 mod tests {
     use super::*;
     use crate::gateway::tracking_provider::ProviderIgnitionEvent;
-    use entity::audit::{tenant_scope, TenantScope};
+    use entity::audit::{TenantScope, tenant_scope};
     use std::sync::Mutex;
 
     fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-06-30T18:00:00+00:00").unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339("2026-06-30T18:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn ago(seconds: i64) -> Option<DateTime<Utc>> {
@@ -287,39 +310,93 @@ mod tests {
     }
 
     fn event(device_id: i64, seconds_old: i64, ignition: bool) -> ProviderIgnitionEvent {
-        ProviderIgnitionEvent { device_id, ignition, occurred_at: now() - Duration::seconds(seconds_old) }
+        ProviderIgnitionEvent {
+            device_id,
+            ignition,
+            occurred_at: now() - Duration::seconds(seconds_old),
+        }
     }
 
     #[tokio::test]
     async fn a_fresh_valid_position_with_ignition_is_the_preferred_answer() {
-        let use_case = VehicleTrackingUseCase::new(FakeProvider::new(vec![position(1, 60, Some(true))]));
-        let statuses = use_case.current_status(&[1], now()).await.expect("positions answered");
+        let use_case =
+            VehicleTrackingUseCase::new(FakeProvider::new(vec![position(1, 60, Some(true))]));
+        let statuses = use_case
+            .current_status(&[1], now())
+            .await
+            .expect("positions answered");
 
         assert_eq!(statuses.len(), 1);
         let s = &statuses[0];
         assert_eq!(s.ignition, IgnitionState::On);
         assert_eq!(s.source, TrackingSource::LastPosition);
         assert!(s.trustworthy);
-        assert!(s.supports_presence_claim(), "a fresh fix is the only thing that may place a vehicle");
+        assert!(
+            s.supports_presence_claim(),
+            "a fresh fix is the only thing that may place a vehicle"
+        );
         assert_eq!(s.position.unwrap().latitude, -23.5);
         assert_eq!(s.odometer_meters, Some(1000.0));
     }
 
     #[tokio::test]
-    async fn a_stale_position_falls_back_to_the_event_report() {
-        let provider = FakeProvider::new(vec![position(1, POSITION_FRESHNESS_SECONDS + 1, Some(true))])
+    async fn a_last_known_coordinate_keeps_its_own_time_and_is_never_live() {
+        // DEF-FO-04: the coordinate's time survives a stale reading.
+        // DEF-FO-05: a newer ignition event makes ignition trustworthy, not the
+        // two-hour-old coordinate.
+        let provider = FakeProvider::new(vec![position(1, 7200, Some(true)), position(2, 7200, Some(true))])
             .with_events(vec![event(1, 3600, false)]);
-        let statuses = VehicleTrackingUseCase::new(provider).current_status(&[1], now()).await.unwrap();
+        let statuses = VehicleTrackingUseCase::new(provider)
+            .current_status(&[1, 2], now())
+            .await
+            .unwrap();
+
+        for s in &statuses {
+            assert_eq!(s.position_reported_at, ago(7200), "device {}", s.device_id);
+            assert!(!s.position_live, "device {}", s.device_id);
+        }
+        assert!(statuses[0].trustworthy && statuses[0].reported_at == ago(3600));
+        assert!(!statuses[1].trustworthy);
+
+        let fresh = VehicleTrackingUseCase::new(FakeProvider::new(vec![position(3, 10, Some(false))]))
+            .current_status(&[3], now())
+            .await
+            .unwrap();
+        assert!(fresh[0].position_live && fresh[0].position_reported_at == ago(10));
+    }
+
+    #[tokio::test]
+    async fn a_stale_position_falls_back_to_the_event_report() {
+        let provider = FakeProvider::new(vec![position(
+            1,
+            POSITION_FRESHNESS_SECONDS + 1,
+            Some(true),
+        )])
+        .with_events(vec![event(1, 3600, false)]);
+        let statuses = VehicleTrackingUseCase::new(provider)
+            .current_status(&[1], now())
+            .await
+            .unwrap();
 
         let s = &statuses[0];
-        assert_eq!(s.ignition, IgnitionState::Off, "the event, not the stale position, decides ignition");
+        assert_eq!(
+            s.ignition,
+            IgnitionState::Off,
+            "the event, not the stale position, decides ignition"
+        );
         assert_eq!(s.source, TrackingSource::IgnitionEvent);
-        assert!(s.trustworthy, "a recorded transition is a fact, not a guess");
+        assert!(
+            s.trustworthy,
+            "a recorded transition is a fact, not a guess"
+        );
         assert!(
             !s.supports_presence_claim(),
             "THE rule: a stale reading must never leave a vehicle tagged as being at base"
         );
-        assert!(s.position.is_some(), "the last known coordinate is still attached -- a parked vehicle has not moved");
+        assert!(
+            s.position.is_some(),
+            "the last known coordinate is still attached -- a parked vehicle has not moved"
+        );
     }
 
     #[tokio::test]
@@ -330,8 +407,20 @@ mod tests {
         let use_case = VehicleTrackingUseCase::new(provider);
         let statuses = use_case.current_status(&[1, 2], now()).await.unwrap();
 
-        assert!(statuses.iter().all(|s| s.source != TrackingSource::LastPosition));
-        assert_eq!(use_case.provider.events_asked_for.lock().unwrap().as_slice(), &[1, 2]);
+        assert!(
+            statuses
+                .iter()
+                .all(|s| s.source != TrackingSource::LastPosition)
+        );
+        assert_eq!(
+            use_case
+                .provider
+                .events_asked_for
+                .lock()
+                .unwrap()
+                .as_slice(),
+            &[1, 2]
+        );
     }
 
     #[tokio::test]
@@ -362,29 +451,51 @@ mod tests {
     async fn a_failing_event_report_degrades_only_the_devices_that_needed_it() {
         // Device 1 answered from /positions; device 2 needed the report, which
         // is down. Failing the whole batch would throw away a good reading.
-        let provider = FakeProvider::new(vec![position(1, 10, Some(true)), position(2, 9_999, Some(true))])
-            .with_failing_events();
-        let statuses = VehicleTrackingUseCase::new(provider).current_status(&[1, 2], now()).await
+        let provider = FakeProvider::new(vec![
+            position(1, 10, Some(true)),
+            position(2, 9_999, Some(true)),
+        ])
+        .with_failing_events();
+        let statuses = VehicleTrackingUseCase::new(provider)
+            .current_status(&[1, 2], now())
+            .await
             .expect("the batch survives a failing events report");
 
-        assert!(statuses[0].supports_presence_claim(), "device 1 is untouched");
+        assert!(
+            statuses[0].supports_presence_claim(),
+            "device 1 is untouched"
+        );
         assert_eq!(statuses[1].source, TrackingSource::Unavailable);
         assert!(!statuses[1].trustworthy);
-        assert!(statuses[1].position.is_some(), "its last known coordinate survives the failure");
+        assert!(
+            statuses[1].position.is_some(),
+            "its last known coordinate survives the failure"
+        );
     }
 
     #[tokio::test]
     async fn a_failing_position_feed_fails_the_batch() {
         // Nothing to degrade *from* -- unlike the events report, there is no
         // partial answer worth returning.
-        assert!(VehicleTrackingUseCase::new(DeadProvider).current_status(&[1], now()).await.is_err());
+        assert!(
+            VehicleTrackingUseCase::new(DeadProvider)
+                .current_status(&[1], now())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn the_newest_event_wins() {
-        let provider = FakeProvider::new(Vec::new())
-            .with_events(vec![event(1, 100, false), event(1, 10, true), event(1, 50, false)]);
-        let statuses = VehicleTrackingUseCase::new(provider).current_status(&[1], now()).await.unwrap();
+        let provider = FakeProvider::new(Vec::new()).with_events(vec![
+            event(1, 100, false),
+            event(1, 10, true),
+            event(1, 50, false),
+        ]);
+        let statuses = VehicleTrackingUseCase::new(provider)
+            .current_status(&[1], now())
+            .await
+            .unwrap();
         assert_eq!(statuses[0].ignition, IgnitionState::On);
         assert_eq!(statuses[0].reported_at, Some(now() - Duration::seconds(10)));
     }
@@ -392,15 +503,30 @@ mod tests {
     #[tokio::test]
     async fn an_empty_request_asks_the_provider_nothing() {
         let use_case = VehicleTrackingUseCase::new(FakeProvider::new(Vec::new()));
-        assert!(use_case.current_status(&[], now()).await.unwrap().is_empty());
-        assert!(use_case.provider.seen_scope.lock().unwrap().is_none(), "no devices, no call");
+        assert!(
+            use_case
+                .current_status(&[], now())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            use_case.provider.seen_scope.lock().unwrap().is_none(),
+            "no devices, no call"
+        );
     }
 
     #[tokio::test]
     async fn every_requested_device_gets_exactly_one_answer_in_order() {
         let provider = FakeProvider::new(vec![position(2, 10, Some(true))]);
-        let statuses = VehicleTrackingUseCase::new(provider).current_status(&[3, 2, 1], now()).await.unwrap();
-        assert_eq!(statuses.iter().map(|s| s.device_id).collect::<Vec<_>>(), vec![3, 2, 1]);
+        let statuses = VehicleTrackingUseCase::new(provider)
+            .current_status(&[3, 2, 1], now())
+            .await
+            .unwrap();
+        assert_eq!(
+            statuses.iter().map(|s| s.device_id).collect::<Vec<_>>(),
+            vec![3, 2, 1]
+        );
     }
 
     #[tokio::test]
@@ -408,16 +534,26 @@ mod tests {
         // HRMS-903 / U-016. Before `run_for_tenant`, the only way out of
         // D-05's `Denied` default was `run_as_platform`, which would have
         // given this poller the entire platform for free.
-        let use_case = VehicleTrackingUseCase::new(FakeProvider::new(vec![position(1, 10, Some(true))]));
-        use_case.ingest_for_tenant(42, &[1]).await.expect("ingested");
+        let use_case =
+            VehicleTrackingUseCase::new(FakeProvider::new(vec![position(1, 10, Some(true))]));
+        use_case
+            .ingest_for_tenant(42, &[1])
+            .await
+            .expect("ingested");
 
-        assert_eq!(*use_case.provider.seen_scope.lock().unwrap(), Some(TenantScope::Tenant(42)));
+        assert_eq!(
+            *use_case.provider.seen_scope.lock().unwrap(),
+            Some(TenantScope::Tenant(42))
+        );
     }
 
     #[tokio::test]
     async fn ingestion_does_not_leave_a_scope_behind_it() {
         let use_case = VehicleTrackingUseCase::new(FakeProvider::new(Vec::new()));
-        use_case.ingest_for_tenant(42, &[1]).await.expect("ingested");
+        use_case
+            .ingest_for_tenant(42, &[1])
+            .await
+            .expect("ingested");
         assert_eq!(tenant_scope(), TenantScope::Denied);
     }
 }

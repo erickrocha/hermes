@@ -4,7 +4,7 @@
 Interface-level, Python stdlib only (plumbing copied from foundation_acceptance.py).
   api       -- black-box HTTP against the running API (default http://127.0.0.1:8081)
   lifecycle -- the migration CLI on a scratch database (`hermes_acc_rd`) and a scratch
-               `hermes_server` on port 8096, for seeding and database-failure behaviour
+               `hermes` on port 8096, for seeding and database-failure behaviour
   ui        -- optional (--ui): runs reference_data_ui.mjs (Playwright) against the console
 
 Scenario IDs (RD-###) trace to 02-system_requirements/hermes/reference-data_acceptance_tests.md.
@@ -26,7 +26,7 @@ DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brut
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc_rd"
 SCRATCH_PORT = int(os.environ.get("HERMES_RD_SCRATCH_PORT", "8096"))
-BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes_server"))
+BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes"))
 MIGRATOR = os.environ.get("HERMES_MIGRATOR", os.path.join(BACKEND, "target", "debug", "migration"))
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 ADMIN_PASSWORD = os.environ.get("HERMES_ADMIN_PASSWORD", "LocalDevOnly123!")

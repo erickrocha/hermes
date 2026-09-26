@@ -3,9 +3,9 @@
 //! bem-sucedida (`needs_rehash`), porque não existe como reconverter um hash
 //! sem a senha em claro — só o login a tem.
 
+use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use argon2::Argon2;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HashError {
@@ -56,9 +56,8 @@ pub fn needs_rehash(stored: &str) -> bool {
 /// caminho real.
 pub fn verify_dummy(plaintext: &str) {
     static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let stored = DUMMY.get_or_init(|| {
-        hash("hermes-constant-work-placeholder").unwrap_or_else(|_| String::new())
-    });
+    let stored = DUMMY
+        .get_or_init(|| hash("hermes-constant-work-placeholder").unwrap_or_else(|_| String::new()));
     let _ = verify(plaintext, stored);
 }
 

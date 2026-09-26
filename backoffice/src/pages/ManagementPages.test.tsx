@@ -8,7 +8,7 @@ import { api } from '../api'
 import { store } from '../store'
 import { emptyPage } from '../types'
 import type { Session, Tenant } from '../types'
-import { PlanEditorPage, UserEditorPage, amountToCents, centsToAmount } from './ManagementPages'
+import { PlanEditorPage, UserEditorPage, amountToCents, canCreateUsers, canReachAdministration, centsToAmount } from './ManagementPages'
 
 // EPIC-BO-03-S02 (HRMS-412): the API's price fields are integer cents; a
 // human types and reads currency amounts. These two conversions are the
@@ -98,11 +98,13 @@ describe('UserEditorPage role-conditional creation (EPIC-BO-02)', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /^role$/i }))
     const options = screen.getAllByRole('option').map((option) => option.textContent)
-    expect(options).toEqual(expect.arrayContaining(['TenantOwner', 'SysAdmin']))
-    expect(options).not.toContain('TenantUser')
+    // EPIC-IA-09-S06 (HRMS-134): role names are shown translated, not as enum values.
+    expect(options).toEqual(expect.arrayContaining(['Tenant owner', 'Platform administrator']))
+    expect(options).not.toContain('Tenant user')
+    expect(options).not.toContain('Driver')
   })
 
-  it('gives a tenant owner no role or tenant picker at all -- the new user is a TenantUser in their own tenant', async () => {
+  it('gives a tenant owner a role picker limited to tenant user, driver and mechanic, and no tenant picker -- the new user lands in their own tenant', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
     render(
       <Provider store={sessionStore(tenantOwnerSession, [oneTenant])}>
@@ -111,8 +113,12 @@ describe('UserEditorPage role-conditional creation (EPIC-BO-02)', () => {
         </MemoryRouter>
       </Provider>
     )
-    expect(screen.queryByText('TenantOwner')).not.toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    // EPIC-IA-09-S03 (HRMS-131, D-22): a tenant owner staffs their own tenant.
+    fireEvent.click(screen.getByRole('button', { name: /^role$/i }))
+    const roles = screen.getAllByRole('option').map((option) => option.textContent)
+    expect(roles).toEqual(['Tenant user', 'Driver', 'Mechanic'])
+    expect(screen.queryByRole('button', { name: /^tenant$/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'Driver' }))
     // EPIC-IA-07/D-07: no password field on creation -- the account is
     // invite-only, never given a caller-set password.
     expect(screen.queryByLabelText(/temporary password|senha tempor|new password|nova senha/i)).not.toBeInTheDocument()
@@ -121,7 +127,18 @@ describe('UserEditorPage role-conditional creation (EPIC-BO-02)', () => {
     fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'coordinator@transmega.com' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ role: 'TenantUser', tenantId: 42 })))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ role: 'Driver', tenantId: 42 })))
     expect(post).not.toHaveBeenCalledWith('/user', expect.objectContaining({ password: expect.anything() }))
+  })
+})
+
+// EPIC-BO-07-S02/S03 (HRMS-416, HRMS-417, D-22): the console's role guards answer for five roles.
+describe('operational roles in the console', () => {
+  it('keeps drivers and mechanics out of tenant and user administration', () => {
+    for (const role of ['SysAdmin', 'TenantOwner', 'TenantUser']) expect(canReachAdministration(role)).toBe(true)
+    for (const role of ['Driver', 'Mechanic']) {
+      expect(canReachAdministration(role)).toBe(false)
+      expect(canCreateUsers(role)).toBe(false)
+    }
   })
 })

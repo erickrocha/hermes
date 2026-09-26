@@ -1,14 +1,17 @@
+use crate::AppState;
 use crate::commons::exception_response::ExceptionResponse;
 use crate::commons::i18n::{ErrorKey, Locale};
-use crate::AppState;
 use axum::extract::State;
 use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
-use business::domain::authorization::is_unbound_sys_admin;
-use business::domain::enums::Role;
+use business::domain::authorization::{is_unbound_sys_admin, lacks_required_tenant};
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 
-pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: Next) -> Result<Response<Body>, ExceptionResponse> {
+pub async fn authentication(
+    state: State<AppState>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response<Body>, ExceptionResponse> {
     let locale = Locale::from_accept_language(
         req.headers()
             .get(ACCEPT_LANGUAGE)
@@ -22,14 +25,14 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
 
     let auth_header = req.headers_mut().get(AUTHORIZATION);
     let auth_header = match auth_header {
-        Some(header) => header
-            .to_str()
-            .map_err(|_| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::AuthHeaderMissing))?,
+        Some(header) => header.to_str().map_err(|_| {
+            ExceptionResponse::Forbidden(locale.clone(), ErrorKey::AuthHeaderMissing)
+        })?,
         None => {
             return Err(ExceptionResponse::Forbidden(
                 locale,
                 ErrorKey::RequiredHeaderValueMissing,
-            ))
+            ));
         }
     };
 
@@ -48,8 +51,11 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
         .await
         .map_err(|_| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
 
-    if matches!(current_user.role, Role::TenantOwner | Role::TenantUser) && current_user.tenant_id.is_none() {
-        return Err(ExceptionResponse::Forbidden(locale.clone(),ErrorKey::InvalidParameterValue,));
+    if lacks_required_tenant(&current_user) {
+        return Err(ExceptionResponse::Forbidden(
+            locale.clone(),
+            ErrorKey::InvalidParameterValue,
+        ));
     }
 
     let audit_user = entity::audit::AuditUser {
@@ -58,7 +64,7 @@ pub async fn authentication(state: State<AppState>,mut req: Request<Body>,next: 
         tenant_id: current_user.tenant_id,
         enforce_tenant: !is_unbound_sys_admin(&current_user),
     };
-    
+
     req.extensions_mut().insert(current_user);
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
 }

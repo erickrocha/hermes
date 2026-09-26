@@ -46,9 +46,9 @@ COPY . .
 # gone by the time the runtime stage tries to COPY it.
 RUN --mount=type=cache,target=/build/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    cargo build --release --locked --bin hermes_server \
-    && strip target/release/hermes_server \
-    && cp target/release/hermes_server /build/hermes_server
+    cargo build --release --locked --bin hermes \
+    && strip target/release/hermes \
+    && cp target/release/hermes /build/hermes
 
 # ---------- runtime ----------
 FROM debian:bookworm-slim AS runtime
@@ -63,7 +63,7 @@ RUN apt-get update \
     && useradd --system --no-create-home --shell /usr/sbin/nologin --uid 10001 hermes
 
 WORKDIR /app
-COPY --from=builder /build/hermes_server /usr/local/bin/hermes_server
+COPY --from=builder /build/hermes /usr/local/bin/hermes
 
 USER hermes
 
@@ -85,4 +85,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
 # No argument starts the server; `migrate` runs the deploy step (PD-033,
 # HRMS-045). The same image does both, so the schema is never applied by a
 # binary built from a different commit than the one about to serve it.
-ENTRYPOINT ["/usr/local/bin/hermes_server"]
+ENTRYPOINT ["/usr/local/bin/hermes"]

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-pub struct BusinessError{
+pub struct BusinessError {
     pub message: String,
     /// Distinguishes "the record you named does not exist" from every other
     /// business failure, so the HTTP layer can answer 404 instead of 400

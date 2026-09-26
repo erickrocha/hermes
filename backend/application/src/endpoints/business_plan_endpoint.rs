@@ -4,10 +4,10 @@ use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::business_plan_json::{
     BusinessPlanJson, CreateBusinessPlanJson, UpdateBusinessPlanJson,
 };
-use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
 };
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
@@ -93,7 +93,7 @@ fn map_error(locale: Locale, message: &str) -> ExceptionResponse {
     path = "/business-plan",
     request_body = CreateBusinessPlanJson,
     responses(
-        (status = 201, description = "Business plan created", body = BusinessPlanJson),
+        (status = 201, description = "Business plan created. **Roles:** SysAdmin (unbound only).", body = BusinessPlanJson),
         (status = 400, body = BadRequestErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson)
@@ -120,7 +120,7 @@ pub async fn add(
     path = "/business-plan",
     params(PageQuery),
     responses(
-        (status = 200, body = PageJson<BusinessPlanJson>),
+        (status = 200, description = "A page of business plans (PD-028). **Roles:** SysAdmin (unbound only).", body = PageJson<BusinessPlanJson>),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson)
     ),
@@ -155,7 +155,7 @@ pub async fn list_all(
     path = "/business-plan/uuid/{uuid}",
     params(("uuid" = String, Path)),
     responses(
-        (status = 200, body = BusinessPlanJson),
+        (status = 200, description = "Business plan found. **Roles:** SysAdmin (unbound only).", body = BusinessPlanJson),
         (status = 404, body = NotFoundErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson)
@@ -199,7 +199,7 @@ async fn resolve_uuid(
     params(("uuid" = String, Path)),
     request_body = UpdateBusinessPlanJson,
     responses(
-        (status = 200, body = BusinessPlanJson),
+        (status = 200, description = "Business plan updated. **Roles:** SysAdmin (unbound only).", body = BusinessPlanJson),
         (status = 400, body = BadRequestErrorJson),
         (status = 404, body = NotFoundErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
@@ -229,7 +229,7 @@ pub async fn update(
     path = "/business-plan/uuid/{uuid}",
     params(("uuid" = String, Path)),
     responses(
-        (status = 204, description = "Business plan deleted"),
+        (status = 204, description = "Business plan deleted. **Roles:** SysAdmin (unbound only)."),
         (status = 404, body = NotFoundErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson)

@@ -71,8 +71,12 @@ impl RejectionReason {
             RejectionReason::CountryCodeInvalid => "country code must be two ASCII letters",
             RejectionReason::DuplicateCityInFile => "duplicate city within the file",
             RejectionReason::DuplicateAcronymInFile => "duplicate acronym within the file",
-            RejectionReason::CityAlreadyExists => "a city with this name already exists in this province",
-            RejectionReason::ProvinceAlreadyExists => "a province with this acronym already exists in this country",
+            RejectionReason::CityAlreadyExists => {
+                "a city with this name already exists in this province"
+            }
+            RejectionReason::ProvinceAlreadyExists => {
+                "a province with this acronym already exists in this country"
+            }
         }
     }
 }
@@ -125,11 +129,15 @@ impl ReferenceDataError {
     /// The English rendering, for logs and for tests.
     pub fn english(&self) -> String {
         match self {
-            ReferenceDataError::Unavailable => "Reference data is temporarily unavailable".to_string(),
+            ReferenceDataError::Unavailable => {
+                "Reference data is temporarily unavailable".to_string()
+            }
             ReferenceDataError::Rejected(rejections) => {
                 let detail = rejections
                     .iter()
-                    .map(|rejection| format!("row {}: {}", rejection.row + 1, rejection.reason.english()))
+                    .map(|rejection| {
+                        format!("row {}: {}", rejection.row + 1, rejection.reason.english())
+                    })
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!("Import rejected, nothing was written. {detail}")
@@ -168,7 +176,9 @@ pub fn find_duplicate_keys<K: Eq + std::hash::Hash>(keys: impl Iterator<Item = K
 
 #[cfg(test)]
 mod tests {
-    use super::{find_duplicate_keys, fold_key, ImportRejection, ReferenceDataError, RejectionReason};
+    use super::{
+        ImportRejection, ReferenceDataError, RejectionReason, find_duplicate_keys, fold_key,
+    };
 
     #[test]
     fn duplicate_rows_are_reported_by_their_later_position() {

@@ -6,14 +6,13 @@ use crate::domain::enums::Role;
 use crate::domain::password_policy;
 use crate::domain::user::{User, UserEntityMapper};
 use crate::gateway::user_gateway::UserGateway;
+use chrono::Utc;
 use sea_orm::DbConn;
 use std::env;
-use chrono::Utc;
 
 pub struct UserUseCase {
     gateway: UserGateway,
 }
-
 
 impl UserUseCase {
     pub fn new(gateway: UserGateway) -> Self {
@@ -21,7 +20,10 @@ impl UserUseCase {
     }
 
     pub async fn create(&self, user: User) -> Result<User, BusinessError> {
-        log::info!("[UserUseCase::create] Executing for user email: {}", user.email);
+        log::info!(
+            "[UserUseCase::create] Executing for user email: {}",
+            user.email
+        );
 
         if user.email.trim().is_empty() {
             let msg = "User email is required".to_string();
@@ -46,26 +48,30 @@ impl UserUseCase {
             ..user
         };
 
-        let entity = self
-            .gateway
-            .persist(user_to_save)
-            .await
-            .map_err(|e| {
-                let msg = format!("Failed to persist user: {}", e);
-                log::error!("[UserUseCase::create] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entity = self.gateway.persist(user_to_save).await.map_err(|e| {
+            let msg = format!("Failed to persist user: {}", e);
+            log::error!("[UserUseCase::create] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         Ok(UserEntityMapper::from_active_model(entity))
     }
 
     pub async fn update(&self, id: i64, user: User) -> Result<User, BusinessError> {
-        log::info!("[UserUseCase::update] Executing for user id {}: {}", id, user.email);
+        log::info!(
+            "[UserUseCase::update] Executing for user id {}: {}",
+            id,
+            user.email
+        );
 
         let existing = match self.find_by_id(id).await {
             Ok(u) => u,
             Err(e) => {
-                log::error!("[UserUseCase::update] Failed to find existing user with id {}: {}", id, e);
+                log::error!(
+                    "[UserUseCase::update] Failed to find existing user with id {}: {}",
+                    id,
+                    e
+                );
                 return Err(e);
             }
         };
@@ -82,7 +88,11 @@ impl UserUseCase {
         let updated_user = User {
             id: Some(id),
             uuid: existing.uuid,
-            email: if user.email.trim().is_empty() { existing.email } else { user.email },
+            email: if user.email.trim().is_empty() {
+                existing.email
+            } else {
+                user.email
+            },
             name: user.name.or(existing.name),
             password,
             enabled: user.enabled,
@@ -94,21 +104,25 @@ impl UserUseCase {
             updated_by: user.updated_by,
         };
 
-        let entity = self
-            .gateway
-            .persist(updated_user)
-            .await
-            .map_err(|e| {
-                let msg = format!("Failed to update user: {}", e);
-                log::error!("[UserUseCase::update] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
+            let msg = format!("Failed to update user: {}", e);
+            log::error!("[UserUseCase::update] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         Ok(UserEntityMapper::from_active_model(entity))
     }
 
-    pub async fn change_password(&self,id: i64,current_password: String,new_password: String) -> Result<User, BusinessError> {
-        log::info!("[UserUseCase::change_password] Executing for user id {}", id);
+    pub async fn change_password(
+        &self,
+        id: i64,
+        current_password: String,
+        new_password: String,
+    ) -> Result<User, BusinessError> {
+        log::info!(
+            "[UserUseCase::change_password] Executing for user id {}",
+            id
+        );
 
         if new_password.trim().is_empty() {
             let msg = "New password is required".to_string();
@@ -137,15 +151,11 @@ impl UserUseCase {
             ..existing
         };
 
-        let entity = self
-            .gateway
-            .persist(updated_user)
-            .await
-            .map_err(|e| {
-                let msg = format!("Failed to update password: {}", e);
-                log::error!("[UserUseCase::change_password] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
+            let msg = format!("Failed to update password: {}", e);
+            log::error!("[UserUseCase::change_password] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         Ok(UserEntityMapper::from_active_model(entity))
     }
@@ -153,15 +163,11 @@ impl UserUseCase {
     pub async fn find_by_id(&self, id: i64) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::find_by_id] Executing for id: {}", id);
 
-        let entity = self
-            .gateway
-            .find_by_id(id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_by_id] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[UserUseCase::find_by_id] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         match entity {
             Some(model) => Ok(UserEntityMapper::from_model(model)),
@@ -180,20 +186,19 @@ impl UserUseCase {
     pub async fn find_by_uuid(&self, uuid: String) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::find_by_uuid] Executing for uuid: {}", uuid);
 
-        let entity = self
-            .gateway
-            .find_by_uuid(uuid.clone())
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_by_uuid] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entity = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[UserUseCase::find_by_uuid] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         match entity {
             Some(model) => Ok(UserEntityMapper::from_model(model)),
             None => {
-                log::error!("[UserUseCase::find_by_uuid] User not found with uuid: {}", uuid);
+                log::error!(
+                    "[UserUseCase::find_by_uuid] User not found with uuid: {}",
+                    uuid
+                );
                 Err(BusinessError::new("User not found".to_string()))
             }
         }
@@ -201,33 +206,41 @@ impl UserUseCase {
 
     /// PD-028: uma página de usuários mais o total. O escopo de tenant vem do
     /// gateway (`tenant_select`), não de um filtro repetido aqui.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<User>, u64), BusinessError> {
-        let (entities, total) = self.gateway.find_page(page, page_size, search).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_page] {}", msg);
-            BusinessError::new(msg)
-        })?;
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<User>, u64), BusinessError> {
+        let (entities, total) = self
+            .gateway
+            .find_page(page, page_size, search)
+            .await
+            .map_err(|e| {
+                let msg = format!("Database error: {}", e);
+                log::error!("[UserUseCase::find_page] {}", msg);
+                BusinessError::new(msg)
+            })?;
         Ok((UserEntityMapper::from_models(entities), total))
     }
 
     pub async fn find_all(&self) -> Result<Vec<User>, BusinessError> {
         log::info!("[UserUseCase::find_all] Executing find_all users");
 
-        let entities = self
-            .gateway
-            .find_all()
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_all] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let entities = self.gateway.find_all().await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[UserUseCase::find_all] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         Ok(UserEntityMapper::from_models(entities))
     }
 
     pub async fn find_all_by_tenant_id(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
-        log::info!("[UserUseCase::find_all_by_tenant_id] Executing for tenant_id: {}", tenant_id);
+        log::info!(
+            "[UserUseCase::find_all_by_tenant_id] Executing for tenant_id: {}",
+            tenant_id
+        );
 
         let entities = self
             .gateway
@@ -243,7 +256,10 @@ impl UserUseCase {
     }
 
     pub async fn persist(db: DbConn, user: User) -> Option<User> {
-        log::info!("[UserUseCase::persist] Executing persist for user: {}", user.email);
+        log::info!(
+            "[UserUseCase::persist] Executing persist for user: {}",
+            user.email
+        );
 
         if user.email.is_empty() || user.password.is_empty() {
             log::error!("[UserUseCase::persist] Email or password is empty");
@@ -268,17 +284,27 @@ impl UserUseCase {
     }
 
     pub async fn find_by_email(db: &DbConn, email: String) -> Option<User> {
-        log::info!("[UserUseCase::find_by_email] Executing for email: {}", email);
+        log::info!(
+            "[UserUseCase::find_by_email] Executing for email: {}",
+            email
+        );
 
         let user_result = UserGateway::find_by_email(db, email.clone()).await;
         match user_result {
             Ok(Some(model)) => Some(UserEntityMapper::from_model(model)),
             Ok(None) => {
-                log::info!("[UserUseCase::find_by_email] No user found for email: {}", email);
+                log::info!(
+                    "[UserUseCase::find_by_email] No user found for email: {}",
+                    email
+                );
                 None
             }
             Err(error) => {
-                log::error!("[UserUseCase::find_by_email] Error finding user by email {}: {}", email, error);
+                log::error!(
+                    "[UserUseCase::find_by_email] Error finding user by email {}: {}",
+                    email,
+                    error
+                );
                 None
             }
         }
@@ -289,7 +315,10 @@ impl UserUseCase {
             Ok(Some(model)) => Some(UserEntityMapper::from_model(model)),
             Ok(None) => None,
             Err(error) => {
-                log::error!("[UserUseCase::find_sysadmin] Error finding SysAdmin user: {}", error);
+                log::error!(
+                    "[UserUseCase::find_sysadmin] Error finding SysAdmin user: {}",
+                    error
+                );
                 None
             }
         }
@@ -301,7 +330,7 @@ impl UserUseCase {
     ///
     /// EPIC-XF-04-S01 (HRMS-021): both variables are required, same as
     /// `DATABASE_URL`/`ACCESS_TOKEN_SECRET`/`REFRESH_TOKEN_SECRET` in
-    /// `web::start`. Before this they defaulted to `admin@hermes.com`/
+    /// `application`'s `start` (main.rs). Before this they defaulted to `admin@hermes.com`/
     /// `admin` when absent -- the one setting in the whole service that
     /// defaulted a secret instead of failing fast, and the one whose
     /// default is public (it is right here in the source).
@@ -309,7 +338,8 @@ impl UserUseCase {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
         let sysadmin_email = env::var("SYSADMIN_EMAIL").expect("SYSADMIN_EMAIL must be set");
-        let sysadmin_password = env::var("SYSADMIN_PASSWORD").expect("SYSADMIN_PASSWORD must be set");
+        let sysadmin_password =
+            env::var("SYSADMIN_PASSWORD").expect("SYSADMIN_PASSWORD must be set");
 
         if sysadmin_email.trim().is_empty() || sysadmin_password.trim().is_empty() {
             panic!("SYSADMIN_EMAIL and SYSADMIN_PASSWORD must not be empty");
@@ -317,7 +347,7 @@ impl UserUseCase {
 
         // DEF-IA-09 (HRMS-109): the minimum applies to every path that sets a
         // password, and the boot-seeded account is the most privileged one on
-        // the platform. `web::start` refuses to boot on a short value before
+        // the platform. `application`'s `start` (main.rs) refuses to boot on a short value before
         // this is ever reached; this is the same rule stated where the password
         // is actually written, so a second caller cannot bypass it.
         if let Err(error) = password_policy::validate_length(&sysadmin_password) {
@@ -326,11 +356,18 @@ impl UserUseCase {
 
         if let Some(existing_sysadmin) = Self::find_sysadmin(db).await {
             if existing_sysadmin.email == sysadmin_email {
-                log::info!("[UserUseCase::seed_sysadmin] SysAdmin user already exists with email: {}", sysadmin_email);
+                log::info!(
+                    "[UserUseCase::seed_sysadmin] SysAdmin user already exists with email: {}",
+                    sysadmin_email
+                );
                 return Some(existing_sysadmin);
             }
 
-            log::info!("[UserUseCase::seed_sysadmin] Updating SysAdmin user {} -> {}",existing_sysadmin.email,sysadmin_email);
+            log::info!(
+                "[UserUseCase::seed_sysadmin] Updating SysAdmin user {} -> {}",
+                existing_sysadmin.email,
+                sysadmin_email
+            );
 
             let updated_sysadmin = User {
                 id: existing_sysadmin.id,
@@ -356,7 +393,10 @@ impl UserUseCase {
             return updated;
         }
 
-        log::info!("[UserUseCase::seed_sysadmin] Creating initial SysAdmin user with email: {}", sysadmin_email);
+        log::info!(
+            "[UserUseCase::seed_sysadmin] Creating initial SysAdmin user with email: {}",
+            sysadmin_email
+        );
 
         let sysadmin_user = User {
             id: None,
@@ -382,4 +422,3 @@ impl UserUseCase {
         created
     }
 }
-

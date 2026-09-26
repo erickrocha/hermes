@@ -19,15 +19,14 @@ What it buys, observably: memory safety and compile-time correctness for a servi
 credentials and billing data, a single self-contained binary to deploy, and a release profile
 tuned for it (`opt-level = 3`, thin LTO, in `backend/Cargo.toml`).
 
-## Why a four-crate workspace (`entity` / `business` / `migration` / `web`)
+## Why a four-crate workspace (`entity` / `business` / `migration` / `application`)
 
 **Owner's reasoning (D-13).** Organisation, reuse, and good practice. The split is a
 structural default the owner applies deliberately, not a reaction to a specific problem this
 codebase hit.
 
-What it buys, observably — the dependency graph is strictly one-way (`web → business →
-entity`, `web → migration`) and the root `hermes_server` binary is a three-line shim that only
-calls `web::main()`:
+What it buys, observably — the dependency graph is strictly one-way (`application → business →
+entity`, `application → migration`) and the `application` crate builds the single `hermes` binary:
 
 - `business` has no `axum` dependency and no HTTP types at all — it compiles and is testable
   as a plain library, independent of whether a server exists.

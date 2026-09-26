@@ -68,22 +68,33 @@ impl<T> PageJson<T> {
             total_pages: total_items.div_ceil(page_size.max(1)),
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PageJson, PageQuery, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE};
+    use super::{DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PageJson, PageQuery};
 
     fn query(page: Option<u64>, page_size: Option<u64>) -> PageQuery {
-        PageQuery { page, page_size, search: None }
+        PageQuery {
+            page,
+            page_size,
+            search: None,
+        }
     }
 
     #[test]
     fn a_blank_search_term_is_no_search_at_all() {
-        let blank = PageQuery { page: None, page_size: None, search: Some("   ".to_string()) };
+        let blank = PageQuery {
+            page: None,
+            page_size: None,
+            search: Some("   ".to_string()),
+        };
         assert_eq!(blank.search(), None);
-        let typed = PageQuery { page: None, page_size: None, search: Some("  acme ".to_string()) };
+        let typed = PageQuery {
+            page: None,
+            page_size: None,
+            search: Some("  acme ".to_string()),
+        };
         assert_eq!(typed.search().as_deref(), Some("acme"));
     }
 

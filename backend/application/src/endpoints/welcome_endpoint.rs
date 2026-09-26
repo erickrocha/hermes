@@ -8,5 +8,5 @@ use axum::response::{IntoResponse, Redirect};
   )
 )]
 pub async fn welcome() -> impl IntoResponse {
-  Redirect::to("/swagger-ui/index.html")
+    Redirect::to("/swagger-ui/index.html")
 }

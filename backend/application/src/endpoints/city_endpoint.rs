@@ -1,23 +1,23 @@
-use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
-use crate::commons::i18n::{translate_reference_data_error, ErrorKey, Locale};
-use crate::endpoints::json::error_response_json::{
-    BadRequestErrorJson, NotFoundErrorJson, UnauthorizedErrorJson, ForbiddenErrorJson,
-    InternalServerErrorJson,
-};
-use crate::endpoints::json::city_json::CityJson;
-use crate::endpoints::json::page_json::{PageJson, PageQuery};
-use crate::infrastructure::mapper::{Mapper, CityMapper};
 use crate::AppState;
-use axum::extract::{Path, Query, State};
-use axum::extract::Extension;
+use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
+use crate::commons::i18n::{ErrorKey, Locale, translate_reference_data_error};
+use crate::endpoints::json::city_json::CityJson;
+use crate::endpoints::json::error_response_json::{
+    BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
+    UnauthorizedErrorJson,
+};
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
+use crate::endpoints::json::reference_json::ImportResultJson;
+use crate::infrastructure::mapper::{CityMapper, Mapper};
 use axum::Json;
-use business::gateway::city_gateway::CityGateway;
-use business::use_cases::city_use_case::CityUseCase;
+use axum::extract::Extension;
+use axum::extract::{Path, Query, State};
 use business::domain::authorization::can_manage_reference_data;
 use business::domain::city::City;
 use business::domain::user::User;
+use business::gateway::city_gateway::CityGateway;
+use business::use_cases::city_use_case::CityUseCase;
 use business::use_cases::reference_import::{ImportOutcome, ReferenceDataError};
-use crate::endpoints::json::reference_json::ImportResultJson;
 
 #[utoipa::path(
     get,
@@ -25,7 +25,7 @@ use crate::endpoints::json::reference_json::ImportResultJson;
     path = "/cities",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of cities (PD-028). The largest table in the system, and the reason the rule is project-wide. The address dropdowns do NOT use this route -- they use /cities/by-province/{province_id}, which stays unpaginated on purpose: a truncated option list is defect D-9 again.", body = PageJson<CityJson>),
+        (status = 200, description = "A page of cities (PD-028). The largest table in the system, and the reason the rule is project-wide. The address dropdowns do NOT use this route -- they use /cities/by-province/{province_id}, which stays unpaginated on purpose: a truncated option list is defect D-9 again. **Roles:** SysAdmin (unbound only).", body = PageJson<CityJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -50,8 +50,15 @@ pub async fn list_all(
     let (list, total) = use_case
         .find_page(page, page_size, search.as_deref())
         .await
-        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
-    Ok(Json(PageJson::new(CityMapper::json_vec(list), page, page_size, total)))
+        .map_err(|_| {
+            ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable)
+        })?;
+    Ok(Json(PageJson::new(
+        CityMapper::json_vec(list),
+        page,
+        page_size,
+        total,
+    )))
 }
 
 #[utoipa::path(
@@ -62,7 +69,7 @@ pub async fn list_all(
         ("province_id" = i32, Path, description = "Province ID")
     ),
     responses(
-        (status = 200, description = "List of cities for the specified province", body = Vec<CityJson>),
+        (status = 200, description = "List of cities for the specified province. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role).", body = Vec<CityJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -78,7 +85,9 @@ pub async fn get_by_province(
     let list = use_case
         .find_by_province_id(province_id)
         .await
-        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable))?;
+        .map_err(|_| {
+            ExceptionResponse::InternalServerError(locale, ErrorKey::ReferenceDataUnavailable)
+        })?;
     Ok(Json(CityMapper::json_vec(list)))
 }
 
@@ -90,7 +99,7 @@ pub async fn get_by_province(
         ("id" = i64, Path, description = "City ID")
     ),
     responses(
-        (status = 200, description = "City found", body = CityJson),
+        (status = 200, description = "City found. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role).", body = CityJson),
         (status = 404, description = "City not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -122,7 +131,10 @@ fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
     if !can_manage_reference_data(user) {
         // DEF-RD-06: reference data is not a plan feature, so the refusal must
         // not send the reader to their subscription.
-        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::ReferenceDataForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale.clone(),
+            ErrorKey::ReferenceDataForbidden,
+        ));
     }
     Ok(())
 }
@@ -136,12 +148,19 @@ fn reference_failure(locale: &Locale, error: ReferenceDataError) -> ExceptionRes
             locale.clone(),
             ErrorKey::ReferenceDataUnavailable,
         ),
-        rejected => ExceptionResponse::BadRequestMessage(translate_reference_data_error(locale, &rejected)),
+        rejected => {
+            ExceptionResponse::BadRequestMessage(translate_reference_data_error(locale, &rejected))
+        }
     }
 }
 
 fn domain(json: CityJson) -> City {
-    City { id: json.id, uuid: json.uuid, province_id: json.province_id, name: json.name }
+    City {
+        id: json.id,
+        uuid: json.uuid,
+        province_id: json.province_id,
+        name: json.name,
+    }
 }
 
 #[utoipa::path(
@@ -150,7 +169,7 @@ fn domain(json: CityJson) -> City {
     path = "/city",
     request_body = CityJson,
     responses(
-        (status = 200, description = "City saved", body = CityJson),
+        (status = 200, description = "City saved. **Roles:** SysAdmin (unbound only).", body = CityJson),
         (status = 400, body = BadRequestErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson),
@@ -179,7 +198,7 @@ pub async fn save(
     path = "/city/import",
     request_body = Vec<CityJson>,
     responses(
-        (status = 200, description = "Import applied", body = ImportResultJson),
+        (status = 200, description = "Import applied. **Roles:** SysAdmin (unbound only).", body = ImportResultJson),
         (status = 400, description = "Nothing was written; the message names each rejected row", body = BadRequestErrorJson),
         (status = 401, body = UnauthorizedErrorJson),
         (status = 403, body = ForbiddenErrorJson),
@@ -197,6 +216,11 @@ pub async fn import(
     use_case
         .import(payload.into_iter().map(domain).collect())
         .await
-        .map(|result: ImportOutcome| Json(ImportResultJson { created: result.created, updated: result.updated }))
+        .map(|result: ImportOutcome| {
+            Json(ImportResultJson {
+                created: result.created,
+                updated: result.updated,
+            })
+        })
         .map_err(|error| reference_failure(&locale, error))
 }

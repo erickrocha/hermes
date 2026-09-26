@@ -66,6 +66,7 @@ pub struct GeoPoint {
 /// consumer is `operacao-trm`'s undecided `D-01`. See the module note on
 /// `use_cases::vehicle_tracking_use_case`.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct VehicleTrackingStatus {
     /// The provider's identifier for the device. Hermes holds no vehicle
     /// entity to map it onto — that arrives with the fleet-ops domain.
@@ -84,6 +85,14 @@ pub struct VehicleTrackingStatus {
     /// reading is stale: a parked vehicle stops emitting but has not moved,
     /// and a garage view still needs somewhere to draw it.
     pub position: Option<GeoPoint>,
+    /// When the provider recorded `position` -- the coordinate's own time,
+    /// which may be older than `reported_at` (DEF-FO-04/05, HRMS-929): a
+    /// client showing a last-known coordinate needs to say how old it is.
+    pub position_reported_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// `supports_presence_claim()`, published: whether `position` is live
+    /// evidence of where the vehicle is now. `trustworthy` speaks about
+    /// ignition only (DEF-FO-05).
+    pub position_live: bool,
     /// Accumulated distance in metres, when the provider reported it. Named
     /// for what it is rather than for the fuel gauge that consumes it
     /// downstream — that consumer is `D-01`'s to decide.
@@ -103,6 +112,8 @@ impl VehicleTrackingStatus {
             reported_at: None,
             trustworthy: false,
             position: None,
+            position_reported_at: None,
+            position_live: false,
             odometer_meters: None,
         }
     }

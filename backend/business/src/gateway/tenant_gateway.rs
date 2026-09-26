@@ -1,11 +1,14 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{fetch_page, Gateway};
+use crate::commons::gateway::{Gateway, fetch_page};
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use entity::prelude::TenantEntity as TenantQuery;
 use entity::tenant_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{Condition, ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder,
+};
 
 pub struct TenantGateway {
     db: DbConn,
@@ -25,9 +28,7 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
-        TenantQuery::delete_by_id(id)
-            .exec(&self.db)
-            .await
+        TenantQuery::delete_by_id(id).exec(&self.db).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<tenant_entity::Model>, DbErr> {
@@ -51,7 +52,12 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
 
 impl TenantGateway {
     /// PD-028.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<tenant_entity::Model>, u64), DbErr> {
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<tenant_entity::Model>, u64), DbErr> {
         let mut query = TenantQuery::find().order_by_desc(tenant_entity::Column::Id);
         if let Some(term) = search {
             query = query.filter(
@@ -65,4 +71,3 @@ impl TenantGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 }
-

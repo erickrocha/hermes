@@ -49,10 +49,10 @@ every future table, not only ones that will eventually replace part of operacao-
 
 Migrations are a deploy step, never a side effect of starting the service:
 
-1. Run `hermes_server migrate` once against the target database. It takes a database lock,
+1. Run `hermes migrate` once against the target database. It takes a database lock,
    so two deploy jobs running it at the same time are safe, and it is a no-op when nothing
    is pending.
-2. Start (or roll) the service with `hermes_server` and no arguments.
+2. Start (or roll) the service with `hermes` and no arguments.
 
 Never edit a migration that has been applied anywhere; fix forward with a new one (HRMS-026).
 

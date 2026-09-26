@@ -58,5 +58,3 @@ pub struct NotFoundErrorJson {
     #[schema(example = "Resource not found")]
     pub message: String,
 }
-
-

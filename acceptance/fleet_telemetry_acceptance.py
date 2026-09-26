@@ -177,7 +177,9 @@ def ft_003():
     boundary_hits = 0
     for path in rust_sources():
         body = code_only(read(path)).lower()
-        hits = [t for t in tokens if t in body]
+        # Whole words: hermes' own `trackerDeviceId` (EPIC-FO-02) is not the
+        # provider's `deviceId` key.
+        hits = [t for t in tokens if re.search(r"(?<![a-z_])" + re.escape(t), body)]
         if not hits:
             continue
         if os.path.abspath(path) == os.path.abspath(BOUNDARY):
@@ -254,15 +256,18 @@ def ft_006():
         "use_cases/vehicle_tracking_use_case.rs": os.path.exists(RULES),
     }
     misplaced = sorted(k for k, v in layering.items() if not v)
-    # Nothing tracking-shaped may sit in `web`: this slice has no HTTP surface.
+    # The provider's wire format stays in `business`. EPIC-FO-02 (HRMS-928) later
+    # gave the domain type an HTTP route, so the HTTP crate may name
+    # `VehicleTrackingStatus` -- but never the provider's own shapes or endpoints.
+    wire = re.compile(r"ProviderPosition|ProviderIgnitionEvent|TrackingProvider\s*for|/positions|/reports/events")
     in_web = [os.path.relpath(p, REPO) for p in rust_sources()
-              if os.sep + "web" + os.sep in p and "tracking" in code_only(read(p)).lower()]
+              if os.sep + "application" + os.sep in p and wire.search(code_only(read(p)))]
 
     check("FT-006", not offenders and not misplaced and not in_web,
           "every identifier is English, and the component is delivered as domain + gateway + "
-          "use_case inside the business crate with no web-layer surface",
+          "use_case inside the business crate; the HTTP crate never sees the provider's wire format",
           f"non-English identifiers: {offenders}; missing layers: {misplaced}; "
-          f"unexpected web-layer tracking code: {in_web}")
+          f"provider wire format in the HTTP crate: {in_web}")
 
 
 # ------------------------------------------------------------ HRMS-905
@@ -276,6 +281,9 @@ def ft_007():
             if not f.endswith(".rs"):
                 continue
             body = code_only(read(os.path.join(migration_dir, f))).lower()
+            # EPIC-FO-02 links a vehicle to its device id; that is a key, not
+            # tracking data (HRMS-930, proved directly by FO-028).
+            body = re.sub(r"tracker_?device(_?id)?", "", body)
             if re.search(r"tracking|position|telemetry|device", body):
                 tracking_migrations.append(f)
 

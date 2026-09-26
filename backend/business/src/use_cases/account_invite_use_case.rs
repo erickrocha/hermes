@@ -3,10 +3,10 @@ use crate::domain::business_error::BusinessError;
 use crate::domain::password_policy;
 use crate::domain::user::User;
 use crate::gateway::user_gateway::UserGateway;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use entity::user_entity;
-use base64::Engine;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sea_orm::{ActiveModelTrait, DbConn, Set};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -62,16 +62,15 @@ impl AccountInviteUseCase {
         )
         .map_err(|e| BusinessError::new(format!("Failed to issue invite: {}", e)))?;
 
-        log::info!("[AccountInviteUseCase::issue] Invite issued for {}", user.email);
+        log::info!(
+            "[AccountInviteUseCase::issue] Invite issued for {}",
+            user.email
+        );
         Ok(AccountInvite { token, expires_at })
     }
 
     /// Consome o convite: valida e grava a senha escolhida pelo paciente.
-    pub async fn accept(
-        db: &DbConn,
-        token: &str,
-        new_password: &str,
-    ) -> Result<(), BusinessError> {
+    pub async fn accept(db: &DbConn, token: &str, new_password: &str) -> Result<(), BusinessError> {
         password_policy::validate_length(new_password)?;
 
         // O e-mail sai do payload sem validar assinatura, só para localizar a conta:
@@ -91,8 +90,13 @@ impl AccountInviteUseCase {
         // window -- a hire withdrawn, an account created disabled on purpose --
         // had that decision quietly reversed by the invitee's own click.
         if !user.enabled {
-            log::warn!("[AccountInviteUseCase::accept] Invite refused for disabled account {}", user.email);
-            return Err(BusinessError::new("Invite is invalid or has already been used".to_string()));
+            log::warn!(
+                "[AccountInviteUseCase::accept] Invite refused for disabled account {}",
+                user.email
+            );
+            return Err(BusinessError::new(
+                "Invite is invalid or has already been used".to_string(),
+            ));
         }
 
         // Agora sim: assinatura conferida contra a chave derivada do hash atual.
@@ -105,7 +109,10 @@ impl AccountInviteUseCase {
             &strict,
         )
         .map_err(|_| {
-            log::warn!("[AccountInviteUseCase::accept] Rejected invite for {}", user.email);
+            log::warn!(
+                "[AccountInviteUseCase::accept] Rejected invite for {}",
+                user.email
+            );
             BusinessError::new("Invite is invalid or has already been used".to_string())
         })?;
 
@@ -133,7 +140,10 @@ impl AccountInviteUseCase {
             .await
             .map_err(|e| BusinessError::new(format!("Failed to set password: {}", e)))?;
 
-        log::info!("[AccountInviteUseCase::accept] Invite accepted for {}", user.email);
+        log::info!(
+            "[AccountInviteUseCase::accept] Invite accepted for {}",
+            user.email
+        );
         Ok(())
     }
 
@@ -164,13 +174,19 @@ impl AccountInviteUseCase {
         if !user.enabled {
             // DEF-IA-04's rule, stated on the issuing side too: a disabled
             // account is not invited back in.
-            return Err(BusinessError::new("Cannot invite a disabled account".to_string()));
+            return Err(BusinessError::new(
+                "Cannot invite a disabled account".to_string(),
+            ));
         }
 
         let hashed = crate::commons::password::hash(&Self::unguessable_secret())
             .map_err(|e| BusinessError::new(format!("Failed to hash password: {}", e)))?;
 
-        let refreshed = User { password: hashed, updated_at: None, ..user };
+        let refreshed = User {
+            password: hashed,
+            updated_at: None,
+            ..user
+        };
 
         let saved = UserGateway::new(db.clone())
             .persist(refreshed.clone())
@@ -179,7 +195,10 @@ impl AccountInviteUseCase {
 
         let _ = saved;
         let invite = Self::issue(&refreshed)?;
-        log::info!("[AccountInviteUseCase::reissue] Invite re-issued for {}", refreshed.email);
+        log::info!(
+            "[AccountInviteUseCase::reissue] Invite re-issued for {}",
+            refreshed.email
+        );
         Ok((refreshed, invite))
     }
 
@@ -249,7 +268,10 @@ mod tests {
             assert!(!invite.token.is_empty());
             let expected = before + chrono::Duration::days(INVITE_VALIDITY_DAYS);
             let drift = (invite.expires_at - expected).num_seconds().abs();
-            assert!(drift < 5, "expected ~{INVITE_VALIDITY_DAYS}d validity, drift was {drift}s");
+            assert!(
+                drift < 5,
+                "expected ~{INVITE_VALIDITY_DAYS}d validity, drift was {drift}s"
+            );
         });
     }
 
@@ -259,7 +281,7 @@ mod tests {
         // vice versa -- `accept()` enforces this by checking `typ`, so the
         // claim actually needs to be there and readable, not just present
         // in the type definition.
-        use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+        use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -296,7 +318,10 @@ mod tests {
         // precondition for that (different signature) starts here.
         with_access_token_secret(|| {
             let before_reset = invited_user();
-            let after_reset = User { password: "$2b$12$totally-different-hash".to_string(), ..invited_user() };
+            let after_reset = User {
+                password: "$2b$12$totally-different-hash".to_string(),
+                ..invited_user()
+            };
             let first = AccountInviteUseCase::issue(&before_reset).unwrap();
             let second = AccountInviteUseCase::issue(&after_reset).unwrap();
             assert_ne!(first.token, second.token);

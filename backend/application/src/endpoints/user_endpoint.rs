@@ -2,20 +2,20 @@ use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::change_password_request::ChangePasswordRequest;
-use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
+use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::user_json::UserJson;
-use crate::infrastructure::mapper::{reject_unknown_role, Mapper, UserMapper};
+use crate::infrastructure::mapper::{Mapper, UserMapper, reject_unknown_role};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::commons::email_sender::EmailSender;
 use business::domain::authorization::{
-    can_administer_user, can_create_user_with_role, can_read_user_record, can_reassign_role,
-    CreationTenant,
+    CreationTenant, can_administer_user, can_create_user_with_role, can_read_user_record,
+    can_reassign_role,
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
@@ -32,7 +32,7 @@ use std::env;
     path = "/user",
     request_body = UserJson,
     responses(
-        (status = 201, description = "User created", body = UserJson),
+        (status = 201, description = "User created. **Roles:** SysAdmin (unbound; creates SysAdmin or TenantOwner accounts), TenantOwner (creates TenantUser, Driver or Mechanic accounts in their own tenant).", body = UserJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -87,7 +87,8 @@ pub async fn add(
                     ErrorKey::InvalidParameterValue,
                 ));
             };
-            let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+            let tenant_use_case =
+                TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
             if tenant_use_case.find_by_id(tenant_id).await.is_err() {
                 return Err(ExceptionResponse::BadRequest(
                     locale,
@@ -130,7 +131,7 @@ pub async fn add(
         ("uuid" = String, Path, description = "User UUID")
     ),
     responses(
-        (status = 204, description = "A new invitation was issued and any outstanding one was superseded"),
+        (status = 204, description = "A new invitation was issued and any outstanding one was superseded. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only)."),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -151,10 +152,9 @@ pub async fn reissue_invite(
     Path(uuid): Path<String>,
 ) -> HttpResponse<StatusCode> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    let existing = use_case
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+    let existing = use_case.find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing)
+    })?;
 
     // Same boundary as editing the account, and the same 404-not-403 shape:
     // inviting someone is administration of their record.
@@ -196,8 +196,8 @@ fn issue_and_send_invite(user: &User) {
 }
 
 fn send_invite(user: &User, invite: business::use_cases::account_invite_use_case::AccountInvite) {
-    let base_url = env::var("BACKOFFICE_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+    let base_url =
+        env::var("BACKOFFICE_BASE_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
     let accept_url = format!("{base_url}/accept-invite?token={}", invite.token);
     let email = user.email.clone();
 
@@ -231,7 +231,7 @@ fn send_invite(user: &User, invite: business::use_cases::account_invite_use_case
     path = "/user",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of users (PD-028)", body = PageJson<UserJson>),
+        (status = 200, description = "A page of users (PD-028). **Roles:** SysAdmin, TenantOwner see their scope's users; TenantUser, Driver, Mechanic receive an empty page (no user-administration rights).", body = PageJson<UserJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -251,7 +251,9 @@ pub async fn list_all(
     // é filtrado pelo escopo do gateway (`tenant_select`), não por um segundo
     // filtro aqui; um TenantUser continua sem administração de usuários.
     let page_result = match current_user.role {
-        Role::SysAdmin | Role::TenantOwner => use_case.find_page(page, page_size, search.as_deref()).await,
+        Role::SysAdmin | Role::TenantOwner => {
+            use_case.find_page(page, page_size, search.as_deref()).await
+        }
         _ => Ok((Vec::new(), 0)),
     };
 
@@ -274,7 +276,7 @@ pub async fn list_all(
         ("uuid" = String, Path, description = "User UUID")
     ),
     responses(
-        (status = 200, description = "User found", body = UserJson),
+        (status = 200, description = "User found. **Roles:** any authenticated role may read their own record; SysAdmin (any tenant) and TenantOwner (own tenant) may read any record in scope.", body = UserJson),
         (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -288,10 +290,9 @@ pub async fn get_by_uuid(
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<UserJson>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    let user = use_case
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+    let user = use_case.find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing)
+    })?;
 
     // EPIC-IA-05-S01/HRMS-117: a tenant user has no user-administration
     // rights at all -- this used to check only whether a TenantOwner's
@@ -318,7 +319,7 @@ pub async fn get_by_uuid(
     ),
     request_body = UserJson,
     responses(
-        (status = 200, description = "User updated", body = UserJson),
+        (status = 200, description = "User updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = UserJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -337,10 +338,9 @@ pub async fn update(
     let mut domain = UserMapper::domain(payload);
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
-    let existing = use_case
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+    let existing = use_case.find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::RequiredParameterMissing)
+    })?;
     let id = existing.id.unwrap_or_default();
 
     if current_user.id == Some(id) && !domain.enabled {
@@ -376,8 +376,11 @@ pub async fn update(
     // tenant; only the other fields in the payload take effect.
     if can_reassign_role(&current_user, &domain.role, domain.tenant_id) {
         if domain.role == Role::TenantOwner {
-            let tenant_id = domain.tenant_id.expect("can_reassign_role requires Some for TenantOwner");
-            let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+            let tenant_id = domain
+                .tenant_id
+                .expect("can_reassign_role requires Some for TenantOwner");
+            let tenant_use_case =
+                TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
             if tenant_use_case.find_by_id(tenant_id).await.is_err() {
                 return Err(ExceptionResponse::BadRequest(
                     locale,
@@ -405,7 +408,7 @@ pub async fn update(
     path = "/user/change-password",
     request_body = ChangePasswordRequest,
     responses(
-        (status = 200, description = "Password changed"),
+        (status = 200, description = "Password changed. **Roles:** any authenticated role, on their own account only."),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
     ),

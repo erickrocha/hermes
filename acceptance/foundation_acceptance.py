@@ -3,7 +3,7 @@
 
 Interface-level, stdlib only. Three kinds of check:
   api       -- black-box HTTP against the running API (default http://127.0.0.1:8081)
-  lifecycle -- starts the built `hermes_server` binary on a scratch port against a
+  lifecycle -- starts the built `hermes` binary on a scratch port against a
                scratch database (`hermes_acc`), to observe boot/migrate/config behaviour
   cargo     -- runs the repository's own cargo tests where a story is an internal
                property with no interface (cited as such in the execution log)
@@ -25,7 +25,7 @@ DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brut
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc"
 SCRATCH_PORT = int(os.environ.get("HERMES_SCRATCH_PORT", "8091"))
-BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes_server"))
+BINARY = os.environ.get("HERMES_BINARY", os.path.join(BACKEND, "target", "debug", "hermes"))
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 ADMIN_PASSWORD = os.environ.get("HERMES_ADMIN_PASSWORD", "LocalDevOnly123!")
 TAG = "qa-acc"          # every fixture email/business name starts with this
@@ -570,7 +570,7 @@ def lifecycle_scenarios():
             srv.proc.wait(30)
             boot_pending = (srv.proc.returncode, srv.bound, srv.output())
         notes["boot_pending"] = boot_pending[0] not in (0, None) and not boot_pending[1] and \
-            "hermes_server migrate" in boot_pending[2]
+            "hermes migrate" in boot_pending[2]
         # --- XF-044a: migration failure aborts (a table the chain wants to create already exists)
         sql("CREATE TABLE business_plan (id INT PRIMARY KEY, bogus INT)", db=SCRATCH_DB)
         rc_fail, out_fail = run_bin(["migrate"], scratch_env())
@@ -602,13 +602,13 @@ def lifecycle_scenarios():
         rc3, _ = run_bin(["migrate"], env)
         rows3 = sql("SELECT COUNT(*) FROM seaql_migrations", db=SCRATCH_DB)[0][0]
         check("XF-043", rc1 == 0 and rc2 == 0 and rows[0] == rows[1] == str(migrations),
-              f"two concurrent `hermes_server migrate` on an empty DB -> exits {rc1}/{rc2}; {rows[0]} migrations "
+              f"two concurrent `hermes migrate` on an empty DB -> exits {rc1}/{rc2}; {rows[0]} migrations "
               f"recorded once each (lock serialised them)",
               f"exits {rc1}/{rc2}; seaql rows={rows}; expected {migrations}\n{open(logs[0].name).read()[-400:]}\n{open(logs[1].name).read()[-400:]}")
         with Server(env) as srv:
             up = srv.bound
         check("XF-042", notes["boot_pending"] and rc3 == 0 and rows3 == str(migrations) and up,
-              f"[PD-033 replacement behaviour] boot never migrates: on an empty DB it refuses naming `hermes_server migrate`; "
+              f"[PD-033 replacement behaviour] boot never migrates: on an empty DB it refuses naming `hermes migrate`; "
               f"after the deploy step it serves; re-running migrate is a no-op (exit {rc3}, {rows3} rows)",
               f"boot-on-pending ok={notes['boot_pending']}; re-migrate exit={rc3} rows={rows3}; boot after migrate bound={up}")
         # --- XF-045 / XF-012: boot seeding under the explicit platform grant, re-pointed not duplicated
@@ -686,8 +686,10 @@ def lifecycle_scenarios():
         with Server(scratch_env({"APP_ENV": "production", "CORS_ALLOWED_ORIGINS": "",
                                  "SYSADMIN_EMAIL": f"{TAG}-admin2@hermes.test"})) as srv:
             prod_nolist = "refused to boot" if not srv.bound else pre("https://evil.example.net")
-        dev_good, dev_evil = pre("http://localhost:5180", BASE), pre("https://evil.example.net", BASE)
-        check("XF-046", good == "https://console.example.com" and evil is None and dev_good == "http://localhost:5180"
+        # The dev API's own allow-list (backend/.env), not a hardcoded port.
+        dev_origin = (dotenv().get("CORS_ALLOWED_ORIGINS") or "http://localhost:5173").split(",")[0].strip()
+        dev_good, dev_evil = pre(dev_origin, BASE), pre("https://evil.example.net", BASE)
+        check("XF-046", good == "https://console.example.com" and evil is None and dev_good == dev_origin
               and dev_evil is None and prod_nolist == "refused to boot",
               f"allow-list from CORS_ALLOWED_ORIGINS: listed origin echoed, unlisted origin gets no ACAO (scratch prod "
               f"and dev :8081); APP_ENV=production with NO list: {prod_nolist}",
@@ -725,8 +727,8 @@ def cargo_scenarios(coverage):
     run("XF-017", ["test", "-p", "business", "--features", "mock", "--test", "mock"], "scoping reaches the real gateway call, MockDatabase")
     run("XF-026", ["test", "-p", "business", "--lib", "domain::authorization"], "role x operation matrix")
     run("XF-027", ["test", "-p", "business", "--lib", "domain::authorization"], "tenant-bound administrator case in matrix")
-    run("XF-053", ["test", "-p", "web", "--lib", "openapi_contract_tests"], "documented paths == registered routes")
-    run("XF-062", ["test", "-p", "web", "--lib", "i18n"], "locale set discovered from web/locales bundles")
+    run("XF-053", ["test", "-p", "application", "--bin", "hermes", "openapi_contract_tests"], "documented paths == registered routes")
+    run("XF-062", ["test", "-p", "application", "--bin", "hermes", "i18n"], "locale set discovered from application/locales bundles")
     run("XF-070", ["test", "-p", "business", "--features", "mock", "--test", "mock"], "no database required")
     run("XF-071", ["test", "-p", "business", "--lib", "commons::gateway"], "= XF-016")
     run("XF-072", ["test", "-p", "entity", "--lib", "audit::tests"], "= XF-015")
@@ -734,7 +736,7 @@ def cargo_scenarios(coverage):
     run("XF-090", ["test", "-p", "entity", "--test", "naming"], "entity tables/columns vs non-English blocklist")
     # XF-022: the predicate lives in one module -- inspect for hand-written copies
     hits = subprocess.run(["grep", "-rnE", r"Role::SysAdmin.{0,80}tenant_id\.is_none\(\)|tenant_id\.is_none\(\).{0,80}Role::SysAdmin",
-                           os.path.join(BACKEND, "web", "src"), os.path.join(BACKEND, "business", "src")],
+                           os.path.join(BACKEND, "application", "src"), os.path.join(BACKEND, "business", "src")],
                           capture_output=True, text=True).stdout.strip().splitlines()
     hits = [h for h in hits if "domain/authorization.rs" not in h]
     check("XF-022", not hits, "no hand-written 'SysAdmin has no tenant' predicate outside business::domain::authorization",
@@ -749,9 +751,9 @@ def cargo_scenarios(coverage):
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=BACKEND,
                                      capture_output=True, text=True).stdout)
     deps = {p["name"]: sorted(d["name"] for d in p["dependencies"]
-                              if d["name"] in ("entity", "business", "migration", "web")) for p in meta["packages"]}
+                              if d["name"] in ("entity", "business", "migration", "application")) for p in meta["packages"]}
     one_way = deps.get("entity") == [] and deps.get("migration") in ([], ["entity"]) and \
-        deps.get("business") == ["entity"] and set(deps.get("web", [])) <= {"business", "entity", "migration"}
+        deps.get("business") == ["entity"] and set(deps.get("application", [])) <= {"business", "entity", "migration"}
     check("XF-093", one_way, f"crate graph one-way: {deps}", f"crate graph: {deps}")
     floor = re.search(r"--fail-under-lines (\d+)", wf)
     check("XF-094", bool(floor), f"CI measures business coverage on every build (cargo llvm-cov, --fail-under-lines {floor.group(1) if floor else '?'})",
@@ -778,7 +780,7 @@ def doc_scenarios():
     check("XF-080", has and mentions_migrate and not stale,
           "readme.md states what Hermes is, how to run and configure it, and the migrate deploy step",
           f"readme present ({len(readme)} bytes) but step 3 says 'Migrations run automatically at start-up' -- false since "
-          f"PD-033: following the README on a fresh DB the server refuses to start; `hermes_server migrate` is not mentioned; "
+          f"PD-033: following the README on a fresh DB the server refuses to start; `hermes migrate` is not mentioned; "
           f"APP_ENV/CORS_ALLOWED_ORIGINS/ACCESS_TOKEN_HOURS/REFRESH_TOKEN_DAYS absent from 'Configuration'")
     arch = open(os.path.join(REPO, "docs", "ARCHITECTURE.md")).read()
     # HRMS-034 asks for the owner's *recorded* reasoning behind three decisions.
@@ -803,6 +805,12 @@ def doc_scenarios():
     # The single documented exception is a migration that could never be applied
     # anywhere, so no database has it recorded (see m20260918_000003's header).
     never_applicable = {"m20260917_000001_tenant_business_plan_fk.rs"}
+    # A fix to `down()` alone changes no applied schema (a database records only what
+    # `up()` did). DEF-FO: m20260921's rollback dropped `uq_vehicle_tenant_plate` before the
+    # table, which MariaDB refuses (1553, the index backs the tenant foreign key). Its `up()`
+    # must still match the first commit exactly.
+    down_only_fixes = {"m20260921_000001_create_vehicle_table.rs"}
+    up_part = lambda text: text.split("async fn down", 1)[0]
     src = os.path.join(BACKEND, "migration", "src")
     edited = []
     for f in sorted(os.listdir(src)):
@@ -815,7 +823,11 @@ def doc_scenarios():
             continue  # not committed yet: a new migration, nothing to compare with
         original = subprocess.run(["git", "show", f"{first[0]}:{rel}"], cwd=REPO,
                                   capture_output=True, text=True).stdout
-        if original != open(os.path.join(src, f)).read():
+        current = open(os.path.join(src, f)).read()
+        if f in down_only_fixes:
+            if up_part(original) != up_part(current):
+                edited.append(f)
+        elif original != current:
             edited.append(f)
     ever_existed = subprocess.run(["git", "log", "--format=", "--name-only", "--", "backend/migration/src/"],
                                   cwd=REPO, capture_output=True, text=True).stdout.split()

@@ -42,7 +42,7 @@ for required in HERMES_DOMAIN ACME_EMAIL API_IMAGE CONSOLE_IMAGE IMAGE_TAG \
     [ -n "${!required:-}" ] || die "$required is empty in .env"
 done
 
-# The API would refuse these at boot anyway (web/src/lib.rs); catching them
+# The API would refuse these at boot anyway (application/src/infrastructure/health.rs); catching them
 # here means finding out before the database has been touched, not after.
 [ "${#ACCESS_TOKEN_SECRET}" -ge 32 ]  || die "ACCESS_TOKEN_SECRET must be at least 32 bytes"
 [ "${#REFRESH_TOKEN_SECRET}" -ge 32 ] || die "REFRESH_TOKEN_SECRET must be at least 32 bytes"

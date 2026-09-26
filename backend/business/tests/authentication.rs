@@ -50,7 +50,9 @@ fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
 }
 
 fn db_returning(rows: Vec<Vec<user_entity::Model>>) -> DatabaseConnection {
-    MockDatabase::new(DatabaseBackend::MySql).append_query_results(rows).into_connection()
+    MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results(rows)
+        .into_connection()
 }
 
 fn argon() -> String {
@@ -69,10 +71,16 @@ async fn a_correct_password_issues_access_and_refresh_tokens() {
     assert_eq!(token.token_type, "Bearer");
     assert_eq!(token.role, Role::TenantOwner);
     assert_eq!(token.tenant_id, Some(42));
-    assert_eq!(token.uuid, UUID, "D-12: the uuid claim is the user's uuid, not the email");
+    assert_eq!(
+        token.uuid, UUID,
+        "D-12: the uuid claim is the user's uuid, not the email"
+    );
     assert!(token.refresh_token.is_some());
     let hours = (token.expire_in - Utc::now().timestamp()) as f64 / 3600.0;
-    assert!((2.9..=3.1).contains(&hours), "default access lifetime is 3 hours, got {hours:.2}");
+    assert!(
+        (2.9..=3.1).contains(&hours),
+        "default access lifetime is 3 hours, got {hours:.2}"
+    );
 }
 
 #[tokio::test]
@@ -80,19 +88,48 @@ async fn every_login_failure_looks_the_same() {
     // HRM-043: unknown email, wrong password and disabled account are
     // indistinguishable, so the error can't be used to enumerate accounts.
     secrets();
-    let unknown = AuthenticationUseCase::execute(&db_returning(vec![vec![]]), "nobody@example.com".into(), PASSWORD.into()).await;
-    let wrong = AuthenticationUseCase::execute(&db_returning(vec![vec![row(&argon(), true)]]), "owner@example.com".into(), "Wrong#Pass9".into()).await;
-    let disabled = AuthenticationUseCase::execute(&db_returning(vec![vec![row(&argon(), false)]]), "owner@example.com".into(), PASSWORD.into()).await;
-    let messages: Vec<String> = [unknown, wrong, disabled].into_iter().map(|r| r.expect_err("must fail").message).collect();
-    assert!(messages.iter().all(|m| m == "Invalid credentials"), "{messages:?}");
+    let unknown = AuthenticationUseCase::execute(
+        &db_returning(vec![vec![]]),
+        "nobody@example.com".into(),
+        PASSWORD.into(),
+    )
+    .await;
+    let wrong = AuthenticationUseCase::execute(
+        &db_returning(vec![vec![row(&argon(), true)]]),
+        "owner@example.com".into(),
+        "Wrong#Pass9".into(),
+    )
+    .await;
+    let disabled = AuthenticationUseCase::execute(
+        &db_returning(vec![vec![row(&argon(), false)]]),
+        "owner@example.com".into(),
+        PASSWORD.into(),
+    )
+    .await;
+    let messages: Vec<String> = [unknown, wrong, disabled]
+        .into_iter()
+        .map(|r| r.expect_err("must fail").message)
+        .collect();
+    assert!(
+        messages.iter().all(|m| m == "Invalid credentials"),
+        "{messages:?}"
+    );
 }
 
 #[tokio::test]
 async fn blank_credentials_never_reach_the_database() {
     secrets();
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    assert!(AuthenticationUseCase::execute(&db, "".into(), PASSWORD.into()).await.is_err());
-    assert!(AuthenticationUseCase::execute(&db, "owner@example.com".into(), "".into()).await.is_err());
+    assert!(
+        AuthenticationUseCase::execute(&db, "".into(), PASSWORD.into())
+            .await
+            .is_err()
+    );
+    assert!(
+        AuthenticationUseCase::execute(&db, "owner@example.com".into(), "".into())
+            .await
+            .is_err()
+    );
     assert!(db.into_transaction_log().is_empty());
 }
 
@@ -104,22 +141,34 @@ async fn a_legacy_bcrypt_password_still_logs_in_and_is_rewritten_as_argon2id() {
     let legacy = bcrypt::hash(PASSWORD, 4).unwrap();
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .append_query_results([vec![row(&legacy, true)]])
-        .append_exec_results([MockExecResult { last_insert_id: 5, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 5,
+            rows_affected: 1,
+        }])
         .append_query_results([vec![row("$argon2id$upgraded", true)]])
         .into_connection();
     AuthenticationUseCase::execute(&db, "owner@example.com".into(), PASSWORD.into())
         .await
         .expect("legacy hash still verifies");
     let sql = format!("{:?}", db.into_transaction_log());
-    assert!(sql.contains("$argon2id$"), "the stored hash must be rewritten: {sql}");
+    assert!(
+        sql.contains("$argon2id$"),
+        "the stored hash must be rewritten: {sql}"
+    );
 }
 
 #[tokio::test]
 async fn an_argon2id_password_is_not_rewritten_on_login() {
     secrets();
     let db = db_returning(vec![vec![row(&argon(), true)]]);
-    AuthenticationUseCase::execute(&db, "owner@example.com".into(), PASSWORD.into()).await.unwrap();
-    assert_eq!(db.into_transaction_log().len(), 1, "only the lookup; no write");
+    AuthenticationUseCase::execute(&db, "owner@example.com".into(), PASSWORD.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        db.into_transaction_log().len(),
+        1,
+        "only the lookup; no write"
+    );
 }
 
 // ---------------------------------------------------------------- tokens
@@ -145,14 +194,25 @@ fn user() -> User {
 async fn an_access_token_validates_and_a_refresh_token_does_not() {
     secrets();
     let issued = AuthenticationUseCase::generate_access_token(user());
-    let valid = AuthenticationUseCase::validate(&db_returning(vec![vec![row(&argon(), true)]]), issued.access_token.clone()).await;
-    assert_eq!(valid.expect("access token validates").email, "owner@example.com");
+    let valid = AuthenticationUseCase::validate(
+        &db_returning(vec![vec![row(&argon(), true)]]),
+        issued.access_token.clone(),
+    )
+    .await;
+    assert_eq!(
+        valid.expect("access token validates").email,
+        "owner@example.com"
+    );
 
     let refresh = issued.refresh_token.clone().unwrap();
     let as_access = AuthenticationUseCase::validate(&db_returning(vec![]), refresh).await;
-    assert!(as_access.is_err(), "a refresh token must not work as an access token");
+    assert!(
+        as_access.is_err(),
+        "a refresh token must not work as an access token"
+    );
 
-    let garbage = AuthenticationUseCase::validate(&db_returning(vec![]), "not.a.token".into()).await;
+    let garbage =
+        AuthenticationUseCase::validate(&db_returning(vec![]), "not.a.token".into()).await;
     assert!(garbage.is_err());
 }
 
@@ -168,8 +228,12 @@ async fn a_refresh_token_mints_a_new_access_token_but_an_access_token_cannot_ref
     .expect("refresh works");
     assert_eq!(refreshed.email, "owner@example.com");
 
-    let with_access = AuthenticationUseCase::refresh_token(&db_returning(vec![]), issued.access_token).await;
-    assert!(with_access.is_err(), "an access token must not be accepted as a refresh token");
+    let with_access =
+        AuthenticationUseCase::refresh_token(&db_returning(vec![]), issued.access_token).await;
+    assert!(
+        with_access.is_err(),
+        "an access token must not be accepted as a refresh token"
+    );
 }
 
 #[tokio::test]
@@ -177,7 +241,11 @@ async fn disabling_an_account_ends_its_live_session() {
     // HRM-042: a token issued before the account was disabled stops working.
     secrets();
     let issued = AuthenticationUseCase::generate_access_token(user());
-    let result = AuthenticationUseCase::validate(&db_returning(vec![vec![row(&argon(), false)]]), issued.access_token).await;
+    let result = AuthenticationUseCase::validate(
+        &db_returning(vec![vec![row(&argon(), false)]]),
+        issued.access_token,
+    )
+    .await;
     assert!(result.is_err());
 }
 
@@ -186,7 +254,11 @@ async fn disabling_an_account_ends_its_live_session() {
 /// The account that inherited a freed address: a different person, with a
 /// different id, in a different tenant.
 fn successor_row() -> user_entity::Model {
-    user_entity::Model { id: 6, tenant_id: Some(84), ..row(&argon(), true) }
+    user_entity::Model {
+        id: 6,
+        tenant_id: Some(84),
+        ..row(&argon(), true)
+    }
 }
 
 #[tokio::test]
@@ -197,8 +269,15 @@ async fn an_access_token_does_not_follow_its_address_to_another_account() {
     // back to life -- and ran as the *original* user, in the original tenant.
     secrets();
     let issued = AuthenticationUseCase::generate_access_token(user());
-    let result = AuthenticationUseCase::validate(&db_returning(vec![vec![successor_row()]]), issued.access_token).await;
-    assert!(result.is_err(), "a token must not resolve to an account it was not issued to");
+    let result = AuthenticationUseCase::validate(
+        &db_returning(vec![vec![successor_row()]]),
+        issued.access_token,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "a token must not resolve to an account it was not issued to"
+    );
 }
 
 #[tokio::test]
@@ -213,7 +292,10 @@ async fn a_refresh_token_does_not_mint_a_session_for_another_person() {
         issued.refresh_token.clone().unwrap(),
     )
     .await;
-    assert!(result.is_err(), "a refresh token must not cross into another account or tenant");
+    assert!(
+        result.is_err(),
+        "a refresh token must not cross into another account or tenant"
+    );
 }
 
 #[tokio::test]
@@ -222,8 +304,15 @@ async fn a_token_stops_working_once_its_account_is_renamed() {
     // names the id, but it no longer describes the account.
     secrets();
     let issued = AuthenticationUseCase::generate_access_token(user());
-    let renamed = user_entity::Model { email: "owner-renamed@example.com".into(), ..row(&argon(), true) };
-    assert!(AuthenticationUseCase::validate(&db_returning(vec![vec![renamed]]), issued.access_token).await.is_err());
+    let renamed = user_entity::Model {
+        email: "owner-renamed@example.com".into(),
+        ..row(&argon(), true)
+    };
+    assert!(
+        AuthenticationUseCase::validate(&db_returning(vec![vec![renamed]]), issued.access_token)
+            .await
+            .is_err()
+    );
 }
 
 // ---------------------------------------------------------------- invitations
@@ -235,16 +324,27 @@ async fn an_invitation_sets_the_password_once_and_then_stops_working() {
     let mut invitee = user();
     invitee.password = provisional.clone();
     let invite = AccountInviteUseCase::issue(&invitee).expect("invite issued");
-    assert!(invite.expires_at > Utc::now() + chrono::Duration::days(6), "7-day validity");
+    assert!(
+        invite.expires_at > Utc::now() + chrono::Duration::days(6),
+        "7-day validity"
+    );
 
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .append_query_results([vec![row(&provisional, true)]])
-        .append_exec_results([MockExecResult { last_insert_id: 5, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 5,
+            rows_affected: 1,
+        }])
         .append_query_results([vec![row(&argon(), true)]])
         .into_connection();
-    AccountInviteUseCase::accept(&db, &invite.token, "Chosen#Pass99").await.expect("first use accepted");
+    AccountInviteUseCase::accept(&db, &invite.token, "Chosen#Pass99")
+        .await
+        .expect("first use accepted");
     let sql = format!("{:?}", db.into_transaction_log());
-    assert!(!sql.contains("Chosen#Pass99"), "plaintext reached the database");
+    assert!(
+        !sql.contains("Chosen#Pass99"),
+        "plaintext reached the database"
+    );
     assert!(sql.contains("$argon2id$"));
 
     // HRM-052: the signing key includes the password hash, so once the
@@ -268,7 +368,10 @@ async fn an_invitation_never_re_enables_a_disabled_account() {
 
     let db = db_returning(vec![vec![row(&provisional, false)]]);
     let refused = AccountInviteUseCase::accept(&db, &invite.token, "Chosen#Pass99").await;
-    assert!(refused.is_err(), "a disabled account must not be activated by its invitation");
+    assert!(
+        refused.is_err(),
+        "a disabled account must not be activated by its invitation"
+    );
 }
 
 #[tokio::test]
@@ -295,7 +398,10 @@ async fn re_issuing_replaces_the_secret_so_the_previous_invitation_dies() {
     let first = AccountInviteUseCase::issue(&invitee).expect("invite issued");
 
     let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_exec_results([MockExecResult { last_insert_id: 5, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 5,
+            rows_affected: 1,
+        }])
         .append_query_results([vec![row(&provisional, true)]])
         .into_connection();
     let (refreshed, second) = entity::audit::run_with_user(
@@ -310,30 +416,58 @@ async fn re_issuing_replaces_the_secret_so_the_previous_invitation_dies() {
     .await
     .expect("re-issued");
 
-    assert_ne!(refreshed.password, provisional, "the stored secret must be replaced");
+    assert_ne!(
+        refreshed.password, provisional,
+        "the stored secret must be replaced"
+    );
     assert_ne!(second.token, first.token);
 
     // The old token no longer verifies against the new hash.
     let after = db_returning(vec![vec![row(&refreshed.password, true)]]);
-    assert!(AccountInviteUseCase::accept(&after, &first.token, "Chosen#Pass99").await.is_err());
+    assert!(
+        AccountInviteUseCase::accept(&after, &first.token, "Chosen#Pass99")
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
 async fn invitation_acceptance_rejects_bad_input() {
     secrets();
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    assert!(AccountInviteUseCase::accept(&db, "whatever", "short").await.is_err(), "HRM-054 min length");
-    assert!(AccountInviteUseCase::accept(&db, "not-a-jwt", "Long#Enough99").await.is_err());
-    assert!(AccountInviteUseCase::accept(&db, "a.bm90LWpzb24.c", "Long#Enough99").await.is_err());
+    assert!(
+        AccountInviteUseCase::accept(&db, "whatever", "short")
+            .await
+            .is_err(),
+        "HRM-054 min length"
+    );
+    assert!(
+        AccountInviteUseCase::accept(&db, "not-a-jwt", "Long#Enough99")
+            .await
+            .is_err()
+    );
+    assert!(
+        AccountInviteUseCase::accept(&db, "a.bm90LWpzb24.c", "Long#Enough99")
+            .await
+            .is_err()
+    );
 
     // A real access token is not an invitation (HRM-053).
     let access = AuthenticationUseCase::generate_access_token(user()).access_token;
     let found = db_returning(vec![vec![row(&argon(), true)]]);
-    assert!(AccountInviteUseCase::accept(&found, &access, "Long#Enough99").await.is_err());
+    assert!(
+        AccountInviteUseCase::accept(&found, &access, "Long#Enough99")
+            .await
+            .is_err()
+    );
 
     // Unknown account.
     let invite = AccountInviteUseCase::issue(&user()).unwrap();
-    assert!(AccountInviteUseCase::accept(&db_returning(vec![vec![]]), &invite.token, "Long#Enough99").await.is_err());
+    assert!(
+        AccountInviteUseCase::accept(&db_returning(vec![vec![]]), &invite.token, "Long#Enough99")
+            .await
+            .is_err()
+    );
 }
 
 #[test]
@@ -357,18 +491,31 @@ async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
     moved.tenant_id = Some(99);
     moved.role = "TenantUser".into();
 
-    let caller = AuthenticationUseCase::validate(&db_returning(vec![vec![moved.clone()]]), issued.access_token)
-        .await
-        .expect("still enabled, so the token is accepted");
-    assert_eq!(caller.tenant_id, Some(42), "scope must come from the token claim");
-    assert_eq!(caller.role, Role::TenantOwner, "role must come from the token claim");
+    let caller = AuthenticationUseCase::validate(
+        &db_returning(vec![vec![moved.clone()]]),
+        issued.access_token,
+    )
+    .await
+    .expect("still enabled, so the token is accepted");
+    assert_eq!(
+        caller.tenant_id,
+        Some(42),
+        "scope must come from the token claim"
+    );
+    assert_eq!(
+        caller.role,
+        Role::TenantOwner,
+        "role must come from the token claim"
+    );
     assert_eq!(caller.id, Some(5));
 
     // The change reaches the caller at the next refresh, which re-reads the
     // account and mints fresh claims.
     let refreshed = AuthenticationUseCase::refresh_token(
         &db_returning(vec![vec![moved]]),
-        AuthenticationUseCase::generate_access_token(user()).refresh_token.unwrap(),
+        AuthenticationUseCase::generate_access_token(user())
+            .refresh_token
+            .unwrap(),
     )
     .await
     .unwrap();
@@ -387,6 +534,9 @@ async fn a_sysadmin_token_carries_no_tenant() {
     let mut row_admin = row(&argon(), true);
     row_admin.role = "SysAdmin".into();
     row_admin.tenant_id = None;
-    let caller = AuthenticationUseCase::validate(&db_returning(vec![vec![row_admin]]), token.access_token).await.unwrap();
+    let caller =
+        AuthenticationUseCase::validate(&db_returning(vec![vec![row_admin]]), token.access_token)
+            .await
+            .unwrap();
     assert_eq!((caller.role, caller.tenant_id), (Role::SysAdmin, None));
 }

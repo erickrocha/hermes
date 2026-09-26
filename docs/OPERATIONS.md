@@ -19,7 +19,7 @@ Per `D-18`: **a single VPS running Docker Compose behind Traefik**, defined by
 | Container | What it is | Exposed |
 |---|---|---|
 | `traefik` | TLS termination, Let's Encrypt, routing | **:80, :443 — the only public ports** |
-| `api` | `hermes_server`, the Rust API | via Traefik, under `/api` |
+| `api` | `hermes`, the Rust API | via Traefik, under `/api` |
 | `console` | the React backoffice on nginx | via Traefik, everything else |
 | `mariadb` | the database | **not published** — compose network only |
 | `migrate` | one-shot deploy step, `profiles: [deploy]` | never running |

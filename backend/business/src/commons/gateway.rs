@@ -1,7 +1,9 @@
-use sea_orm::{ColumnTrait, DbErr, DeleteMany, DeleteResult, EntityTrait, PaginatorTrait, QueryFilter, Select};
-use sea_orm::sea_query::Expr;
-use sea_orm::prelude::async_trait::async_trait;
 use entity::audit;
+use sea_orm::prelude::async_trait::async_trait;
+use sea_orm::sea_query::Expr;
+use sea_orm::{
+    ColumnTrait, DbErr, DeleteMany, DeleteResult, EntityTrait, PaginatorTrait, QueryFilter, Select,
+};
 
 // EPIC-XF-01-S10 convention (HRMS-010, AD-015): tenancy is opt-in per entity,
 // declared by which `entity::audit` macro an entity's `ActiveModel` invokes —
@@ -21,11 +23,11 @@ use entity::audit;
 
 #[async_trait]
 pub trait Gateway<D, M, AM> {
-	async fn persist(&self, domain: D) -> Result<AM, DbErr>;
-	async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr>;
-	async fn find_by_id(&self, id: i64) -> Result<Option<M>, DbErr>;
-	async fn find_by_uuid(&self, uuid: String) -> Result<Option<M>, DbErr>;
-	async fn find_all(&self) -> Result<Vec<M>, DbErr>;
+    async fn persist(&self, domain: D) -> Result<AM, DbErr>;
+    async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr>;
+    async fn find_by_id(&self, id: i64) -> Result<Option<M>, DbErr>;
+    async fn find_by_uuid(&self, uuid: String) -> Result<Option<M>, DbErr>;
+    async fn find_all(&self) -> Result<Vec<M>, DbErr>;
 }
 
 pub fn tenant_select<E, C>(query: Select<E>, tenant_column: C) -> Select<E>
@@ -81,7 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{tenant_delete, tenant_select};
-    use entity::audit::{run_with_user, AuditUser};
+    use entity::audit::{AuditUser, run_with_user};
     use entity::user_entity;
     use sea_orm::{DbBackend, EntityTrait, QueryTrait};
 
@@ -99,7 +101,9 @@ mod tests {
         // `tenant_id` legitimately appears in the column list of any `SELECT *`
         // on `user` — the thing to prove is that unrestricted scope adds no
         // *filter*, i.e. the scoped query is identical to the unscoped one.
-        let unscoped_sql = user_entity::Entity::find().build(DbBackend::MySql).to_string();
+        let unscoped_sql = user_entity::Entity::find()
+            .build(DbBackend::MySql)
+            .to_string();
         let scoped_sql = run_with_user(Some(user(None, false)), async {
             tenant_select(user_entity::Entity::find(), user_entity::Column::TenantId)
                 .build(DbBackend::MySql)
@@ -135,9 +139,12 @@ mod tests {
     #[tokio::test]
     async fn tenant_delete_is_scoped_the_same_way_as_tenant_select() {
         let sql = run_with_user(Some(user(Some(7), true)), async {
-            tenant_delete(user_entity::Entity::delete_many(), user_entity::Column::TenantId)
-                .build(DbBackend::MySql)
-                .to_string()
+            tenant_delete(
+                user_entity::Entity::delete_many(),
+                user_entity::Column::TenantId,
+            )
+            .build(DbBackend::MySql)
+            .to_string()
         })
         .await;
         assert!(sql.to_lowercase().contains("tenant_id"));
@@ -147,12 +154,14 @@ mod tests {
     #[tokio::test]
     async fn denied_scope_forces_deletes_to_match_no_rows() {
         let sql = run_with_user(Some(user(None, true)), async {
-            tenant_delete(user_entity::Entity::delete_many(), user_entity::Column::TenantId)
-                .build(DbBackend::MySql)
-                .to_string()
+            tenant_delete(
+                user_entity::Entity::delete_many(),
+                user_entity::Column::TenantId,
+            )
+            .build(DbBackend::MySql)
+            .to_string()
         })
         .await;
         assert!(sql.contains("1 = 0"));
     }
 }
-

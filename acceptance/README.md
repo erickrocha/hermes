@@ -10,6 +10,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `foundation_acceptance.py` | Foundation (`EPIC-XF-01…09`, scenarios `XF-0xx`) |
 | `reference_data_acceptance.py` (+ `reference_data_ui.mjs`) | Reference data (`EPIC-RD-01…03` + QA-added `PD-027-S01…S06`, scenarios `RD-0xx`) |
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
+| `fleet_operations_acceptance.py` | Fleet operations (`EPIC-FO-01` `FO-001…011`, `EPIC-FO-02` `FO-020…028`) — API + DB + two cargo targets; FO-02 runs a stub PinME server and a scratch API on port 8095 against the dev DB |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 | `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
 | `brand_contrast_audit.py` | Brand palette audit + customer review sheet (`EPIC-XF-10-S09`) — **not a scenario suite**, an advisory report |
@@ -20,7 +21,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
    `dev-mariadb-1`, host port 3307).
 2. Schema migrated and API running from `backend/` (reads `backend/.env`):
    `cargo run -- migrate`, then `cargo run` (API on `http://127.0.0.1:8081`).
-3. `backend/target/debug/hermes_server` built (the step above builds it) — lifecycle scenarios
+3. `backend/target/debug/hermes` built (the step above builds it) — lifecycle scenarios
    start it themselves.
 4. `docker` and `cargo` (with `cargo-llvm-cov` for `--coverage`) on `PATH`.
 
@@ -64,7 +65,7 @@ Exit code is 1 if any story fails. `--json FILE` writes the results for tooling.
 | `HERMES_DB_PASSWORD` / `HERMES_DB_ROOT_PASSWORD` | `brutal` |
 | `HERMES_ADMIN_EMAIL` / `HERMES_ADMIN_PASSWORD` | `admin@hermes.dev` / `LocalDevOnly123!` |
 | `HERMES_SCRATCH_PORT` | `8091` |
-| `HERMES_BINARY` | `backend/target/debug/hermes_server` |
+| `HERMES_BINARY` | `backend/target/debug/hermes` |
 
 ## Tenancy & Plans (`tenancy_plans_acceptance.py`, scenarios `TP-0xx`)
 
@@ -252,6 +253,35 @@ python3 acceptance/ft_mutation_check.py
 **It edits source files in place** and restores them in a `finally` block, then re-asserts the
 baseline. Run it on a clean tree; if it is ever interrupted, check `git status` before trusting the
 working copy.
+
+## Fleet operations (`fleet_operations_acceptance.py`, scenarios `FO-0xx`)
+
+Covers `EPIC-FO-01`, the vehicle register (`HRMS-920…925`). Scenarios:
+`02-system_requirements/hermes/fleet-operations_acceptance_tests.md`. Log:
+`fleet-operations_test_execution_log.md`.
+
+```sh
+python3 acceptance/fleet_operations_acceptance.py                 # API + DB + cargo (FO-005, FO-011)
+python3 acceptance/fleet_operations_acceptance.py --skip-cargo    # API + DB only
+HERMES_API=http://127.0.0.1:8080 python3 acceptance/fleet_operations_acceptance.py   # API on another port
+python3 acceptance/fleet_operations_acceptance.py --skip-scratch  # no stub/scratch API: FO-022..028 BLOCKED
+```
+
+- **Needs** the dev database and the running API as above, and `backend/.env` (read only). From
+  that file it takes `ACCESS_TOKEN_SECRET`, which stands in for the invitation e-mail. It also takes
+  `SYSADMIN_PASSWORD` when `HERMES_ADMIN_PASSWORD` is not set; that value is never printed.
+  `FO-011` passes `DATABASE_URL` from the same file to
+  `cargo test -p business --test schema_matches_entities -- --ignored`.
+- **Fixtures:** tenants `qa-fo-tenant-A/B` (tax IDs `QAFO…`), users `qa-fo-…@hermes.test`, vehicle
+  plates `QAFO…` and models `qa-fo-…`. On exit it deletes only its own rows, vehicles first because
+  of the tenant foreign key. It never resets `AUTO_INCREMENT` and prints the table counts before and
+  after.
+- **It writes to the database directly on purpose.** `FO-005` and `FO-011` insert rows with SQL to
+  test the schema's own guards (`NOT NULL`, `fk_vehicle_tenant`, `uq_vehicle_tenant_plate`) without
+  the application in front of them. Each of those inserts is expected to fail.
+- `FO-011` sends 8 concurrent POSTs of one plate, to test the race the application's pre-check
+  cannot close.
+- Exit code is 1 if any story fails.
 
 ## Production readiness (`production_readiness_acceptance.py`, scenarios `PR-0xx`)
 

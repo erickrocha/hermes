@@ -81,6 +81,13 @@ pub trait TrackingProvider {
     ) -> impl Future<Output = Result<Vec<ProviderIgnitionEvent>, BusinessError>> + Send;
 }
 
+/// The provider this deployment is configured for. Callers outside this
+/// module ask for "the provider", never for a vendor (HRMS-902): changing
+/// provider changes this function and nothing that calls it.
+pub fn configured_provider() -> Result<impl TrackingProvider, BusinessError> {
+    PinMeTrackingProvider::from_env()
+}
+
 /// The PinME / Traccar adapter.
 pub struct PinMeTrackingProvider {
     client: reqwest::Client,
@@ -133,9 +140,7 @@ impl PinMeTrackingProvider {
             // it; reqwest renders the request URL, and the credential is in a
             // header rather than the URL, but keeping the habit tight is
             // cheaper than auditing it later.
-            .map_err(|_| {
-                BusinessError::new(format!("Tracking provider unreachable at {path}"))
-            })?;
+            .map_err(|_| BusinessError::new(format!("Tracking provider unreachable at {path}")))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(BusinessError::new(
@@ -148,10 +153,9 @@ impl PinMeTrackingProvider {
                 response.status().as_u16()
             )));
         }
-        response
-            .json::<Value>()
-            .await
-            .map_err(|_| BusinessError::new(format!("Tracking provider sent invalid JSON for {path}")))
+        response.json::<Value>().await.map_err(|_| {
+            BusinessError::new(format!("Tracking provider sent invalid JSON for {path}"))
+        })
     }
 }
 
@@ -176,7 +180,9 @@ impl TrackingProvider for PinMeTrackingProvider {
         query.push(("to".to_string(), to.to_rfc3339()));
         query.push(("type".to_string(), "ignitionOn".to_string()));
         query.push(("type".to_string(), "ignitionOff".to_string()));
-        Ok(parse_ignition_events(&self.get("/reports/events", &query).await?))
+        Ok(parse_ignition_events(
+            &self.get("/reports/events", &query).await?,
+        ))
     }
 }
 
@@ -218,7 +224,9 @@ fn parse_positions(body: &Value) -> Vec<ProviderPosition> {
                 // on a field the provider simply did not send.
                 valid: row.get("valid").and_then(Value::as_bool).unwrap_or(true),
                 recorded_at: first_timestamp(row),
-                ignition: attributes.and_then(|a| a.get("ignition")).and_then(Value::as_bool),
+                ignition: attributes
+                    .and_then(|a| a.get("ignition"))
+                    .and_then(Value::as_bool),
                 odometer_meters: odometer(attributes),
             })
         })
@@ -272,27 +280,42 @@ mod tests {
         let parsed = parse_positions(&body);
         assert_eq!(parsed.len(), 1);
         let p = &parsed[0];
-        assert_eq!((p.device_id, p.valid, p.ignition), (393335, true, Some(true)));
+        assert_eq!(
+            (p.device_id, p.valid, p.ignition),
+            (393335, true, Some(true))
+        );
         assert_eq!(p.odometer_meters, Some(12345.6));
-        assert_eq!(p.recorded_at.unwrap().to_rfc3339(), "2026-06-30T18:34:49.402+00:00");
+        assert_eq!(
+            p.recorded_at.unwrap().to_rfc3339(),
+            "2026-06-30T18:34:49.402+00:00"
+        );
     }
 
     #[test]
     fn timestamp_precedence_is_server_then_fix_then_device() {
         let fix = json!({ "fixTime": "2026-01-01T00:00:00+00:00", "deviceTime": "2025-01-01T00:00:00+00:00" });
-        assert_eq!(first_timestamp(&fix).unwrap().to_rfc3339(), "2026-01-01T00:00:00+00:00");
+        assert_eq!(
+            first_timestamp(&fix).unwrap().to_rfc3339(),
+            "2026-01-01T00:00:00+00:00"
+        );
 
         let server = json!({
             "serverTime": "2026-02-02T00:00:00+00:00",
             "fixTime": "2026-01-01T00:00:00+00:00"
         });
-        assert_eq!(first_timestamp(&server).unwrap().to_rfc3339(), "2026-02-02T00:00:00+00:00");
+        assert_eq!(
+            first_timestamp(&server).unwrap().to_rfc3339(),
+            "2026-02-02T00:00:00+00:00"
+        );
         assert!(first_timestamp(&json!({})).is_none());
     }
 
     #[test]
     fn odometer_accepts_all_three_spellings() {
-        assert_eq!(odometer(Some(&json!({ "totalDistance": 10.0 }))), Some(10.0));
+        assert_eq!(
+            odometer(Some(&json!({ "totalDistance": 10.0 }))),
+            Some(10.0)
+        );
         assert_eq!(odometer(Some(&json!({ "odometer": 20.0 }))), Some(20.0));
         assert_eq!(odometer(Some(&json!({ "distance": 30.0 }))), Some(30.0));
         assert_eq!(odometer(Some(&json!({ "speed": 40.0 }))), None);
@@ -303,7 +326,8 @@ mod tests {
     fn a_missing_valid_flag_is_treated_as_valid() {
         // Traccar omits `valid` on some firmware. Defaulting to false would
         // report a healthy fleet as untrustworthy.
-        let parsed = parse_positions(&json!([{ "deviceId": 1, "latitude": 0.0, "longitude": 0.0 }]));
+        let parsed =
+            parse_positions(&json!([{ "deviceId": 1, "latitude": 0.0, "longitude": 0.0 }]));
         assert!(parsed[0].valid);
         assert_eq!(parsed[0].ignition, None);
     }
@@ -311,7 +335,10 @@ mod tests {
     #[test]
     fn a_row_without_a_device_id_is_skipped_not_defaulted() {
         let parsed = parse_positions(&json!([{ "latitude": 1.0 }, { "deviceId": 7 }]));
-        assert_eq!(parsed.iter().map(|p| p.device_id).collect::<Vec<_>>(), vec![7]);
+        assert_eq!(
+            parsed.iter().map(|p| p.device_id).collect::<Vec<_>>(),
+            vec![7]
+        );
     }
 
     #[test]
@@ -329,7 +356,11 @@ mod tests {
             { "deviceId": 2, "type": "ignitionOn" }
         ]);
         let parsed = parse_ignition_events(&body);
-        assert_eq!(parsed.len(), 2, "geofence dropped, and an event with no instant dropped");
+        assert_eq!(
+            parsed.len(),
+            2,
+            "geofence dropped, and an event with no instant dropped"
+        );
         assert!(parsed[0].ignition && !parsed[1].ignition);
     }
 
@@ -399,11 +430,20 @@ mod tests {
         assert_eq!(positions[0].device_id, 42);
 
         let request = server.await.expect("server finished");
-        assert!(request.starts_with("GET /positions"), "request line was: {request}");
+        assert!(
+            request.starts_with("GET /positions"),
+            "request line was: {request}"
+        );
         // D-15: Basic on every call -- no /session, no bearer token.
-        assert!(request.contains("authorization: Basic YUBiLmM6c2VjcmV0"), "sent: {request}");
+        assert!(
+            request.contains("authorization: Basic YUBiLmM6c2VjcmV0"),
+            "sent: {request}"
+        );
         assert!(!request.to_lowercase().contains("bearer"));
-        assert!(request.contains("accept: application/json"), "sent: {request}");
+        assert!(
+            request.contains("accept: application/json"),
+            "sent: {request}"
+        );
     }
 
     #[tokio::test]
@@ -412,8 +452,12 @@ mod tests {
         // getting this wrong returns an empty report rather than an error,
         // which would silently look like "no events" forever.
         let (base, server) = serve_once(200, "OK", "[]").await;
-        let from = DateTime::parse_from_rfc3339("2026-06-29T18:00:00+00:00").unwrap().with_timezone(&Utc);
-        let to = DateTime::parse_from_rfc3339("2026-06-30T18:00:00+00:00").unwrap().with_timezone(&Utc);
+        let from = DateTime::parse_from_rfc3339("2026-06-29T18:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let to = DateTime::parse_from_rfc3339("2026-06-30T18:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
         PinMeTrackingProvider::new(&base, "a@b.c", "secret")
             .ignition_events(&[7, 9], from, to)
             .await
@@ -421,7 +465,10 @@ mod tests {
 
         let request = server.await.expect("server finished");
         assert!(request.contains("deviceId=7&deviceId=9"), "sent: {request}");
-        assert!(request.contains("type=ignitionOn&type=ignitionOff"), "sent: {request}");
+        assert!(
+            request.contains("type=ignitionOn&type=ignitionOff"),
+            "sent: {request}"
+        );
         assert!(request.contains("from=2026-06-29T18"), "sent: {request}");
     }
 
@@ -433,10 +480,19 @@ mod tests {
             .await
             .expect_err("401 is an error");
         let message = format!("{:?}", error);
-        assert!(message.contains("credentials"), "unhelpful message: {message}");
+        assert!(
+            message.contains("credentials"),
+            "unhelpful message: {message}"
+        );
         // A credential in an error message is a credential in a log.
-        assert!(!message.contains("hunter2"), "the password leaked: {message}");
-        assert!(!message.contains("YUBiLmM6"), "the encoded credential leaked: {message}");
+        assert!(
+            !message.contains("hunter2"),
+            "the password leaked: {message}"
+        );
+        assert!(
+            !message.contains("YUBiLmM6"),
+            "the encoded credential leaked: {message}"
+        );
     }
 
     #[tokio::test]
@@ -444,12 +500,22 @@ mod tests {
         // Returning `[]` on a 500 would read as "every device is unknown",
         // which the policy layer would faithfully report as a dark fleet.
         let (base, _server) = serve_once(500, "Internal Server Error", "nope").await;
-        assert!(PinMeTrackingProvider::new(&base, "a@b.c", "x").last_positions().await.is_err());
+        assert!(
+            PinMeTrackingProvider::new(&base, "a@b.c", "x")
+                .last_positions()
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn a_non_json_body_is_an_error_not_an_empty_fleet() {
         let (base, _server) = serve_once(200, "OK", "<html>maintenance</html>").await;
-        assert!(PinMeTrackingProvider::new(&base, "a@b.c", "x").last_positions().await.is_err());
+        assert!(
+            PinMeTrackingProvider::new(&base, "a@b.c", "x")
+                .last_positions()
+                .await
+                .is_err()
+        );
     }
 }

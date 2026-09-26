@@ -1,13 +1,16 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{fetch_page, Gateway};
+use crate::commons::gateway::{Gateway, fetch_page};
 use crate::domain::city::{City, CityEntityMapper};
 use entity::city_entity;
-use entity::province_entity;
 use entity::prelude::CityEntity as CityQuery;
 use entity::prelude::ProvinceEntity as ProvinceQuery;
+use entity::province_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    QueryOrder,
+};
 use std::collections::HashSet;
 
 pub struct CityGateway {
@@ -23,7 +26,10 @@ impl CityGateway {
         &self.db
     }
 
-    pub async fn find_by_province_id(&self, province_id: i32) -> Result<Vec<city_entity::Model>, DbErr> {
+    pub async fn find_by_province_id(
+        &self,
+        province_id: i32,
+    ) -> Result<Vec<city_entity::Model>, DbErr> {
         CityQuery::find()
             .filter(city_entity::Column::ProvinceId.eq(province_id))
             .order_by_asc(city_entity::Column::Name)
@@ -40,9 +46,7 @@ impl Gateway<City, city_entity::Model, city_entity::ActiveModel> for CityGateway
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
-        CityQuery::delete_by_id(id)
-            .exec(&self.db)
-            .await
+        CityQuery::delete_by_id(id).exec(&self.db).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<city_entity::Model>, DbErr> {
@@ -69,7 +73,12 @@ impl Gateway<City, city_entity::Model, city_entity::ActiveModel> for CityGateway
 
 impl CityGateway {
     /// PD-028.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<city_entity::Model>, u64), DbErr> {
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<city_entity::Model>, u64), DbErr> {
         let mut query = CityQuery::find().order_by_asc(city_entity::Column::Name);
         if let Some(term) = search {
             query = query.filter(city_entity::Column::Name.contains(term));

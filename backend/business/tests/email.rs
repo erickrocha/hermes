@@ -9,14 +9,23 @@ use business::commons::email_sender::EmailSender;
 
 #[tokio::test]
 async fn email_configuration_and_delivery_failures_are_reported() {
-    let vars = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"];
+    let vars = [
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USER",
+        "SMTP_PASSWORD",
+        "SMTP_FROM",
+    ];
     // SAFETY: this is the only test in this binary.
     unsafe {
         for var in vars {
             std::env::remove_var(var);
         }
     }
-    assert!(EmailSender::from_env().is_err(), "missing SMTP settings must be an error");
+    assert!(
+        EmailSender::from_env().is_err(),
+        "missing SMTP settings must be an error"
+    );
 
     unsafe {
         std::env::set_var("SMTP_HOST", "127.0.0.1");
@@ -27,13 +36,23 @@ async fn email_configuration_and_delivery_failures_are_reported() {
     }
     let sender = EmailSender::from_env().expect("complete settings build a sender");
 
-    let bad_recipient = sender.send_invite("not an address", "http://localhost/accept").await;
+    let bad_recipient = sender
+        .send_invite("not an address", "http://localhost/accept")
+        .await;
     assert!(bad_recipient.unwrap_err().contains("Invalid recipient"));
 
-    let unreachable = sender.send_invite("invitee@example.com", "http://localhost/accept").await;
-    assert!(unreachable.unwrap_err().contains("Failed to send"), "a dead SMTP server is reported");
+    let unreachable = sender
+        .send_invite("invitee@example.com", "http://localhost/accept")
+        .await;
+    assert!(
+        unreachable.unwrap_err().contains("Failed to send"),
+        "a dead SMTP server is reported"
+    );
 
     unsafe { std::env::set_var("SMTP_FROM", "not a sender") };
-    let bad_sender = EmailSender::from_env().unwrap().send_invite("invitee@example.com", "http://x").await;
+    let bad_sender = EmailSender::from_env()
+        .unwrap()
+        .send_invite("invitee@example.com", "http://x")
+        .await;
     assert!(bad_sender.unwrap_err().contains("Invalid SMTP_FROM"));
 }

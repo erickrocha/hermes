@@ -4,7 +4,7 @@
 //! and "add an email path" are the same piece of work, not two.
 //!
 //! SMTP configuration is read lazily, per send, rather than once at boot
-//! (contrast `ACCESS_TOKEN_SECRET`/`SYSADMIN_EMAIL` in `web::start`, which
+//! (contrast `ACCESS_TOKEN_SECRET`/`SYSADMIN_EMAIL` in `application`'s `start` (main.rs), which
 //! fail the whole process at startup if absent). Deliberately not fail-fast:
 //! those two are secrets whose *absence* is itself a security posture worth
 //! refusing to boot over. A missing mail server only blocks one workflow

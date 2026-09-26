@@ -1,13 +1,13 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::province::{normalize_country_code, Province, ProvinceEntityMapper};
+use crate::domain::province::{Province, ProvinceEntityMapper, normalize_country_code};
+use crate::gateway::province_gateway::ProvinceGateway;
 use crate::use_cases::reference_import::{
-    find_duplicate_keys, fold_key, ImportOutcome, ImportRejection, ReferenceDataError,
-    RejectionReason,
+    ImportOutcome, ImportRejection, ReferenceDataError, RejectionReason, find_duplicate_keys,
+    fold_key,
 };
 use sea_orm::{ActiveModelTrait, TransactionTrait};
-use crate::gateway::province_gateway::ProvinceGateway;
 
 /// `province.name` is `varchar(255)` and `province.acronym` `varchar(10)`
 /// (migration `m20260916_000006`).
@@ -61,7 +61,10 @@ impl ProvinceUseCase {
             .await
             && Some(existing.id) != province.id
         {
-            return Err(ReferenceDataError::one(0, RejectionReason::ProvinceAlreadyExists));
+            return Err(ReferenceDataError::one(
+                0,
+                RejectionReason::ProvinceAlreadyExists,
+            ));
         }
 
         let saved = ProvinceEntityMapper::build_active_model(province)
@@ -125,9 +128,15 @@ impl ProvinceUseCase {
                 }
                 None => outcome.created += 1,
             }
-            if let Err(e) = ProvinceEntityMapper::build_active_model(row).save(&transaction).await {
+            if let Err(e) = ProvinceEntityMapper::build_active_model(row)
+                .save(&transaction)
+                .await
+            {
                 let _ = transaction.rollback().await;
-                return Err(ReferenceDataError::unavailable("ProvinceUseCase::import", e));
+                return Err(ReferenceDataError::unavailable(
+                    "ProvinceUseCase::import",
+                    e,
+                ));
             }
         }
 
@@ -139,12 +148,21 @@ impl ProvinceUseCase {
     }
 
     /// PD-028.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<Province>, u64), BusinessError> {
-        let (models, total) = self.gateway.find_page(page, page_size, search).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[ProvinceUseCase::find_page] {}", msg);
-            BusinessError::new(msg)
-        })?;
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Province>, u64), BusinessError> {
+        let (models, total) = self
+            .gateway
+            .find_page(page, page_size, search)
+            .await
+            .map_err(|e| {
+                let msg = format!("Database error: {}", e);
+                log::error!("[ProvinceUseCase::find_page] {}", msg);
+                BusinessError::new(msg)
+            })?;
         Ok((ProvinceEntityMapper::from_models(models), total))
     }
 
@@ -167,7 +185,10 @@ impl ProvinceUseCase {
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<Province, BusinessError> {
-        log::info!("[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",uuid);
+        log::info!(
+            "[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",
+            uuid
+        );
         let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
             let msg = format!("Database error: {}", e);
             log::error!("[ProvinceUseCase::find_by_uuid] {}", msg);
@@ -184,8 +205,14 @@ impl ProvinceUseCase {
         }
     }
 
-    pub async fn find_by_country_code(&self,country_code: String) -> Result<Vec<Province>, BusinessError> {
-        log::info!("[ProvinceUseCase::find_by_country_code] Executing for country_code: {}",country_code);
+    pub async fn find_by_country_code(
+        &self,
+        country_code: String,
+    ) -> Result<Vec<Province>, BusinessError> {
+        log::info!(
+            "[ProvinceUseCase::find_by_country_code] Executing for country_code: {}",
+            country_code
+        );
         let models = self
             .gateway
             .find_by_country_code(&country_code)

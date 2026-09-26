@@ -65,10 +65,22 @@ impl BusinessPlanUseCase {
     }
 
     /// PD-028.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<BusinessPlan>, u64), BusinessError> {
-        let (entities, total) = self.gateway.find_page(page, page_size, search).await.map_err(db_error)?;
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<BusinessPlan>, u64), BusinessError> {
+        let (entities, total) = self
+            .gateway
+            .find_page(page, page_size, search)
+            .await
+            .map_err(db_error)?;
         Ok((
-            entities.into_iter().map(BusinessPlanEntityMapper::from_model).collect(),
+            entities
+                .into_iter()
+                .map(BusinessPlanEntityMapper::from_model)
+                .collect(),
             total,
         ))
     }
@@ -85,7 +97,11 @@ impl BusinessPlanUseCase {
             .map_err(db_error)
     }
 
-    pub async fn update(&self, id: i64, mut plan: BusinessPlan) -> Result<BusinessPlan, BusinessError> {
+    pub async fn update(
+        &self,
+        id: i64,
+        mut plan: BusinessPlan,
+    ) -> Result<BusinessPlan, BusinessError> {
         Self::validate(&mut plan)?;
         let existing = self.find_by_id(id).await?;
         plan.id = Some(id);

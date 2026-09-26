@@ -10,4 +10,3 @@ pub struct ProvinceJson {
     pub name: String,
     pub country_code: String,
 }
-

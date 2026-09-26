@@ -1,13 +1,13 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{fetch_page, tenant_delete, tenant_select, Gateway};
+use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
 use crate::domain::vehicle::{Vehicle, VehicleEntityMapper};
 use entity::prelude::VehicleEntity as VehicleQuery;
 use entity::vehicle_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder,
 };
 
 /// EPIC-FO-01-S02 (HRMS-921, D-09): every read and delete here goes through
@@ -95,12 +95,36 @@ impl VehicleGateway {
     /// lookup would answer "taken" for a plate registered by another customer,
     /// which is exactly the disclosure D-23(c) rejected platform-wide
     /// uniqueness to avoid.
-    pub async fn find_by_plate(&self, plate: &str) -> Result<Option<vehicle_entity::Model>, DbErr> {
+    ///
+    /// DEF-FO-01: `tenant_select` alone is not enough. An unbound SysAdmin's
+    /// scope is the whole platform, so without naming the owning tenant a
+    /// plate held by customer B blocked registering it for customer A.
+    pub async fn find_by_plate(
+        &self,
+        plate: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<vehicle_entity::Model>, DbErr> {
+        plate_query(plate, tenant_id).one(&self.db).await
+    }
+}
+
+impl VehicleGateway {
+    /// HRMS-926. Scoped like every read here (`tenant_scoping_rule.rs`).
+    pub async fn find_by_tracker_device(
+        &self,
+        device_id: i64,
+    ) -> Result<Option<vehicle_entity::Model>, DbErr> {
         tenant_select(VehicleQuery::find(), vehicle_entity::Column::TenantId)
-            .filter(vehicle_entity::Column::Plate.eq(plate))
+            .filter(vehicle_entity::Column::TrackerDeviceId.eq(device_id))
             .one(&self.db)
             .await
     }
+}
+
+fn plate_query(plate: &str, tenant_id: Option<i64>) -> sea_orm::Select<VehicleQuery> {
+    tenant_select(VehicleQuery::find(), vehicle_entity::Column::TenantId)
+        .filter(vehicle_entity::Column::Plate.eq(plate))
+        .filter(vehicle_entity::Column::TenantId.eq(tenant_id))
 }
 
 /// HRMS-921 (EPIC-FO-01-S02): the read side of the scoping rule, proved on the
@@ -110,7 +134,7 @@ impl VehicleGateway {
 #[cfg(test)]
 mod tests {
     use crate::commons::gateway::{tenant_delete, tenant_select};
-    use entity::audit::{run_with_user, AuditUser};
+    use entity::audit::{AuditUser, run_with_user};
     use entity::vehicle_entity;
     use sea_orm::{DbBackend, EntityTrait, QueryTrait};
 
@@ -126,9 +150,12 @@ mod tests {
     #[tokio::test]
     async fn a_tenant_bound_caller_reads_only_its_own_vehicles() {
         let sql = run_with_user(Some(caller(Some(42), true)), async {
-            tenant_select(vehicle_entity::Entity::find(), vehicle_entity::Column::TenantId)
-                .build(DbBackend::MySql)
-                .to_string()
+            tenant_select(
+                vehicle_entity::Entity::find(),
+                vehicle_entity::Column::TenantId,
+            )
+            .build(DbBackend::MySql)
+            .to_string()
         })
         .await;
         assert!(sql.to_lowercase().contains("tenant_id"), "{sql}");
@@ -139,9 +166,12 @@ mod tests {
     async fn a_caller_with_no_tenant_scope_reads_no_vehicle_at_all() {
         // D-05: outside a request the scope is Denied, not unrestricted.
         let sql = run_with_user(Some(caller(None, true)), async {
-            tenant_select(vehicle_entity::Entity::find(), vehicle_entity::Column::TenantId)
-                .build(DbBackend::MySql)
-                .to_string()
+            tenant_select(
+                vehicle_entity::Entity::find(),
+                vehicle_entity::Column::TenantId,
+            )
+            .build(DbBackend::MySql)
+            .to_string()
         })
         .await;
         assert!(sql.contains("1 = 0"), "{sql}");
@@ -149,14 +179,31 @@ mod tests {
 
     #[tokio::test]
     async fn an_unrestricted_caller_adds_no_filter_to_a_vehicle_read() {
-        let unscoped = vehicle_entity::Entity::find().build(DbBackend::MySql).to_string();
+        let unscoped = vehicle_entity::Entity::find()
+            .build(DbBackend::MySql)
+            .to_string();
         let scoped = run_with_user(Some(caller(None, false)), async {
-            tenant_select(vehicle_entity::Entity::find(), vehicle_entity::Column::TenantId)
+            tenant_select(
+                vehicle_entity::Entity::find(),
+                vehicle_entity::Column::TenantId,
+            )
+            .build(DbBackend::MySql)
+            .to_string()
+        })
+        .await;
+        assert_eq!(scoped, unscoped);
+    }
+
+    #[tokio::test]
+    async fn the_plate_check_of_an_unrestricted_caller_names_the_owning_tenant() {
+        // DEF-FO-01: the SysAdmin's scope adds no filter, so the tenant must.
+        let sql = run_with_user(Some(caller(None, false)), async {
+            super::plate_query("ABC1D23", Some(99))
                 .build(DbBackend::MySql)
                 .to_string()
         })
         .await;
-        assert_eq!(scoped, unscoped);
+        assert!(sql.contains("`tenant_id` = 99"), "{sql}");
     }
 
     #[tokio::test]

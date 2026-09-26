@@ -42,7 +42,7 @@ RELEASE_WF = os.path.join(REPO, ".github", "workflows", "release.yml")
 RUNBOOK = os.path.join(REPO, "docs", "RUNBOOK-CUTOVER.md")
 OPERATIONS = os.path.join(REPO, "docs", "OPERATIONS.md")
 GITIGNORE = os.path.join(REPO, ".gitignore")
-WEB_LIB = os.path.join(BACKEND, "web", "src", "lib.rs")
+HEALTH_RS = os.path.join(BACKEND, "application", "src", "infrastructure", "health.rs")
 THEME_TS = os.path.join(REPO, "backoffice", "src", "theme.ts")
 BRAND_REVIEW = os.path.join(REPO, "docs", "brand", "transmega-identity-review.html")
 # The sign-off record lives in the outer SDD workspace, which contains this repo
@@ -233,9 +233,9 @@ def pr_006():
 # ------------------------------------------------------------ HRMS-042
 def pr_007():
     """The health endpoint distinguishes 'listening' from 'actually working'."""
-    lib = read(WEB_LIB)
+    lib = read(HEALTH_RS)
     if not lib:
-        return record("PR-007", "FAIL", "backend/web/src/lib.rs is absent")
+        return record("PR-007", "FAIL", "backend/application/src/infrastructure/health.rs is absent")
 
     registered = '"/health"' in lib
     queries_db = "execute_unprepared" in lib and "SELECT 1" in lib
@@ -258,7 +258,7 @@ def pr_008():
     a 503 are different signals and OPERATIONS.md asks the on-call to tell them
     apart, so the bound is asserted rather than assumed.
     """
-    lib, api_df, compose = read(WEB_LIB), read(API_DOCKERFILE), read(COMPOSE)
+    lib, api_df, compose = read(HEALTH_RS), read(API_DOCKERFILE), read(COMPOSE)
     bounded = "HEALTH_PROBE_TIMEOUT" in lib and "tokio::time::timeout" in lib
 
     probe = re.search(r"HEALTH_PROBE_TIMEOUT\s*:\s*Duration\s*=\s*Duration::from_secs\((\d+)\)", lib)
@@ -420,7 +420,7 @@ def shell_scenario():
 
 def cargo_scenario():
     """The health endpoint's own tests, via the repository's test suite."""
-    proof = subprocess.run(["cargo", "test", "-p", "web", "health"],
+    proof = subprocess.run(["cargo", "test", "-p", "application", "health"],
                            cwd=BACKEND, capture_output=True, text=True)
     match = re.search(r"(\d+) passed; (\d+) failed", proof.stdout)
     passed, failed = (int(match.group(1)), int(match.group(2))) if match else (0, 1)

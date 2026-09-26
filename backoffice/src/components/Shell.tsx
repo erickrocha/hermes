@@ -8,6 +8,7 @@ import { loadCurrentTenant, logout } from '../store'
 import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
+import { canReachAdministration } from '../pages/ManagementPages'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
 
@@ -31,9 +32,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const userLabel = session.name || session.email || t('user')
   const links = [
     { to: '/', label: t('dashboard'), icon: Gauge },
-    { to: '/tenants', label: t('tenants'), icon: Building2 },
+    ...(canReachAdministration(session.role) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
-    { to: '/users', label: t('users'), icon: Users },
+    ...(canReachAdministration(session.role) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
     // de planos -- só o SysAdmin desacoplado de tenant administra.
     ...(session.role === 'SysAdmin' ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),
@@ -49,7 +50,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="app-main">
       <header className="topbar">
         <button className="menu-button" onClick={() => setMobile(true)} aria-label={t('menu')}><Menu /></button>
-        <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{session.role}</small></div>
+        <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{t(`role${session.role}`)}</small></div>
         <div className="topbar-actions">
           <LanguagePicker />
           <div className="user-menu-wrap">

@@ -1,13 +1,13 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{fetch_page, Gateway};
+use crate::commons::gateway::{Gateway, fetch_page};
 use crate::domain::province::{Province, ProvinceEntityMapper};
 use entity::prelude::ProvinceEntity as ProvinceQuery;
 use entity::province_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{Condition, 
-    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect,
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 
 pub struct ProvinceGateway {
@@ -85,7 +85,12 @@ impl Gateway<Province, province_entity::Model, province_entity::ActiveModel> for
 
 impl ProvinceGateway {
     /// PD-028.
-    pub async fn find_page(&self, page: u64, page_size: u64, search: Option<&str>) -> Result<(Vec<province_entity::Model>, u64), DbErr> {
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<province_entity::Model>, u64), DbErr> {
         let mut query = ProvinceQuery::find().order_by_asc(province_entity::Column::Acronym);
         if let Some(term) = search {
             query = query.filter(

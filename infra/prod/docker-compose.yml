@@ -88,7 +88,7 @@ services:
   #
   # `restart: "no"` and a profile keep it out of the running set: it is run
   # explicitly by deploy.sh and must exit 0 before the API is started. The API
-  # refuses to boot on a schema that is behind (see web/src/lib.rs), so getting
+  # refuses to boot on a schema that is behind (see application/src/main.rs), so getting
   # this order wrong fails loudly instead of serving on a stale schema.
   #
   # ROLLBACK POSITION: migrations are forward-only here. The rollback for a bad
