@@ -11,7 +11,6 @@ pub struct Model {
     #[sea_orm(unique)]
     pub email: String,
     pub password: String,
-    pub first_login: bool,
     pub enabled: bool,
     /// Set when the billing worker owns the block; NULL means a human did.
     pub blocked_reason: Option<String>,

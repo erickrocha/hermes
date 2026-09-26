@@ -9,6 +9,41 @@
 //! document, so everything is stored digits-only and compared that way. That is
 //! also what makes the `uq_customer_tax_id` index meaningful.
 
+/// EPIC-TP-02 (HRMS-207...211, PD-022). Before this, this module *was* tax
+/// identifier validation for hermes -- Brazilian-only, and dead code (D-3,
+/// U-004): nothing called `normalize`. `validate_and_normalize` is the
+/// pluggable entry point `TenantUseCase` actually calls now, dispatching by
+/// country so "Brazilian CPF/CNPJ stays as one implementation, not the only
+/// one" (PD-022) instead of the only rule there is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaxIdOutcome {
+    /// A registered validator for this country accepted the document; store
+    /// this normalised form.
+    Valid(String),
+    /// A registered validator for this country rejected the document.
+    Invalid,
+    /// No validator is registered for this country. Per PD-022/HRMS-210, a
+    /// tenant here is accepted as given -- expanding into a new market must
+    /// not be blocked on writing that country's validator first, and must
+    /// not have another country's rules silently applied to it.
+    Unsupported,
+}
+
+/// Dispatches to the validator registered for `country_code`, or
+/// [`TaxIdOutcome::Unsupported`] if none exists. Case-insensitive on the
+/// country code, matching how it's already normalised elsewhere
+/// (`TenantMapper::domain`'s `country_code` helper upper-cases it, but this
+/// function doesn't assume its caller did).
+pub fn validate_and_normalize(country_code: &str, raw: &str) -> TaxIdOutcome {
+    match country_code.to_ascii_uppercase().as_str() {
+        "BR" => match normalize(raw) {
+            Some(digits) => TaxIdOutcome::Valid(digits),
+            None => TaxIdOutcome::Invalid,
+        },
+        _ => TaxIdOutcome::Unsupported,
+    }
+}
+
 /// Digits-only form of a valid CPF or CNPJ, or `None` if the document is invalid.
 pub fn normalize(raw: &str) -> Option<String> {
     let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
@@ -74,7 +109,10 @@ mod tests {
     fn accepts_a_valid_cpf_in_any_formatting() {
         assert_eq!(normalize("529.982.247-25").as_deref(), Some("52998224725"));
         assert_eq!(normalize("52998224725").as_deref(), Some("52998224725"));
-        assert_eq!(normalize(" 529 982 247 25 ").as_deref(), Some("52998224725"));
+        assert_eq!(
+            normalize(" 529 982 247 25 ").as_deref(),
+            Some("52998224725")
+        );
     }
 
     #[test]
@@ -108,5 +146,37 @@ mod tests {
         assert!(normalize("529982247").is_none());
         assert!(normalize("529982247250").is_none());
         assert!(normalize("not a document").is_none());
+    }
+
+    #[test]
+    fn dispatches_brazil_to_the_cpf_cnpj_validator() {
+        assert_eq!(
+            validate_and_normalize("BR", "529.982.247-25"),
+            TaxIdOutcome::Valid("52998224725".to_string())
+        );
+        assert_eq!(
+            validate_and_normalize("BR", "00000000000"),
+            TaxIdOutcome::Invalid
+        );
+    }
+
+    #[test]
+    fn dispatch_is_case_insensitive_on_the_country_code() {
+        assert_eq!(
+            validate_and_normalize("br", "529.982.247-25"),
+            TaxIdOutcome::Valid("52998224725".to_string())
+        );
+    }
+
+    #[test]
+    fn a_country_with_no_registered_validator_is_unsupported_not_rejected() {
+        assert_eq!(
+            validate_and_normalize("US", "12-3456789"),
+            TaxIdOutcome::Unsupported
+        );
+        assert_eq!(
+            validate_and_normalize("US", "anything at all"),
+            TaxIdOutcome::Unsupported
+        );
     }
 }

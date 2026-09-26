@@ -6,35 +6,72 @@ import { useTranslation } from 'react-i18next'
 import { api, apiMessage } from '../api'
 import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
-import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
-import type { BusinessPlan, BusinessPlanTier, Tenant, TenantPlan, User } from '../types'
+import { clearCities, loadCities, loadCountries, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
+import type { BusinessPlan, Page, Tenant, User } from '../types'
+import type { ColumnDef } from '@tanstack/react-table'
+import { DataTable, Pagination } from '../components/DataTable'
+import { usePagedList } from '../usePagedList'
 import { Combobox } from '../components/Combobox'
 import { Confirm, Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
 
 const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'BRL' }).format(cents / 100)
+// EPIC-BO-03-S02 (HRMS-412): the API's unit is integer cents, but a person
+// types and reads currency amounts -- these two keep the editor's inputs in
+// that human unit while the form state (and the request body) stays in
+// cents, so a price can no longer be off by a factor of a hundred.
+export const centsToAmount = (cents: number) => (cents / 100).toFixed(2)
+export const amountToCents = (amount: string) => Math.round((Number.parseFloat(amount || '0') || 0) * 100)
 const today = () => new Date().toISOString().slice(0, 10)
 const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
-const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode, paymentGraceDays: 0 })
-const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today(), dailyAiQuota: 4, tiers: [] }
+const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode })
+const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today() }
+// DEF-BO-04 (PD-019/EPIC-IA-04): only a SysAdmin and a TenantOwner may create
+// accounts. A TenantUser was still shown "New user", and the form only failed
+// on submit -- offering a control the API refuses is exactly what PD-015
+// warns against. Exported so the route guard and the page agree on one rule.
+export const canCreateUsers = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
+// EPIC-IA-09 (HRMS-131, D-22): a tenant owner staffs their own tenant with these roles.
+export const tenantOwnerCreatableRoles: User['role'][] = ['TenantUser', 'Driver', 'Mechanic']
+// EPIC-BO-07-S02 (HRMS-416, D-22): drivers and mechanics reach no tenant or user administration.
+export const canReachAdministration = (role: string) => role !== 'Driver' && role !== 'Mechanic'
 
 export function TenantsPage() {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState('')
-  useEffect(() => { dispatch(loadTenants()) }, [dispatch])
-  const filtered = tenants.filter((tenant) => `${tenant.businessName} ${tenant.companyName} ${tenant.taxId} ${tenant.email}`.toLowerCase().includes(search.toLowerCase()))
-  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={() => dispatch(loadTenants())}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="tenant-grid">{filtered.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span><small>#{tenant.id}</small></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.id && <Link to={`/tenants/${tenant.id}/edit`}><Pencil size={15} />{t('edit')}</Link>}{session.role === 'SysAdmin' && tenant.id && <Link to={`/tenants/${tenant.id}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div>}</>
+  const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
+  const { search, setSearch, onPageChange, reload } = usePagedList(loadTenants)
+  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.items.length ? <Loading /> : !tenants.items.length ? <Empty /> : <><div className="tenant-grid">{tenants.items.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.uuid && <Link to={`/tenants/${tenant.uuid}/edit`}><Pencil size={15} />{t('edit')}</Link>}{session.role === 'SysAdmin' && tenant.uuid && <Link to={`/tenants/${tenant.uuid}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div><Pagination page={tenants} onPageChange={onPageChange} /></>}</>
 }
 
 export function TenantEditorPage() {
-  const { id } = useParams()
+  // HRMS-204/OBS-TP-05: tenants are addressed by their public uuid, in the
+  // console's own URL as well as in the API call, so no browser address bar
+  // or API path carries the sequential internal id.
+  const { uuid } = useParams()
+  const id = uuid
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
   const { t, i18n } = useTranslation()
-  const { provinces, cities } = useSelector((s: RootState) => s.data)
+  const { provinces, cities, countries } = useSelector((s: RootState) => s.data)
   const localeCountry = localeCountryCode(i18n.resolvedLanguage || i18n.language)
+  // DEF-RD-08: ISO codes alone ("BR", "AR") are not what an operator reads, so
+  // the browser names them in the console's language. `Intl.DisplayNames` is
+  // the platform's own table -- translating country names by hand in our
+  // bundles would rot the moment a new country is imported.
+  const countryOptions = useMemo(() => {
+    const language = i18n.resolvedLanguage || i18n.language || 'pt-BR'
+    let names: Intl.DisplayNames | null = null
+    try { names = new Intl.DisplayNames([language], { type: 'region' }) } catch { names = null }
+    return countries
+      .map((code) => ({ code, label: (names?.of(code) ?? code) || code }))
+      .sort((a, b) => a.label.localeCompare(b.label, language))
+  }, [countries, i18n.resolvedLanguage, i18n.language])
   const [form, setForm] = useState<Tenant>(() => blankTenant(localeCountry))
   const [loading, setLoading] = useState(Boolean(id))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    dispatch(loadCountries())
+  }, [dispatch])
 
   useEffect(() => {
     if (!id) {
@@ -42,7 +79,7 @@ export function TenantEditorPage() {
       return
     }
     setLoading(true)
-    api.get<Tenant>(`/tenant/${id}`)
+    api.get<Tenant>(`/tenant/uuid/${id}`)
       .then(({ data }) => {
         const country = data.countryCode || localeCountry
         setForm({ ...data, countryCode: country })
@@ -82,7 +119,7 @@ export function TenantEditorPage() {
     setSaving(true)
     setError('')
     try {
-      if (id) await api.put(`/tenant/${id}`, form)
+      if (id) await api.put(`/tenant/uuid/${id}`, form)
       else await api.post('/tenant', form)
       navigate('/tenants')
     } catch (cause) {
@@ -100,29 +137,24 @@ export function TenantEditorPage() {
       <section className="page-form-card">
         <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
           <div className="span-2">
-            <label>{t('country')}</label>
-            <div className="radio-group" role="radiogroup" aria-label={t('country')}>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="BR"
-                  checked={(form.countryCode || 'BR') === 'BR'}
-                  onChange={() => handleCountryChange('BR')}
-                />
-                <span>BR · {t('brazil')}</span>
-              </label>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="countryCode"
-                  value="US"
-                  checked={form.countryCode === 'US'}
-                  onChange={() => handleCountryChange('US')}
-                />
-                <span>US · {t('unitedStates')}</span>
-              </label>
-            </div>
+            <label htmlFor="tenant-country">{t('country')}</label>
+            {/* DEF-RD-08 (PD-027): the country list is the set that actually
+                has reference data, so importing a country's provinces is all
+                it takes to make it selectable. The hardcoded BR/US radios
+                meant PD-027's import could never reach this form. */}
+            <select
+              id="tenant-country"
+              required
+              value={form.countryCode || ''}
+              onChange={(e) => handleCountryChange(e.target.value)}
+            >
+              {!countryOptions.some((option) => option.code === (form.countryCode || '')) && (
+                <option value={form.countryCode || ''}>{form.countryCode || t('select')}</option>
+              )}
+              {countryOptions.map(({ code, label }) => (
+                <option key={code} value={code}>{code} · {label}</option>
+              ))}
+            </select>
           </div>
           <label>
             {t('businessName')}
@@ -182,10 +214,6 @@ export function TenantEditorPage() {
             {t('postalCode')}
             <input value={form.postalCode || ''} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} />
           </label>
-          <label>
-            {t('graceDays')}
-            <input type="number" min="0" value={form.paymentGraceDays || 0} onChange={(e) => setForm({ ...form, paymentGraceDays: Number(e.target.value) })} />
-          </label>
         </Form>
       </section>
     </>
@@ -193,41 +221,80 @@ export function TenantEditorPage() {
 }
 
 export function SubscriptionPage() {
-  const { id } = useParams(); const tenantId = Number(id); const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [form, setForm] = useState<TenantPlan>({ tenantId, businessPlanId: 0, paymentDate: today(), active: true }); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/${tenantId}`), api.get<BusinessPlan[]>('/business-plan'), api.get<TenantPlan>(`/tenant/${tenantId}/plan`).catch(() => null)]).then(([tenantResult, plansResult, planResult]) => { setTenant(tenantResult.data); setPlans(plansResult.data); setForm(planResult?.data || { tenantId, businessPlanId: plansResult.data[0]?.id || 0, paymentDate: today(), active: true }) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { await api.post(`/tenant/${tenantId}/plan`, form); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
+  // DEF-BO-03: `/business-plan` returns PD-028's page envelope, not a bare
+  // array. Reading it as an array made `plans.flatMap` throw and -- with no
+  // error boundary above it -- unmounted the whole console, so the operator
+  // saw a blank screen instead of the plan picker.
+  const { uuid } = useParams(); const tenantId = uuid; const navigate = useNavigate(); const { t, i18n } = useTranslation(); const [tenant, setTenant] = useState<Tenant | null>(null); const [plans, setPlans] = useState<BusinessPlan[]>([]); const [businessPlanId, setBusinessPlanId] = useState<number | null>(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  useEffect(() => { Promise.all([api.get<Tenant>(`/tenant/uuid/${tenantId}`), api.get<Page<BusinessPlan>>('/business-plan', { params: { page: 0, pageSize: 200 } }), api.get<BusinessPlan | null>(`/tenant/uuid/${tenantId}/plan`).catch(() => ({ data: null }))]).then(([tenantResult, plansResult, planResult]) => { const available = plansResult.data.items ?? []; setTenant(tenantResult.data); setPlans(available); setBusinessPlanId(planResult.data?.id ?? available[0]?.id ?? null) }).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [t, tenantId])
+  const save = async (event: FormEvent) => { event.preventDefault(); if (!businessPlanId) return; setSaving(true); setError(''); try { await api.post(`/tenant/uuid/${tenantId}/plan`, { businessPlanId }); navigate('/tenants') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
-  return <><PageHeader title={`${t('subscription')} · ${tenant ? tenantName(tenant) : ''}`} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}><label className="span-2">{t('plans')}<Combobox filterable value={form.businessPlanId || null} options={plans.flatMap((plan) => plan.id ? [{ value: plan.id, label: `${plan.name} · ${money(plan.priceInCents, i18n.language)}` }] : [])} onChange={(value) => setForm({ ...form, businessPlanId: value || 0 })} /></label><label className="span-2">{t('paymentDate')}<input type="date" required value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label></Form></section></>
+  return <><PageHeader title={`${t('subscription')} · ${tenant ? tenantName(tenant) : ''}`} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}><label className="span-2">{t('plans')}<Combobox filterable value={businessPlanId} options={plans.flatMap((plan) => plan.id ? [{ value: plan.id, label: `${plan.name} · ${money(plan.priceInCents, i18n.language)}` }] : [])} onChange={(value) => setBusinessPlanId(value)} /></label></Form></section></>
 }
 
 export function PlansPage() {
-  const { t, i18n } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { plans, loading } = useSelector((s: RootState) => s.data); const [search, setSearch] = useState(''); const [removing, setRemoving] = useState<BusinessPlan | null>(null); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadPlans()) }, [dispatch]); const filtered = plans.filter((plan) => plan.name.toLowerCase().includes(search.toLowerCase()))
-  const remove = async () => { if (!removing?.id) return; try { await api.delete(`/business-plan/${removing.id}`); setRemoving(null); dispatch(loadPlans()) } catch (cause) { setError(apiMessage(cause, t('genericError'))); setRemoving(null) } }
-  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={() => dispatch(loadPlans())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/plans/new"><Plus size={17} />{t('newPlan')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !plans.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('planName')}</th><th>{t('basePrice')}</th><th>{t('includedUsers')}</th><th>{t('periodDays')}</th><th>{t('aiQuota')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((plan) => <tr key={plan.id}><td><b>{plan.name}</b><small>{plan.tiers.length} {t('tiers').toLowerCase()}</small></td><td>{money(plan.priceInCents, i18n.language)}</td><td>{plan.availableUsers}</td><td>{plan.periodDays}</td><td>{plan.dailyAiQuota}</td><td><div className="row-actions">{plan.id && <Link to={`/plans/${plan.id}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(plan)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div></div>}{removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
+  const { t, i18n } = useTranslation(); const { plans, loading } = useSelector((s: RootState) => s.data); const [removing, setRemoving] = useState<BusinessPlan | null>(null); const [error, setError] = useState('')
+  const { search, setSearch, onPageChange, reload } = usePagedList(loadPlans)
+  const remove = async () => { if (!removing?.uuid) return; try { await api.delete(`/business-plan/uuid/${removing.uuid}`); setRemoving(null); reload() } catch (cause) { setError(apiMessage(cause, t('genericError'))); setRemoving(null) } }
+  const columns = useMemo<ColumnDef<BusinessPlan, unknown>[]>(() => [
+    { header: () => t('planName'), accessorKey: 'name', cell: ({ row }) => <b>{row.original.name}</b> },
+    { header: () => t('basePrice'), accessorKey: 'priceInCents', cell: ({ row }) => money(row.original.priceInCents, i18n.language) },
+    { header: () => t('includedUsers'), accessorKey: 'availableUsers' },
+    { header: () => t('periodDays'), accessorKey: 'periodDays' },
+    { id: 'actions', header: () => t('actions'), cell: ({ row }) => <div className="row-actions">{row.original.uuid && <Link to={`/plans/${row.original.uuid}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(row.original)}><Trash2 size={16} /></button></div> },
+  ], [t, i18n.language])
+  return <><PageHeader title={t('plans')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/plans/new"><Plus size={17} />{t('newPlan')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={plans} loading={loading} onPageChange={onPageChange} />{removing && <Confirm title={t('deletePlanTitle')} text={t('deletePlanText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
 }
 
 export function PlanEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const [form, setForm] = useState<BusinessPlan>({ ...blankPlan, tiers: [] }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { if (!id) return; api.get<BusinessPlan>(`/business-plan/${id}`).then(({ data }) => setForm(data)).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { if (id) await api.put(`/business-plan/${id}`, form); else await api.post('/business-plan', form); navigate('/plans') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
+  const { uuid } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const [form, setForm] = useState<BusinessPlan>({ ...blankPlan }); const [loading, setLoading] = useState(Boolean(uuid)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  useEffect(() => { if (!uuid) return; api.get<BusinessPlan>(`/business-plan/uuid/${uuid}`).then(({ data }) => setForm(data)).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [uuid, t])
+  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); try { if (uuid) await api.put(`/business-plan/uuid/${uuid}`, form); else await api.post('/business-plan', form); navigate('/plans') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
-  return <><PageHeader title={id ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="1" value={form.priceInCents} onChange={(e) => setForm({ ...form, priceInCents: Number(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={form.availableUsers} onChange={(e) => setForm({ ...form, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label><label>{t('aiQuota')}<input type="number" min="1" value={form.dailyAiQuota} onChange={(e) => setForm({ ...form, dailyAiQuota: Number(e.target.value) })} /></label><div className="span-2 tier-editor"><div className="tier-title"><b>{t('tiers')}</b><button type="button" className="btn tertiary" onClick={() => setForm({ ...form, tiers: [...form.tiers, { upToUsers: 0, pricePerUserInCents: 0 }] })}><Plus size={15} />{t('addTier')}</button></div>{form.tiers.map((tier: BusinessPlanTier, index: number) => <div className="tier-row" key={tier.id ?? index}><label>{t('upToUsers')}<input type="number" min="0" value={tier.upToUsers} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, upToUsers: Number(e.target.value) }; setForm({ ...form, tiers }) }} /></label><label>{t('pricePerUser')}<input type="number" min="0" value={tier.pricePerUserInCents} onChange={(e) => { const tiers = [...form.tiers]; tiers[index] = { ...tier, pricePerUserInCents: Number(e.target.value) }; setForm({ ...form, tiers }) }} /></label><button type="button" onClick={() => setForm({ ...form, tiers: form.tiers.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={16} /></button></div>)}</div></Form></section></>
+  return <><PageHeader title={uuid ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>{t('basePrice')}<input type="number" min="0" step="0.01" value={centsToAmount(form.priceInCents)} onChange={(e) => setForm({ ...form, priceInCents: amountToCents(e.target.value) })} /></label><label>{t('includedUsers')}<input type="number" min="1" value={form.availableUsers} onChange={(e) => setForm({ ...form, availableUsers: Number(e.target.value) })} /></label><label>{t('periodDays')}<input type="number" min="1" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: Number(e.target.value) })} /></label><label>{t('paymentDate')}<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></label></Form></section></>
 }
 
 export function UsersPage() {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { users, tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [search, setSearch] = useState(''); const [confirming, setConfirming] = useState<User | null>(null); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadUsers()); dispatch(loadTenants()) }, [dispatch]); const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email}`.toLowerCase().includes(search.toLowerCase())), [users, search]); const getTenantName = (tenantId?: number | null) => tenants.find((tenant) => tenant.id === tenantId)?.companyName || tenants.find((tenant) => tenant.id === tenantId)?.businessName || t('global')
-  const toggle = async () => { if (!confirming?.id) return; if (confirming.id === session.userId) { setError(t('selfDeactivate')); setConfirming(null); return } try { await api.put(`/user/${confirming.id}`, { ...confirming, password: undefined, enabled: !confirming.enabled }); setConfirming(null); dispatch(loadUsers()) } catch (cause) { setError(apiMessage(cause, t('genericError'))) } }
-  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={() => dispatch(loadUsers())}><RefreshCw size={16} />{t('refresh')}</button><Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link></>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div>{loading && !users.length ? <Loading /> : !filtered.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('role')}</th><th>{t('tenant')}</th><th>{t('status')}</th><th>{t('actions')}</th></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><td><b>{user.name || '—'}</b><small>{user.email}</small></td><td><span className="badge blue">{user.role}</span></td><td>{getTenantName(user.tenantId)}</td><td><span className={`badge ${user.enabled ? 'green' : 'gray'}`}>{user.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{user.enabled ? t('active') : t('inactive')}</span></td><td><div className="row-actions">{user.id && <Link to={`/users/${user.id}/edit`}><Pencil size={16} /></Link>}<button className={user.enabled ? 'danger-text' : 'success-text'} disabled={user.id === session.userId} onClick={() => setConfirming(user)}>{user.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div></td></tr>)}</tbody></table></div></div>}{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
+  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const { users, tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!; const [confirming, setConfirming] = useState<User | null>(null); const [error, setError] = useState('')
+  const { search, setSearch, onPageChange, reload } = usePagedList(loadUsers)
+  // Os nomes de tenant vêm da página de tenants já carregada; um tenant fora
+  // dela cai em t('global') em vez de disparar uma busca por linha.
+  useEffect(() => { dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch])
+  const getTenantName = (tenantId?: number | null) => { const found = tenants.items.find((tenant) => tenant.id === tenantId); return found?.companyName || found?.businessName || t('global') }
+  const toggle = async () => { if (!confirming?.uuid) return; if (confirming.id === session.userId) { setError(t('selfDeactivate')); setConfirming(null); return } try { await api.put(`/user/uuid/${confirming.uuid}`, { ...confirming, password: undefined, enabled: !confirming.enabled }); setConfirming(null); reload() } catch (cause) { setError(apiMessage(cause, t('genericError'))) } }
+  const columns = useMemo<ColumnDef<User, unknown>[]>(() => [
+    { header: () => t('name'), accessorKey: 'name', cell: ({ row }) => <><b>{row.original.name || '—'}</b><small>{row.original.email}</small></> },
+    { header: () => t('role'), accessorKey: 'role', cell: ({ row }) => <span className="badge blue">{t(`role${row.original.role}`)}</span> },
+    { id: 'tenant', header: () => t('tenant'), cell: ({ row }) => getTenantName(row.original.tenantId) },
+    { header: () => t('status'), accessorKey: 'enabled', cell: ({ row }) => <span className={`badge ${row.original.enabled ? 'green' : 'gray'}`}>{row.original.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{row.original.enabled ? t('active') : t('inactive')}</span> },
+    { id: 'actions', header: () => t('actions'), cell: ({ row }) => <div className="row-actions">{row.original.uuid && <Link to={`/users/${row.original.uuid}/edit`}><Pencil size={16} /></Link>}<button className={row.original.enabled ? 'danger-text' : 'success-text'} disabled={row.original.id === session.userId} onClick={() => setConfirming(row.original)}>{row.original.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div> },
+  ], [t, tenants, session.userId])
+  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{canCreateUsers(session.role) && <Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={users} loading={loading} onPageChange={onPageChange} />{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
 }
 
 export function UserEditorPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!; const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, firstLogin: true, role: 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(id)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { dispatch(loadTenants()) }, [dispatch])
-  useEffect(() => { if (!id) return; api.get<User>(`/user/${id}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [id, t])
-  useEffect(() => { if (!id && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants[0]?.id) setForm((value) => ({ ...value, tenantId: tenants[0].id })) }, [form.role, form.tenantId, id, session.role, tenants])
-  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); const payload = { ...form }; if (!payload.password) delete payload.password; try { if (id) await api.put(`/user/${id}`, payload); else await api.post('/user', payload); navigate('/users') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
+  const { uuid } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!
+  // PD-019: a tenant owner creates tenant users in their own tenant only --
+  // a platform administrator creates tenants and tenant owners, never a
+  // tenant user directly (EPIC-IA-04).
+  const [form, setForm] = useState<User>({ name: '', email: '', password: '', enabled: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null }); const [loading, setLoading] = useState(Boolean(uuid)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const [inviting, setInviting] = useState(false); const [invited, setInvited] = useState(false)
+  // O seletor de tenant precisa das opções, não de uma página: pede um lote
+  // grande em vez de paginar um <select>.
+  useEffect(() => { dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch])
+  useEffect(() => { if (!uuid) return; api.get<User>(`/user/uuid/${uuid}`).then(({ data }) => setForm({ ...data, password: '' })).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [uuid, t])
+  useEffect(() => { if (!uuid && session.role === 'SysAdmin' && form.role === 'TenantOwner' && !form.tenantId && tenants.items[0]?.id) setForm((value) => ({ ...value, tenantId: tenants.items[0].id })) }, [form.role, form.tenantId, uuid, session.role, tenants])
+  // EPIC-IA-07/D-07: `PUT /user/uuid/{uuid}` discards any password it is sent,
+  // so the old "new password" field promised a reset that silently did nothing.
+  // Re-issuing the invitation is the action the API actually offers, so that
+  // is the action the form offers.
+  const resendInvite = async () => { if (!uuid) return; setInviting(true); setError(''); setInvited(false); try { await api.post(`/user/uuid/${uuid}/invite`); setInvited(true) } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setInviting(false) } }
+  const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(''); const payload = { ...form }; delete payload.password; try { if (uuid) await api.put(`/user/uuid/${uuid}`, payload); else await api.post('/user', payload); navigate('/users') } catch (cause) { setError(apiMessage(cause, t('genericError'))) } finally { setSaving(false) } }
   if (loading) return <Loading />
-  return <><PageHeader title={id ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label className="span-2">{id ? t('newPassword') : t('temporaryPassword')}<input type="password" required={!id} value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>{session.role === 'SysAdmin' && <><label>{t('role')}<Combobox value={form.role} options={[{ value: 'TenantOwner', label: 'TenantOwner' }, { value: 'SysAdmin', label: 'SysAdmin' }]} onChange={(value) => value && setForm({ ...form, role: value as User['role'], tenantId: value === 'SysAdmin' ? null : form.tenantId || tenants[0]?.id })} /></label><label>{t('tenant')}<Combobox filterable disabled={form.role === 'SysAdmin'} value={form.tenantId || null} options={tenants.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={(value) => setForm({ ...form, tenantId: value })} /></label></>}<label className="checkbox span-2"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />{t('active')}</label></Form></section></>
+  // EPIC-IA-07/D-07 (PD-002): a new account is never given a caller-set
+  // password -- the server discards it and emails an invitation instead. A
+  // password field on this form would offer a control the API no longer
+  // honours (exactly what PD-015/EPIC-BO-06 warns against), on creation and
+  // on edit alike, so neither has one.
+  return <><PageHeader title={uuid ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label className="span-2">{t('email')}<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>{uuid ? <div className="span-2 form-hint invite-hint"><span>{invited ? t('inviteSent') : t('resendInviteHint')}</span><button type="button" className="btn tertiary" disabled={inviting} onClick={resendInvite}><RefreshCw size={15} />{inviting ? t('sending') : t('resendInvite')}</button></div> : <p className="span-2 form-hint">{t('inviteNotice')}</p>}{session.role === 'SysAdmin' && <><label>{t('role')}<Combobox value={form.role} options={[{ value: 'TenantOwner', label: t('roleTenantOwner') }, { value: 'SysAdmin', label: t('roleSysAdmin') }]} onChange={(value) => value && setForm({ ...form, role: value as User['role'], tenantId: value === 'SysAdmin' ? null : form.tenantId || tenants.items[0]?.id })} /></label><label>{t('tenant')}<Combobox filterable disabled={form.role === 'SysAdmin'} value={form.tenantId || null} options={tenants.items.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={(value) => setForm({ ...form, tenantId: value })} /></label></>}{session.role === 'TenantOwner' && !uuid && <label className="span-2">{t('role')}<Combobox value={form.role} options={tenantOwnerCreatableRoles.map((role) => ({ value: role, label: t(`role${role}`) }))} onChange={(value) => value && setForm({ ...form, role: value as User['role'] })} /></label>}<label className="checkbox span-2"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />{t('active')}</label></Form></section></>
 }

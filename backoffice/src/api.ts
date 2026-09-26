@@ -38,7 +38,11 @@ export const normalizeSession = (data: Record<string, unknown>) => ({
   accessToken: String(data.accessToken ?? data.access_token ?? ''), refreshToken: data.refreshToken ?? data.refresh_token,
   tokenType: String(data.tokenType ?? data.token_type ?? 'Bearer'), expireIn: Number(data.expireIn ?? data.expire_in ?? 0),
   email: String(data.email ?? ''), uuid: String(data.uuid ?? ''), name: String(data.name ?? ''), userId: Number(data.userId ?? data.user_id),
-  role: data.role, tenantId: data.tenantId ?? data.tenant_id ?? null, firstLogin: Boolean(data.firstLogin ?? data.first_login),
+  role: data.role, tenantId: data.tenantId ?? data.tenant_id ?? null,
+  // HRMS-204/OBS-TP-05: the session tenant's public identifier. This whitelist
+  // is the only thing that survives into the stored session, so a field missing
+  // here is silently dropped on reload.
+  tenantUuid: data.tenantUuid ?? data.tenant_uuid ?? null,
 })
 
 export const apiMessage = (error: unknown, fallback: string) => {

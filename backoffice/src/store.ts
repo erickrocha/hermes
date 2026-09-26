@@ -1,6 +1,7 @@
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { api, apiMessage, normalizeSession } from './api'
-import type { BusinessPlan, City, Province, Session, Tenant, TenantPlan, User } from './types'
+import { emptyPage } from './types'
+import type { BusinessPlan, City, Page, PageRequest, Province, Session, Tenant, User } from './types'
 
 const loadStoredSession = (): Session | null => {
   const stored = localStorage.getItem('hermes.session')
@@ -34,17 +35,46 @@ const authSlice = createSlice({
     .addCase(login.pending, (state) => { state.loading = true; state.error = '' })
     .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
-    .addCase(changePassword.fulfilled, (state) => { if (state.session) { state.session.firstLogin = false; localStorage.setItem('hermes.session', JSON.stringify(state.session)) } }),
 })
 
-type DataState = { tenants: Tenant[]; plans: BusinessPlan[]; users: User[]; provinces: Province[]; cities: City[]; tenantPlans: Record<number, TenantPlan | null>; loading: boolean; error: string }
-const initialData: DataState = { tenants: [], plans: [], users: [], provinces: [], cities: [], tenantPlans: {}, loading: false, error: '' }
-export const loadTenants = createAsyncThunk('data/tenants', async () => (await api.get<Tenant[]>('/tenant')).data)
-export const loadPlans = createAsyncThunk('data/plans', async () => (await api.get<BusinessPlan[]>('/business-plan')).data)
-export const loadUsers = createAsyncThunk('data/users', async () => (await api.get<User[]>('/user')).data)
+type Counts = { tenants: number; users: number; plans: number }
+type DataState = { tenants: Page<Tenant>; plans: Page<BusinessPlan>; users: Page<User>; provinces: Province[]; cities: City[]; countries: string[]; counts: Counts; currentTenant: Tenant | null; loading: boolean; error: string }
+const initialData: DataState = { tenants: emptyPage<Tenant>(), plans: emptyPage<BusinessPlan>(), users: emptyPage<User>(), provinces: [], cities: [], countries: [], counts: { tenants: 0, users: 0, plans: 0 }, currentTenant: null, loading: false, error: '' }
+const pageParams = ({ page, pageSize, search }: PageRequest) => ({ params: { page, pageSize, search: search || undefined } })
+
+export const loadTenants = createAsyncThunk('data/tenants', async (request: PageRequest) => (await api.get<Page<Tenant>>('/tenant', pageParams(request))).data)
+export const loadPlans = createAsyncThunk('data/plans', async (request: PageRequest) => (await api.get<Page<BusinessPlan>>('/business-plan', pageParams(request))).data)
+export const loadUsers = createAsyncThunk('data/users', async (request: PageRequest) => (await api.get<Page<User>>('/user', pageParams(request))).data)
 export const loadProvinces = createAsyncThunk('data/provinces', async (countryCode: string) => (await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data)
 export const loadCities = createAsyncThunk('data/cities', async (provinceId: number) => (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data)
-export const loadTenantPlan = createAsyncThunk('data/tenantPlan', async (tenantId: number) => ({ tenantId, plan: (await api.get<TenantPlan | null>(`/tenant/${tenantId}/plan`)).data }))
+// DEF-RD-08: the countries a tenant may be placed in come from the reference
+// data that was actually imported, not from a hardcoded pair in the form.
+export const loadCountries = createAsyncThunk('data/countries', async () => (await api.get<string[]>('/country')).data)
+
+// DEF-BO-07: the dashboard needs three totals, not three pages. It used to
+// fetch `{page:0,pageSize:1}` into the very same `data.tenants|users|plans`
+// slots the list screens read, so visiting the dashboard left the Tenants
+// page showing "1-1 of 29 - Page 1 of 29". Counts now live in their own
+// state, so the two screens cannot overwrite each other.
+export const loadCounts = createAsyncThunk('data/counts', async (includePlans: boolean) => {
+  const countRequest = { params: { page: 0, pageSize: 1 } }
+  const [tenants, users, plans] = await Promise.all([
+    api.get<Page<Tenant>>('/tenant', countRequest),
+    api.get<Page<User>>('/user', countRequest),
+    includePlans ? api.get<Page<BusinessPlan>>('/business-plan', countRequest) : Promise.resolve(null),
+  ])
+  return { tenants: tenants.data.totalItems, users: users.data.totalItems, plans: plans ? plans.data.totalItems : 0 }
+})
+
+// DEF-BO-02: the theme was derived from whichever tenant happened to be in
+// the already-loaded tenant *list*, so a TenantOwner saw their identity only
+// after some screen had listed tenants -- and never at all once the dashboard
+// stopped loading that list. The session's own tenant is now fetched
+// directly, which is the only thing the theme should ever depend on.
+//
+// HRMS-204/OBS-TP-05: addressed by the tenant's public uuid, which the login
+// response now carries, so no console URL or API path uses the internal id.
+export const loadCurrentTenant = createAsyncThunk('data/currentTenant', async (tenantUuid: string) => (await api.get<Tenant>(`/tenant/uuid/${tenantUuid}`)).data)
 
 const dataSlice = createSlice({
   name: 'data', initialState: initialData, reducers: {
@@ -52,7 +82,7 @@ const dataSlice = createSlice({
     clearCities: (state) => { state.cities = [] },
   },
   extraReducers: (builder) => {
-    const listThunks = [loadTenants, loadPlans, loadUsers, loadProvinces, loadCities] as const
+    const listThunks = [loadTenants, loadPlans, loadUsers, loadProvinces, loadCities, loadCountries] as const
     listThunks.forEach((thunk) => {
       builder.addCase(thunk.pending, (state) => { state.loading = true; state.error = '' })
       builder.addCase(thunk.rejected, (state, action) => { state.loading = false; state.error = String(action.error.message ?? '') })
@@ -62,7 +92,12 @@ const dataSlice = createSlice({
     builder.addCase(loadUsers.fulfilled, (s, a) => { s.loading = false; s.users = a.payload })
     builder.addCase(loadProvinces.fulfilled, (s, a) => { s.loading = false; s.provinces = a.payload; s.cities = [] })
     builder.addCase(loadCities.fulfilled, (s, a) => { s.loading = false; s.cities = a.payload })
-    builder.addCase(loadTenantPlan.fulfilled, (s, a) => { s.tenantPlans[a.payload.tenantId] = a.payload.plan })
+    builder.addCase(loadCountries.fulfilled, (s, a) => { s.loading = false; s.countries = a.payload })
+    builder.addCase(loadCounts.fulfilled, (s, a) => { s.counts = a.payload })
+    builder.addCase(loadCurrentTenant.fulfilled, (s, a) => { s.currentTenant = a.payload })
+    // A tenant the operator just renamed should retheme the console without a
+    // reload, and the counts card should not go stale after a create/delete.
+    builder.addCase(loadCurrentTenant.rejected, (s) => { s.currentTenant = null })
   },
 })
 

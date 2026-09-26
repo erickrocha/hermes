@@ -1,0 +1,16 @@
+pub mod authentication_routes;
+pub mod business_plan_routes;
+pub mod customer_routes;
+pub mod holiday_routes;
+pub mod checklist_template_routes;
+pub mod checklist_run_routes;
+pub mod work_order_routes;
+pub mod maintenance_plan_routes;
+pub mod service_type_routes;
+pub mod priced_service_routes;
+pub mod resource_routes;
+pub mod tenant_routes;
+pub mod transport_demand_routes;
+pub mod extra_trip_routes;
+pub mod user_routes;
+pub mod vehicle_routes;

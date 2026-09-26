@@ -1,10 +1,10 @@
-use std::str::FromStr;
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
+use crate::domain::enums::Role;
 use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
-use crate::domain::enums::Role;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct User {
@@ -14,7 +14,6 @@ pub struct User {
     pub name: Option<String>,
     pub password: String,
     pub enabled: bool,
-    pub first_login: bool,
     pub tenant_id: Option<i64>,
     pub role: Role,
     pub created_at: Option<NaiveDateTime>,
@@ -23,7 +22,7 @@ pub struct User {
     pub updated_by: Option<String>,
 }
 
-pub struct UserEntityMapper{}
+pub struct UserEntityMapper {}
 impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
     fn build_active_model(d: User) -> ActiveModel {
         ActiveModel {
@@ -38,7 +37,6 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             name: Set(d.name.to_owned()),
             email: Set(d.email.to_owned()),
             password: Set(d.password.to_owned()),
-            first_login: Set(d.first_login.to_owned()),
             enabled: Set(d.enabled.to_owned()),
             // Owned by the billing worker; a profile update must not clear it.
             blocked_reason: NotSet,
@@ -59,7 +57,6 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             email: e.email,
             password: e.password,
             enabled: e.enabled,
-            first_login: e.first_login,
             tenant_id: e.tenant_id,
             role: Role::from_str(e.role.as_str()).unwrap_or(Role::TenantUser),
             created_at: Some(e.created_at.naive_utc()),
@@ -81,7 +78,6 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                 email: e.email.take().unwrap_or_default(),
                 password: e.password.take().unwrap_or_default(),
                 enabled: e.enabled.take().unwrap_or(true),
-                first_login: e.first_login.take().unwrap_or(false),
                 tenant_id: e.tenant_id.take().flatten(),
                 role: Role::from_str(e.role.unwrap().as_str()).unwrap_or(Role::TenantUser),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
@@ -92,4 +88,3 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
         }
     }
 }
-
