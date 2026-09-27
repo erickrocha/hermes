@@ -21,5 +21,8 @@ pub use super::work_order_item_entity::Entity as WorkOrderItemEntity;
 pub use super::maintenance_plan_entity::Entity as MaintenancePlanEntity;
 pub use super::service_type_entity::Entity as ServiceTypeEntity;
 pub use super::priced_service_entity::Entity as PricedServiceEntity;
+pub use super::part_entity::Entity as PartEntity;
+pub use super::stock_movement_entity::Entity as StockMovementEntity;
+pub use super::purchase_order_entity::Entity as PurchaseOrderEntity;
 pub use super::vehicle_entity::Entity as VehicleEntity;
 pub use super::vehicle_assignment_entity::Entity as VehicleAssignmentEntity;

@@ -480,6 +480,69 @@ pub fn can_read_priced_service(actor: &User, priced_service_tenant_id: Option<i6
         || (actor.tenant_id.is_some() && actor.tenant_id == priced_service_tenant_id)
 }
 
+/// `EPIC-SP-01-S01` (`HRMS-800`, `C-030`): widened to `Mechanic`, unlike
+/// `service_type`/`priced_service`. Those two are pure classification
+/// catalogues; a part is registered as a side effect of day-to-day stores
+/// work (`TRM-612` auto-registers a supplier the same way during a stock
+/// entry), the same operational shape `work_order`/`maintenance_plan` widen
+/// for. Named rather than reused (`PD-020`).
+pub fn can_administer_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.role == Role::TenantOwner
+            && actor.tenant_id.is_some()
+            && actor.tenant_id == part_tenant_id)
+}
+
+pub fn can_create_part(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_read_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == part_tenant_id)
+}
+
+/// `EPIC-SP-02-S01` (`HRMS-801`, `C-030`): same shape as `part` -- recording a
+/// stock entry or adjustment is the same day-to-day stores work.
+pub fn can_create_stock_movement(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+/// `EPIC-SP-03-S01` (`HRMS-802`, `C-030`): widened to `Mechanic` for both
+/// creating and administering (ordering/receiving/cancelling) a purchase
+/// order, unlike `work_order`'s own administer split. Chasing a part order is
+/// routine stores follow-up, not the kind of formal closing act `TRM-208`
+/// reserves for `work_order.conclude`.
+pub fn can_create_purchase_order(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_administer_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+            && actor.tenant_id.is_some()
+            && actor.tenant_id == purchase_order_tenant_id)
+}
+
+pub fn can_read_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == purchase_order_tenant_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,6 +796,67 @@ mod tests {
 
         assert!(can_read_priced_service(&member_1, Some(1)));
         assert!(!can_read_priced_service(&member_1, Some(2)));
+    }
+
+    #[test]
+    fn part_authorization_widens_create_to_the_mechanic_role() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        let owner_2 = user(Role::TenantOwner, Some(2));
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        let member_1 = user(Role::TenantUser, Some(1));
+
+        assert!(can_create_part(&sysadmin_unbound, Some(1)));
+        assert!(can_create_part(&owner_1, Some(1)));
+        assert!(can_create_part(&mechanic_1, Some(1)));
+        assert!(!can_create_part(&mechanic_1, Some(2)));
+        assert!(!can_create_part(&member_1, Some(1)));
+
+        assert!(can_administer_part(&owner_1, Some(1)));
+        assert!(!can_administer_part(&owner_2, Some(1)));
+
+        assert!(can_read_part(&member_1, Some(1)));
+        assert!(!can_read_part(&member_1, Some(2)));
+    }
+
+    #[test]
+    fn stock_movement_authorization_matches_the_part_shape() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        let mechanic_2 = user(Role::Mechanic, Some(2));
+        let member_1 = user(Role::TenantUser, Some(1));
+
+        assert!(can_create_stock_movement(&sysadmin_unbound, Some(1)));
+        assert!(can_create_stock_movement(&owner_1, Some(1)));
+        assert!(can_create_stock_movement(&mechanic_1, Some(1)));
+        assert!(!can_create_stock_movement(&mechanic_2, Some(1)));
+        assert!(!can_create_stock_movement(&member_1, Some(1)));
+    }
+
+    #[test]
+    fn purchase_order_authorization_widens_both_create_and_administer_to_the_mechanic_role() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        let mechanic_2 = user(Role::Mechanic, Some(2));
+        let member_1 = user(Role::TenantUser, Some(1));
+
+        assert!(can_create_purchase_order(&sysadmin_unbound, Some(1)));
+        assert!(can_create_purchase_order(&owner_1, Some(1)));
+        assert!(can_create_purchase_order(&mechanic_1, Some(1)));
+        assert!(!can_create_purchase_order(&mechanic_2, Some(1)));
+        assert!(!can_create_purchase_order(&member_1, Some(1)));
+
+        assert!(can_administer_purchase_order(&owner_1, Some(1)));
+        assert!(
+            can_administer_purchase_order(&mechanic_1, Some(1)),
+            "unlike work_order, a Mechanic may administer a purchase order's own lifecycle"
+        );
+        assert!(!can_administer_purchase_order(&mechanic_2, Some(1)));
+
+        assert!(can_read_purchase_order(&member_1, Some(1)));
+        assert!(!can_read_purchase_order(&member_1, Some(2)));
     }
 
     #[test]

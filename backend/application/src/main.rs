@@ -18,6 +18,8 @@ use crate::routes::work_order_routes::work_order_routes;
 use crate::routes::maintenance_plan_routes::maintenance_plan_routes;
 use crate::routes::service_type_routes::service_type_routes;
 use crate::routes::priced_service_routes::priced_service_routes;
+use crate::routes::part_routes::part_routes;
+use crate::routes::purchase_order_routes::purchase_order_routes;
 use crate::routes::transport_demand_routes::transport_demand_routes;
 use crate::routes::extra_trip_routes::extra_trip_routes;
 use crate::routes::resource_routes::resources_routes;
@@ -145,6 +147,17 @@ impl Modify for SecurityAddon {
         endpoints::priced_service_endpoint::add,
         endpoints::priced_service_endpoint::get_by_uuid,
         endpoints::priced_service_endpoint::list_all,
+        endpoints::part_endpoint::add,
+        endpoints::part_endpoint::get_by_uuid,
+        endpoints::part_endpoint::list_all,
+        endpoints::part_endpoint::add_entry,
+        endpoints::part_endpoint::adjust,
+        endpoints::purchase_order_endpoint::add,
+        endpoints::purchase_order_endpoint::get_by_uuid,
+        endpoints::purchase_order_endpoint::list_all,
+        endpoints::purchase_order_endpoint::mark_ordered,
+        endpoints::purchase_order_endpoint::mark_purchased,
+        endpoints::purchase_order_endpoint::cancel,
         endpoints::vehicle_assignment_endpoint::assign,
         endpoints::vehicle_assignment_endpoint::current,
         endpoints::vehicle_assignment_endpoint::end,
@@ -183,6 +196,11 @@ impl Modify for SecurityAddon {
             endpoints::json::maintenance_plan_json::MaintenancePlanJson,
             endpoints::json::service_type_json::ServiceTypeJson,
             endpoints::json::priced_service_json::PricedServiceJson,
+            endpoints::json::part_json::PartJson,
+            endpoints::json::stock_movement_json::StockMovementJson,
+            endpoints::json::stock_movement_json::StockAdjustmentJson,
+            endpoints::json::purchase_order_json::PurchaseOrderJson,
+            endpoints::json::purchase_order_json::MarkOrderedJson,
             endpoints::json::vehicle_json::VehicleJson,
             endpoints::json::vehicle_assignment_json::VehicleAssignmentJson,
             endpoints::json::vehicle_assignment_json::AssignDriverRequest,
@@ -306,6 +324,8 @@ async fn start() -> anyhow::Result<()> {
         .nest("/maintenance-plan", maintenance_plan_routes(state.clone()))
         .nest("/service-type", service_type_routes(state.clone()))
         .nest("/priced-service", priced_service_routes(state.clone()))
+        .nest("/part", part_routes(state.clone()))
+        .nest("/purchase-order", purchase_order_routes(state.clone()))
         .nest("/transport-demand", transport_demand_routes(state.clone()))
         .nest("/extra-trip", extra_trip_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
@@ -465,6 +485,8 @@ mod openapi_contract_tests {
             "maintenance_plan_routes" => "/maintenance-plan",
             "service_type_routes" => "/service-type",
             "priced_service_routes" => "/priced-service",
+            "part_routes" => "/part",
+            "purchase_order_routes" => "/purchase-order",
             "transport_demand_routes" => "/transport-demand",
             "extra_trip_routes" => "/extra-trip",
             _ => "",

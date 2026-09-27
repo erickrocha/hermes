@@ -468,3 +468,122 @@ impl FromStr for MaintenancePlanStatus {
         }
     }
 }
+
+/// `EPIC-SP-03-S01` (`HRMS-802`, `C-030`): `TRM-641` -- a purchase order is
+/// "active" (`is_active`) while it is neither `Purchased` nor `Cancelled`.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum PurchaseOrderStatus {
+    #[default]
+    Requested,
+    Ordered,
+    Purchased,
+    Cancelled,
+}
+
+impl PurchaseOrderStatus {
+    pub fn is_active(&self) -> bool {
+        !matches!(self, PurchaseOrderStatus::Purchased | PurchaseOrderStatus::Cancelled)
+    }
+}
+
+impl Display for PurchaseOrderStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PurchaseOrderStatus::Requested => write!(f, "Requested"),
+            PurchaseOrderStatus::Ordered => write!(f, "Ordered"),
+            PurchaseOrderStatus::Purchased => write!(f, "Purchased"),
+            PurchaseOrderStatus::Cancelled => write!(f, "Cancelled"),
+        }
+    }
+}
+
+impl FromStr for PurchaseOrderStatus {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Requested" => Ok(Self::Requested),
+            "Ordered" => Ok(Self::Ordered),
+            "Purchased" => Ok(Self::Purchased),
+            "Cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!("Invalid purchase order status: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-SP-02-S01` (`HRMS-801`, `C-030`): `TRM-602`/`603` -- the three
+/// movement kinds a part's stock ledger holds. No producer for `Issue` exists
+/// in this epic; `EPIC-MT-02` (blocked on this Change) is its own producer,
+/// writing directly through `StockMovementGateway` with this same vocabulary
+/// rather than duplicating it. `Adjustment` degrades an unrecognised stored
+/// value, the same "unknown persisted string" case every enum in this module
+/// degrades rather than panics on -- it is the safest of the three since
+/// `quantity`'s own sign, not the type label, carries the stock effect.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum StockMovementType {
+    Entry,
+    Issue,
+    #[default]
+    Adjustment,
+}
+
+impl Display for StockMovementType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StockMovementType::Entry => write!(f, "Entry"),
+            StockMovementType::Issue => write!(f, "Issue"),
+            StockMovementType::Adjustment => write!(f, "Adjustment"),
+        }
+    }
+}
+
+impl FromStr for StockMovementType {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Entry" => Ok(Self::Entry),
+            "Issue" => Ok(Self::Issue),
+            "Adjustment" => Ok(Self::Adjustment),
+            _ => Err(format!("Invalid stock movement type: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-SP-02-S01` (`HRMS-801`): `TRM-608`/`609` -- which of a part's three
+/// cost tiers supplied a posting's value, or `None` when none did (an entry
+/// states its own value directly rather than looking one up, so it is
+/// recorded as `Informed`, not one of the three lookup tiers).
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum CostSource {
+    Informed,
+    MovingAverageCost,
+    LastPurchasePrice,
+    RegisteredUnitValue,
+    #[default]
+    None,
+}
+
+impl Display for CostSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CostSource::Informed => write!(f, "Informed"),
+            CostSource::MovingAverageCost => write!(f, "MovingAverageCost"),
+            CostSource::LastPurchasePrice => write!(f, "LastPurchasePrice"),
+            CostSource::RegisteredUnitValue => write!(f, "RegisteredUnitValue"),
+            CostSource::None => write!(f, "None"),
+        }
+    }
+}
+
+impl FromStr for CostSource {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Informed" => Ok(Self::Informed),
+            "MovingAverageCost" => Ok(Self::MovingAverageCost),
+            "LastPurchasePrice" => Ok(Self::LastPurchasePrice),
+            "RegisteredUnitValue" => Ok(Self::RegisteredUnitValue),
+            "None" => Ok(Self::None),
+            _ => Err(format!("Invalid cost source: {}", value)),
+        }
+    }
+}

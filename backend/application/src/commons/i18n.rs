@@ -188,6 +188,14 @@ pub enum ErrorKey {
     PricedServiceForbidden,
     /// `HRMS-704`: no such priced service, or it belongs to another tenant.
     PricedServiceNotFound,
+    /// `HRMS-800`: a role that may not register parts.
+    PartForbidden,
+    /// `HRMS-800`: no such part, or it belongs to another tenant.
+    PartNotFound,
+    /// `HRMS-802`: a role that may not manage purchase orders.
+    PurchaseOrderForbidden,
+    /// `HRMS-802`: no such purchase order, or it belongs to another tenant.
+    PurchaseOrderNotFound,
     /// HRMS-925 (D-23(c)): this plate is already registered in the caller's
     /// own tenant. Never raised for another tenant's vehicle.
     DuplicatePlate,
@@ -267,6 +275,10 @@ impl ErrorKey {
             ErrorKey::DuplicateServiceCode => "DuplicateServiceCode",
             ErrorKey::PricedServiceForbidden => "PricedServiceForbidden",
             ErrorKey::PricedServiceNotFound => "PricedServiceNotFound",
+            ErrorKey::PartForbidden => "PartForbidden",
+            ErrorKey::PartNotFound => "PartNotFound",
+            ErrorKey::PurchaseOrderForbidden => "PurchaseOrderForbidden",
+            ErrorKey::PurchaseOrderNotFound => "PurchaseOrderNotFound",
             ErrorKey::DuplicatePlate => "DuplicatePlate",
             ErrorKey::TrackerLinkForbidden => "TrackerLinkForbidden",
             ErrorKey::DuplicateTrackerDevice => "DuplicateTrackerDevice",
@@ -337,6 +349,10 @@ impl ErrorKey {
             ErrorKey::DuplicateServiceCode => "duplicate-service-code",
             ErrorKey::PricedServiceForbidden => "priced-service-forbidden",
             ErrorKey::PricedServiceNotFound => "priced-service-not-found",
+            ErrorKey::PartForbidden => "part-forbidden",
+            ErrorKey::PartNotFound => "part-not-found",
+            ErrorKey::PurchaseOrderForbidden => "purchase-order-forbidden",
+            ErrorKey::PurchaseOrderNotFound => "purchase-order-not-found",
             ErrorKey::DuplicatePlate => "duplicate-plate",
             ErrorKey::TrackerLinkForbidden => "tracker-link-forbidden",
             ErrorKey::DuplicateTrackerDevice => "duplicate-tracker-device",
@@ -582,6 +598,10 @@ mod tests {
             ErrorKey::DuplicateServiceCode,
             ErrorKey::PricedServiceForbidden,
             ErrorKey::PricedServiceNotFound,
+            ErrorKey::PartForbidden,
+            ErrorKey::PartNotFound,
+            ErrorKey::PurchaseOrderForbidden,
+            ErrorKey::PurchaseOrderNotFound,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

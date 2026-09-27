@@ -38,6 +38,9 @@ mod m20260926_000002_create_work_order_item_table;
 mod m20260926_000003_link_work_order_and_checklist_answer;
 mod m20260926_000004_create_maintenance_plan_table;
 mod m20260926_000005_create_service_catalogue_tables;
+mod m20260926_000006_create_part_table;
+mod m20260926_000007_create_stock_movement_table;
+mod m20260927_000001_create_purchase_order_table;
 
 pub struct Migrator;
 
@@ -81,6 +84,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260926_000003_link_work_order_and_checklist_answer::Migration),
             Box::new(m20260926_000004_create_maintenance_plan_table::Migration),
             Box::new(m20260926_000005_create_service_catalogue_tables::Migration),
+            Box::new(m20260926_000006_create_part_table::Migration),
+            Box::new(m20260926_000007_create_stock_movement_table::Migration),
+            Box::new(m20260927_000001_create_purchase_order_table::Migration),
         ]
     }
 }

@@ -23,5 +23,8 @@ pub mod work_order_item_entity;
 pub mod maintenance_plan_entity;
 pub mod service_type_entity;
 pub mod priced_service_entity;
+pub mod part_entity;
+pub mod stock_movement_entity;
+pub mod purchase_order_entity;
 pub mod vehicle_entity;
 pub mod vehicle_assignment_entity;

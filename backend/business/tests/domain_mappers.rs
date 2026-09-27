@@ -30,6 +30,9 @@ use business::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper
 use business::domain::maintenance_plan::{MaintenancePlan, MaintenancePlanEntityMapper};
 use business::domain::service_type::{ServiceType, ServiceTypeEntityMapper};
 use business::domain::priced_service::{PricedService, PricedServiceEntityMapper};
+use business::domain::part::{Part, PartEntityMapper};
+use business::domain::stock_movement::{StockMovement, StockMovementEntityMapper};
+use business::domain::purchase_order::{PurchaseOrder, PurchaseOrderEntityMapper};
 use business::domain::enums::GarageTagOrigin;
 use business::domain::enums::ScheduleExceptionType;
 use business::domain::enums::TripStatus;
@@ -40,6 +43,9 @@ use business::domain::enums::WorkOrderStatus;
 use business::domain::enums::WorkOrderItemStatus;
 use business::domain::enums::WorkOrderOrigin;
 use business::domain::enums::MaintenancePlanStatus;
+use business::domain::enums::StockMovementType;
+use business::domain::enums::CostSource;
+use business::domain::enums::PurchaseOrderStatus;
 use business::domain::enums::Role;
 use business::domain::enums::VehicleStatus;
 use business::domain::province::{Province, ProvinceEntityMapper};
@@ -51,7 +57,8 @@ use entity::{
     business_plan_entity, city_entity, customer_day_off_entity, customer_entity,
     checklist_answer_entity, checklist_run_entity, checklist_template_entity,
     checklist_template_item_entity, maintenance_plan_entity, priced_service_entity,
-    service_type_entity, work_order_entity, work_order_item_entity,
+    service_type_entity, part_entity, stock_movement_entity, purchase_order_entity, work_order_entity,
+    work_order_item_entity,
     daily_schedule_entity,
     extra_trip_entity, holiday_entity, km_evolution_entity, province_entity,
     schedule_exception_entity, tenant_entity, transport_demand_allocation_entity,
@@ -1507,6 +1514,154 @@ fn priced_service_round_trips_through_the_mapper() {
         PricedServiceEntityMapper::from_active_model(priced_service_model().into_active_model()),
         priced_service
     );
+}
+
+// ---------------------------------------------------------------------- Part
+fn part_model() -> part_entity::Model {
+    part_entity::Model {
+        id: 800,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        name: "Brake pad".into(),
+        category: Some("Brakes".into()),
+        application: Some("Truck".into()),
+        minimum_stock: 4.0,
+        unit: "un".into(),
+        unit_value_cents: Some(5_000),
+        default_supplier: Some("Acme".into()),
+        location: Some("Shelf 3".into()),
+        observation: None,
+        moving_average_cost_cents: Some(5_200),
+        last_purchase_price_cents: Some(5_400),
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+/// `HRMS-800` (`C-030`): the same round-trip coverage every other entity
+/// mapper in this file gets. No `current_stock` field to round-trip -- see
+/// `entity::part_entity`'s doc comment.
+#[test]
+fn part_round_trips_through_the_mapper() {
+    let part: Part = PartEntityMapper::from_model(part_model());
+    assert_eq!(part.id, Some(800));
+    assert_eq!(part.name, "Brake pad");
+    assert_eq!(part.minimum_stock, 4.0);
+    assert_eq!(part.moving_average_cost_cents, Some(5_200));
+
+    let active = PartEntityMapper::build_active_model(part.clone());
+    assert_eq!(active.name, ActiveValue::Set("Brake pad".into()));
+    assert!(matches!(active.created_at, ActiveValue::NotSet));
+
+    assert_eq!(
+        PartEntityMapper::from_active_model(part_model().into_active_model()),
+        part
+    );
+}
+
+// -------------------------------------------------------------- StockMovement
+fn stock_movement_model() -> stock_movement_entity::Model {
+    stock_movement_entity::Model {
+        id: 900,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        part_id: 800,
+        movement_type: "Entry".into(),
+        quantity: 10.0,
+        unit_value_cents: Some(5_000),
+        total_value_cents: Some(50_000),
+        cost_source: "Informed".into(),
+        supplier: Some("Acme".into()),
+        invoice_number: Some("NF-1".into()),
+        entry_date: Some(NaiveDate::from_ymd_opt(2026, 9, 26).unwrap()),
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+/// `HRMS-801` (`C-030`): the same round-trip coverage every other entity
+/// mapper in this file gets, including the enum-degrade fallback an unknown
+/// stored `movement_type`/`cost_source` takes.
+#[test]
+fn stock_movement_round_trips_through_the_mapper() {
+    let movement: StockMovement = StockMovementEntityMapper::from_model(stock_movement_model());
+    assert_eq!(movement.id, Some(900));
+    assert_eq!(movement.movement_type, StockMovementType::Entry);
+    assert_eq!(movement.cost_source, CostSource::Informed);
+    assert_eq!(movement.quantity, 10.0);
+
+    let active = StockMovementEntityMapper::build_active_model(movement.clone());
+    assert_eq!(active.quantity, ActiveValue::Set(10.0));
+    assert!(matches!(active.created_at, ActiveValue::NotSet));
+
+    assert_eq!(
+        StockMovementEntityMapper::from_active_model(stock_movement_model().into_active_model()),
+        movement
+    );
+}
+
+#[test]
+fn an_unrecognised_movement_type_or_cost_source_degrades_rather_than_panics() {
+    let mut model = stock_movement_model();
+    model.movement_type = "Bogus".into();
+    model.cost_source = "Bogus".into();
+    let movement: StockMovement = StockMovementEntityMapper::from_model(model);
+    assert_eq!(movement.movement_type, StockMovementType::Adjustment);
+    assert_eq!(movement.cost_source, CostSource::None);
+}
+
+// -------------------------------------------------------------- PurchaseOrder
+fn purchase_order_model() -> purchase_order_entity::Model {
+    purchase_order_entity::Model {
+        id: 950,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        part_id: 800,
+        quantity: 4.0,
+        suggested_supplier: Some("Acme".into()),
+        observation: None,
+        status: "Requested".into(),
+        work_order_id: Some(94),
+        vehicle_id: Some(10),
+        ordered_at: None,
+        expected_delivery_date: Some(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()),
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+/// `HRMS-802` (`C-030`): the same round-trip coverage every other entity
+/// mapper in this file gets, including the enum-degrade fallback.
+#[test]
+fn purchase_order_round_trips_through_the_mapper() {
+    let purchase_order: PurchaseOrder = PurchaseOrderEntityMapper::from_model(purchase_order_model());
+    assert_eq!(purchase_order.id, Some(950));
+    assert_eq!(purchase_order.part_id, 800);
+    assert_eq!(purchase_order.status, PurchaseOrderStatus::Requested);
+    assert_eq!(purchase_order.work_order_id, Some(94));
+
+    let active = PurchaseOrderEntityMapper::build_active_model(purchase_order.clone());
+    assert_eq!(active.part_id, ActiveValue::Set(800));
+    assert!(matches!(active.created_at, ActiveValue::NotSet));
+
+    assert_eq!(
+        PurchaseOrderEntityMapper::from_active_model(purchase_order_model().into_active_model()),
+        purchase_order
+    );
+}
+
+#[test]
+fn an_unrecognised_purchase_order_status_degrades_to_requested_rather_than_panics() {
+    let mut model = purchase_order_model();
+    model.status = "Bogus".into();
+    let purchase_order: PurchaseOrder = PurchaseOrderEntityMapper::from_model(model);
+    assert_eq!(purchase_order.status, PurchaseOrderStatus::Requested);
 }
 
 // ---------------------------------------------------------------- Claims

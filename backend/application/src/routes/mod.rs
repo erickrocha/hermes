@@ -8,6 +8,8 @@ pub mod work_order_routes;
 pub mod maintenance_plan_routes;
 pub mod service_type_routes;
 pub mod priced_service_routes;
+pub mod part_routes;
+pub mod purchase_order_routes;
 pub mod resource_routes;
 pub mod tenant_routes;
 pub mod transport_demand_routes;

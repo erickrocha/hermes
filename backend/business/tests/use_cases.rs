@@ -3859,3 +3859,399 @@ async fn saving_a_new_priced_service_inserts_once() {
         .expect("a valid priced service is accepted");
     assert_eq!(saved.id, Some(700));
 }
+
+// ------------------------------------------------------------- EPIC-SP-01-S01 parts catalogue
+use business::domain::part::Part;
+use business::gateway::part_gateway::PartGateway;
+use business::use_cases::part_use_case::{
+    NAME_REQUIRED as PART_NAME_REQUIRED, NEGATIVE_MINIMUM_STOCK, PartUseCase, UNIT_REQUIRED,
+};
+
+fn part_use_case(db: &DatabaseConnection) -> PartUseCase {
+    PartUseCase::new(PartGateway::new(db.clone()))
+}
+
+fn new_part(tenant_id: Option<i64>, name: &str, unit: &str, minimum_stock: f64) -> Part {
+    Part {
+        id: None,
+        uuid: None,
+        tenant_id,
+        name: name.into(),
+        category: None,
+        application: None,
+        minimum_stock,
+        unit: unit.into(),
+        unit_value_cents: Some(5_000),
+        default_supplier: None,
+        location: None,
+        observation: None,
+        moving_average_cost_cents: None,
+        last_purchase_price_cents: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+fn part_row(id: i64, tenant_id: i64) -> entity::part_entity::Model {
+    entity::part_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        name: "Brake pad".into(),
+        category: None,
+        application: None,
+        minimum_stock: 4.0,
+        unit: "un".into(),
+        unit_value_cents: Some(5_000),
+        default_supplier: None,
+        location: None,
+        observation: None,
+        moving_average_cost_cents: None,
+        last_purchase_price_cents: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_blank_part_name_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let part = new_part(Some(42), "   ", "un", 0.0);
+    let err = run_with_user(Some(owner(42)), part_use_case(&db).create(part))
+        .await
+        .expect_err("a blank name is refused");
+    assert_eq!(err.message, PART_NAME_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_blank_part_unit_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let part = new_part(Some(42), "Brake pad", "   ", 0.0);
+    let err = run_with_user(Some(owner(42)), part_use_case(&db).create(part))
+        .await
+        .expect_err("a blank unit is refused");
+    assert_eq!(err.message, UNIT_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_negative_minimum_stock_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let part = new_part(Some(42), "Brake pad", "un", -1.0);
+    let err = run_with_user(Some(owner(42)), part_use_case(&db).create(part))
+        .await
+        .expect_err("a negative minimum stock is refused");
+    assert_eq!(err.message, NEGATIVE_MINIMUM_STOCK);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn saving_a_new_part_inserts_once() {
+    let db = mock()
+        .append_exec_results([inserted(800)])
+        .append_query_results([[part_row(800, 42)]])
+        .into_connection();
+    let part = new_part(Some(42), "Brake pad", "un", 4.0);
+    let saved = run_with_user(Some(owner(42)), part_use_case(&db).create(part))
+        .await
+        .expect("a valid part is accepted");
+    assert_eq!(saved.id, Some(800));
+}
+
+// ------------------------------------------------------------- EPIC-SP-02-S01 stock ledger
+use business::gateway::stock_movement_gateway::StockMovementGateway;
+use business::use_cases::stock_movement_use_case::{
+    NON_NEGATIVE_BALANCE_REQUIRED, PART_NOT_FOUND as MOVEMENT_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE,
+    StockMovementUseCase, VALUE_REQUIRED,
+};
+
+fn stock_movement_use_case(db: &DatabaseConnection) -> StockMovementUseCase {
+    StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db.clone()))
+}
+
+fn part_row_with_cost(id: i64, tenant_id: i64, moving_average_cost_cents: Option<i64>) -> entity::part_entity::Model {
+    entity::part_entity::Model {
+        moving_average_cost_cents,
+        ..part_row(id, tenant_id)
+    }
+}
+
+fn stock_movement_row(
+    id: i64,
+    tenant_id: i64,
+    part_id: i64,
+    movement_type: &str,
+    quantity: f64,
+) -> entity::stock_movement_entity::Model {
+    entity::stock_movement_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        part_id,
+        movement_type: movement_type.into(),
+        quantity,
+        unit_value_cents: Some(5_000),
+        total_value_cents: Some(50_000),
+        cost_source: "Informed".into(),
+        supplier: None,
+        invoice_number: None,
+        entry_date: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_non_positive_entry_quantity_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).record_entry(800, 0.0, Some(5_000), None, None, None, None),
+    )
+    .await
+    .expect_err("a zero quantity is refused");
+    assert_eq!(err.message, QUANTITY_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn an_entry_with_neither_unit_nor_total_value_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).record_entry(800, 10.0, None, None, None, None, None),
+    )
+    .await
+    .expect_err("neither value is refused");
+    assert_eq!(err.message, VALUE_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn an_entry_against_an_unknown_part_is_refused_after_one_lookup() {
+    let db = mock()
+        .append_query_results([Vec::<entity::part_entity::Model>::new()])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).record_entry(800, 10.0, Some(5_000), None, None, None, None),
+    )
+    .await
+    .expect_err("an unknown part is refused");
+    assert_eq!(err.message, MOVEMENT_PART_NOT_FOUND);
+    assert_eq!(log(db).len(), 1, "only the part lookup ran; nothing was written");
+}
+
+/// `TRM-602`/`608`/`610`/`611`: a fresh part (no prior movements, no prior
+/// average) takes the entry's own unit value as its first moving average and
+/// last purchase price, derived here from `totalValueCents` (`TRM-611`).
+#[tokio::test]
+async fn a_first_entry_seeds_the_moving_average_from_the_entered_value() {
+    let db = mock()
+        .append_query_results([[part_row_with_cost(800, 42, None)]]) // find part
+        .append_query_results([Vec::<entity::stock_movement_entity::Model>::new()]) // current_stock: no movements yet
+        .append_exec_results([inserted(900)]) // insert the movement
+        .append_query_results([[stock_movement_row(900, 42, 800, "Entry", 10.0)]]) // refetch
+        .append_exec_results([inserted(800)]) // update the part's cost fields
+        .append_query_results([[part_row_with_cost(800, 42, Some(5_000))]]) // refetch
+        .into_connection();
+
+    let saved = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).record_entry(800, 10.0, None, Some(50_000), None, None, None),
+    )
+    .await
+    .expect("a valid entry is accepted");
+    assert_eq!(saved.id, Some(900));
+    assert_eq!(saved.quantity, 10.0);
+}
+
+#[tokio::test]
+async fn a_negative_adjustment_balance_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let err = run_with_user(Some(owner(42)), stock_movement_use_case(&db).adjust(800, -1.0))
+        .await
+        .expect_err("a negative balance is refused");
+    assert_eq!(err.message, NON_NEGATIVE_BALANCE_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+/// `TRM-604`/`617`: a single explicit adjustment movement for the
+/// difference between the ledger's current sum and the counted balance.
+#[tokio::test]
+async fn an_adjustment_records_the_difference_from_current_stock() {
+    let db = mock()
+        .append_query_results([[part_row(800, 42)]]) // find part
+        .append_query_results([Vec::<entity::stock_movement_entity::Model>::new()]) // current_stock: 0
+        .append_exec_results([inserted(901)]) // insert the adjustment
+        .append_query_results([[stock_movement_row(901, 42, 800, "Adjustment", 5.0)]]) // refetch
+        .into_connection();
+
+    let saved = run_with_user(Some(owner(42)), stock_movement_use_case(&db).adjust(800, 5.0))
+        .await
+        .expect("a valid adjustment is accepted");
+    assert_eq!(saved.id, Some(901));
+}
+
+// ------------------------------------------------------------- EPIC-SP-03-S01 purchase orders
+use business::domain::purchase_order::PurchaseOrder;
+use business::gateway::purchase_order_gateway::PurchaseOrderGateway;
+use business::use_cases::purchase_order_use_case::{
+    DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND as PO_PART_NOT_FOUND, PURCHASE_ORDER_NOT_FOUND,
+    PurchaseOrderUseCase, QUANTITY_MUST_BE_POSITIVE as PO_QUANTITY_MUST_BE_POSITIVE,
+    WRONG_STATUS_FOR_TRANSITION,
+};
+
+fn purchase_order_use_case(db: &DatabaseConnection) -> PurchaseOrderUseCase {
+    PurchaseOrderUseCase::new(PurchaseOrderGateway::new(db.clone()), PartGateway::new(db.clone()))
+}
+
+fn new_purchase_order(tenant_id: Option<i64>, part_id: i64, quantity: f64, work_order_id: Option<i64>) -> PurchaseOrder {
+    PurchaseOrder {
+        id: None,
+        uuid: None,
+        tenant_id,
+        part_id,
+        quantity,
+        suggested_supplier: None,
+        observation: None,
+        status: Default::default(),
+        work_order_id,
+        vehicle_id: None,
+        ordered_at: None,
+        expected_delivery_date: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+fn purchase_order_row(id: i64, tenant_id: i64, part_id: i64, status: &str) -> entity::purchase_order_entity::Model {
+    entity::purchase_order_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        part_id,
+        quantity: 4.0,
+        suggested_supplier: None,
+        observation: None,
+        status: status.into(),
+        work_order_id: Some(94),
+        vehicle_id: None,
+        ordered_at: None,
+        expected_delivery_date: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_non_positive_purchase_order_quantity_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let purchase_order = new_purchase_order(Some(42), 800, 0.0, None);
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect_err("a zero quantity is refused");
+    assert_eq!(err.message, PO_QUANTITY_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_purchase_order_against_an_unknown_part_is_refused_after_one_lookup() {
+    let db = mock()
+        .append_query_results([Vec::<entity::part_entity::Model>::new()])
+        .into_connection();
+    let purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect_err("an unknown part is refused");
+    assert_eq!(err.message, PO_PART_NOT_FOUND);
+    assert_eq!(log(db).len(), 1, "only the part lookup ran; nothing was written");
+}
+
+/// `TRM-642`: a second active order for the same part on the same work order
+/// is refused after the part and duplicate lookups, before any write.
+#[tokio::test]
+async fn a_duplicate_active_purchase_order_for_the_same_part_and_work_order_is_refused() {
+    let db = mock()
+        .append_query_results([[part_row(800, 42)]]) // part exists
+        .append_query_results([[purchase_order_row(950, 42, 800, "Requested")]]) // an existing active order
+        .into_connection();
+    let purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(94));
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect_err("a duplicate active order is refused");
+    assert_eq!(err.message, DUPLICATE_ACTIVE_PURCHASE_ORDER);
+    assert_eq!(log(db).len(), 2, "only the two lookups ran; nothing was written");
+}
+
+#[tokio::test]
+async fn saving_a_new_purchase_order_inserts_once() {
+    let db = mock()
+        .append_query_results([[part_row(800, 42)]]) // part exists
+        .append_exec_results([inserted(950)]) // insert
+        .append_query_results([[purchase_order_row(950, 42, 800, "Requested")]]) // refetch
+        .into_connection();
+    let purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect("a valid purchase order is accepted");
+    assert_eq!(saved.id, Some(950));
+}
+
+#[tokio::test]
+async fn marking_a_requested_order_ordered_succeeds() {
+    let db = mock()
+        .append_query_results([[purchase_order_row(950, 42, 800, "Requested")]]) // loaded
+        .append_exec_results([inserted(950)]) // update
+        .append_query_results([[purchase_order_row(950, 42, 800, "Ordered")]]) // refetch
+        .into_connection();
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_ordered(950, None, None))
+        .await
+        .expect("a requested order can be marked ordered");
+    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Ordered);
+}
+
+#[tokio::test]
+async fn marking_an_already_ordered_order_ordered_again_is_refused() {
+    let db = mock()
+        .append_query_results([[purchase_order_row(950, 42, 800, "Ordered")]])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_ordered(950, None, None))
+        .await
+        .expect_err("only a Requested order may be marked ordered");
+    assert_eq!(err.message, WRONG_STATUS_FOR_TRANSITION);
+}
+
+#[tokio::test]
+async fn cancelling_an_already_cancelled_purchase_order_is_a_no_op() {
+    let db = mock()
+        .append_query_results([[purchase_order_row(950, 42, 800, "Cancelled")]])
+        .into_connection();
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).cancel(950))
+        .await
+        .expect("cancelling an already-cancelled order succeeds");
+    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Cancelled);
+    assert_eq!(log(db).len(), 1, "only the load ran; nothing was written");
+}
+
+#[tokio::test]
+async fn a_missing_purchase_order_is_reported_not_silently_ignored() {
+    let db = mock()
+        .append_query_results([Vec::<entity::purchase_order_entity::Model>::new()])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).cancel(950))
+        .await
+        .expect_err("a missing purchase order is reported");
+    assert_eq!(err.message, PURCHASE_ORDER_NOT_FOUND);
+}
