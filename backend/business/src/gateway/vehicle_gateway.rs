@@ -106,6 +106,22 @@ impl VehicleGateway {
     ) -> Result<Option<vehicle_entity::Model>, DbErr> {
         plate_query(plate, tenant_id).one(&self.db).await
     }
+
+    /// `EPIC-FU-02-S01` (`HRMS-944`, `TRM-507`): matches the fuel provider's
+    /// `FROTA` field against a vehicle's `prefix` (`C-023`) -- the first of
+    /// the two lookups the sync tries, falling back to `find_by_plate`.
+    /// Explicitly tenant-scoped the same way `find_by_plate` is (DEF-FO-01).
+    pub async fn find_by_prefix(
+        &self,
+        prefix: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<vehicle_entity::Model>, DbErr> {
+        tenant_select(VehicleQuery::find(), vehicle_entity::Column::TenantId)
+            .filter(vehicle_entity::Column::Prefix.eq(prefix))
+            .filter(vehicle_entity::Column::TenantId.eq(tenant_id))
+            .one(&self.db)
+            .await
+    }
 }
 
 impl VehicleGateway {

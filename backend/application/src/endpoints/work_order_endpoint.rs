@@ -8,24 +8,37 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::work_order_item_json::WorkOrderItemJson;
 use crate::endpoints::json::work_order_json::WorkOrderJson;
+use crate::endpoints::json::work_order_posting_json::WorkOrderPostingJson;
 use crate::endpoints::vehicle_endpoint::find_visible;
 use crate::infrastructure::mapper::reject_unknown_work_order_item_status;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
+use business::commons::functions::bytes_para_string;
+use business::commons::gateway::Gateway;
 use business::domain::authorization::{
-    can_administer_work_order, can_create_work_order, can_read_work_order,
+    can_administer_work_order, can_create_work_order, can_read_part, can_read_work_order,
 };
 use business::domain::enums::{WorkOrderItemStatus, WorkOrderOrigin};
 use business::domain::user::User;
 use business::domain::work_order::WorkOrder;
 use business::domain::work_order_item::WorkOrderItem;
+use business::domain::work_order_posting::WorkOrderPosting;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
+use business::gateway::part_gateway::PartGateway;
+use business::gateway::stock_movement_gateway::StockMovementGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::gateway::work_order_gateway::WorkOrderGateway;
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
+use business::gateway::work_order_posting_gateway::WorkOrderPostingGateway;
 use business::use_cases::km_evolution_use_case::KmEvolutionUseCase;
+use business::use_cases::part_use_case::PartUseCase;
+use business::use_cases::stock_movement_use_case::StockMovementUseCase;
 use business::use_cases::vehicle_use_case::VehicleUseCase;
+use business::use_cases::work_order_posting_use_case::{
+    INSUFFICIENT_STOCK, ITEM_NOT_ON_THIS_WORK_ORDER as POSTING_ITEM_NOT_ON_THIS_WORK_ORDER,
+    PART_NOT_FOUND as POSTING_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE, WorkOrderPostingUseCase,
+};
 use business::use_cases::work_order_use_case::{
     DESCRIPTION_REQUIRED, ITEM_DESCRIPTION_REQUIRED, NEGATIVE_ODOMETER, WORK_ORDER_NOT_FOUND,
     WorkOrderUseCase,
@@ -42,12 +55,32 @@ fn use_case(state: &AppState) -> WorkOrderUseCase {
     )
 }
 
+fn posting_use_case(state: &AppState) -> WorkOrderPostingUseCase {
+    let db = state.conn.as_ref().clone();
+    WorkOrderPostingUseCase::new(
+        WorkOrderPostingGateway::new(db.clone()),
+        WorkOrderGateway::new(db.clone()),
+        WorkOrderItemGateway::new(db.clone()),
+        PartGateway::new(db.clone()),
+        StockMovementGateway::new(db.clone()),
+        StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db)),
+    )
+}
+
+fn part_use_case(state: &AppState) -> PartUseCase {
+    PartUseCase::new(PartGateway::new(state.conn.as_ref().clone()))
+}
+
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         WORK_ORDER_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound),
-        DESCRIPTION_REQUIRED | NEGATIVE_ODOMETER | ITEM_DESCRIPTION_REQUIRED => {
-            ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
-        }
+        DESCRIPTION_REQUIRED
+        | NEGATIVE_ODOMETER
+        | ITEM_DESCRIPTION_REQUIRED
+        | POSTING_ITEM_NOT_ON_THIS_WORK_ORDER
+        | POSTING_PART_NOT_FOUND
+        | QUANTITY_MUST_BE_POSITIVE
+        | INSUFFICIENT_STOCK => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
     }
 }
@@ -72,6 +105,7 @@ async fn json(state: &AppState, work_order: WorkOrder, items: Vec<WorkOrderItem>
         .await
         .ok()
         .and_then(|v| v.uuid);
+    let total_cost_cents = total_cost_cents(state, &work_order).await;
 
     WorkOrderJson {
         uuid: work_order.uuid,
@@ -92,7 +126,55 @@ async fn json(state: &AppState, work_order: WorkOrder, items: Vec<WorkOrderItem>
         invoice_date: work_order.invoice_date,
         concluded_at: work_order.concluded_at,
         items: items.into_iter().map(item_json).collect(),
+        total_cost_cents: Some(total_cost_cents),
     }
+}
+
+/// `TRM-688`: postings summed plus the external-service invoice value when
+/// set. "Other costs" has no entity in hermes yet -- see the plan doc.
+async fn total_cost_cents(state: &AppState, work_order: &WorkOrder) -> i64 {
+    let postings_total = posting_use_case(state)
+        .postings_total_cents(work_order.id.unwrap_or_default())
+        .await
+        .unwrap_or(0);
+    let external = if work_order.external_service {
+        work_order.invoice_value_cents.unwrap_or(0)
+    } else {
+        0
+    };
+    postings_total + external
+}
+
+fn posting_json(posting: WorkOrderPosting, part_uuid: String, item_uuid: Option<String>) -> WorkOrderPostingJson {
+    WorkOrderPostingJson {
+        uuid: posting.uuid,
+        part_uuid,
+        work_order_item_uuid: item_uuid,
+        quantity: posting.quantity,
+        unit_value_cents: Some(posting.unit_value_cents),
+        total_value_cents: Some(posting.total_value_cents),
+        cost_source: Some(posting.cost_source.to_string()),
+    }
+}
+
+async fn posting_json_resolved(state: &AppState, posting: WorkOrderPosting) -> WorkOrderPostingJson {
+    let part_uuid = PartGateway::new(state.conn.as_ref().clone())
+        .find_by_id(posting.part_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| bytes_para_string(m.uuid))
+        .unwrap_or_default();
+    let item_uuid = match posting.work_order_item_id {
+        Some(id) => WorkOrderItemGateway::new(state.conn.as_ref().clone())
+            .find_by_id(id)
+            .await
+            .ok()
+            .flatten()
+            .map(|m| bytes_para_string(m.uuid)),
+        None => None,
+    };
+    posting_json(posting, part_uuid, item_uuid)
 }
 
 #[utoipa::path(
@@ -381,5 +463,129 @@ pub async fn cancel(
             Ok(Json(json(&state, work_order, items).await))
         }
         Err(e) => Err(error(locale, &e.message)),
+    }
+}
+
+/// `EPIC-MT-02-S01`'s own version of `resolve_part`/`resolve_work_order_item_id`
+/// (`purchase_order_endpoint.rs`): resolves a required part uuid to its id,
+/// hiding another tenant's part behind `PartNotFound` the same way.
+async fn resolve_issued_part_id(
+    state: &AppState,
+    locale: &Locale,
+    current_user: &User,
+    uuid: String,
+) -> Result<i64, ExceptionResponse> {
+    let part = part_use_case(state)
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound))?;
+    if !can_read_part(current_user, part.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound));
+    }
+    Ok(part.id.unwrap_or_default())
+}
+
+async fn resolve_issue_item_id(
+    state: &AppState,
+    locale: &Locale,
+    uuid: Option<String>,
+) -> Result<Option<i64>, ExceptionResponse> {
+    let Some(uuid) = uuid else { return Ok(None) };
+    let item = WorkOrderItemGateway::new(state.conn.as_ref().clone())
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?
+        .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
+    Ok(Some(item.id))
+}
+
+#[utoipa::path(
+    post,
+    tag = "WorkOrder",
+    path = "/work-order/uuid/{uuid}/issue-part",
+    params(("uuid" = String, Path, description = "Work order UUID")),
+    request_body = WorkOrderPostingJson,
+    responses(
+        (status = 201, description = "The part is issued: a stock-ledger movement (TRM-613's stock check, TRM-609's cost-source stamp) and a costed posting (TRM-614) are written in one transaction. `unitValueCents`/`totalValueCents`/`costSource` are server-derived from TRM-608's precedence (moving average, then last purchase price, then registered unit value). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only).", body = WorkOrderPostingJson),
+        (status = 400, description = "Bad request, including a non-positive quantity, insufficient stock (TRM-613), an unknown part, or a pendency that does not belong to this work order", body = BadRequestErrorJson),
+        (status = 404, description = "Work order not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not issue parts against this work order", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn issue_part(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<WorkOrderPostingJson>,
+) -> HttpResponse<(StatusCode, Json<WorkOrderPostingJson>)> {
+    let (work_order, _) = use_case(&state)
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
+    if !can_read_work_order(&current_user, work_order.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+    }
+    if !can_create_work_order(&current_user, work_order.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::WorkOrderForbidden));
+    }
+
+    let part_id = resolve_issued_part_id(&state, &locale, &current_user, payload.part_uuid).await?;
+    let item_id = resolve_issue_item_id(&state, &locale, payload.work_order_item_uuid).await?;
+
+    match posting_use_case(&state)
+        .issue(work_order.id.unwrap_or_default(), item_id, part_id, payload.quantity)
+        .await
+    {
+        Ok(saved) => Ok((StatusCode::CREATED, Json(posting_json_resolved(&state, saved).await))),
+        Err(e) => Err(error(locale, &e.message)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "WorkOrder",
+    path = "/work-order/uuid/{uuid}/postings",
+    params(("uuid" = String, Path, description = "Work order UUID")),
+    responses(
+        (status = 200, description = "This work order's costed postings (TRM-614), oldest first. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = Vec<WorkOrderPostingJson>),
+        (status = 404, description = "Work order not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_postings(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<Json<Vec<WorkOrderPostingJson>>> {
+    let (work_order, _) = use_case(&state)
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
+    if !can_read_work_order(&current_user, work_order.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+    }
+
+    match posting_use_case(&state)
+        .find_by_work_order(work_order.id.unwrap_or_default())
+        .await
+    {
+        Ok(postings) => {
+            let mut rows = Vec::with_capacity(postings.len());
+            for posting in postings {
+                rows.push(posting_json_resolved(&state, posting).await);
+            }
+            Ok(Json(rows))
+        }
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }

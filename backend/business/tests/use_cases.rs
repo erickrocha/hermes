@@ -4518,3 +4518,692 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
         .expect("receiving a linked purchase order succeeds");
     assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Purchased);
 }
+
+// ------------------------------------------------------- EPIC-MT-02-S01 work order postings
+use business::gateway::work_order_posting_gateway::WorkOrderPostingGateway;
+use business::use_cases::work_order_posting_use_case::{
+    INSUFFICIENT_STOCK, PART_NOT_FOUND as ISSUE_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE as ISSUE_QUANTITY_MUST_BE_POSITIVE,
+    WORK_ORDER_NOT_FOUND as ISSUE_WORK_ORDER_NOT_FOUND, WorkOrderPostingUseCase,
+};
+
+fn work_order_posting_use_case(db: &DatabaseConnection) -> WorkOrderPostingUseCase {
+    WorkOrderPostingUseCase::new(
+        WorkOrderPostingGateway::new(db.clone()),
+        WorkOrderGateway::new(db.clone()),
+        WorkOrderItemGateway::new(db.clone()),
+        PartGateway::new(db.clone()),
+        StockMovementGateway::new(db.clone()),
+        StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db.clone())),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn work_order_posting_row(
+    id: i64,
+    tenant_id: i64,
+    work_order_id: i64,
+    work_order_item_id: Option<i64>,
+    part_id: i64,
+    quantity: f64,
+    unit_value_cents: i64,
+    total_value_cents: i64,
+    cost_source: &str,
+) -> entity::work_order_posting_entity::Model {
+    entity::work_order_posting_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        work_order_id,
+        work_order_item_id,
+        part_id,
+        quantity,
+        unit_value_cents,
+        total_value_cents,
+        cost_source: cost_source.into(),
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn issuing_a_non_positive_quantity_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        work_order_posting_use_case(&db).issue(96, None, 800, 0.0),
+    )
+    .await
+    .expect_err("a non-positive quantity is refused");
+    assert_eq!(err.message, ISSUE_QUANTITY_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn issuing_against_an_unknown_work_order_is_refused_after_one_lookup() {
+    let db = mock()
+        .append_query_results([Vec::<entity::work_order_entity::Model>::new()])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        work_order_posting_use_case(&db).issue(96, None, 800, 3.0),
+    )
+    .await
+    .expect_err("an unknown work order is refused");
+    assert_eq!(err.message, ISSUE_WORK_ORDER_NOT_FOUND);
+    assert_eq!(log(db).len(), 1, "only the work order lookup ran; nothing was written");
+}
+
+#[tokio::test]
+async fn issuing_against_an_unknown_part_is_refused_after_two_lookups() {
+    let db = mock()
+        .append_query_results([[work_order_row(96, 42, 10)]])
+        .append_query_results([Vec::<entity::part_entity::Model>::new()])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        work_order_posting_use_case(&db).issue(96, None, 800, 3.0),
+    )
+    .await
+    .expect_err("an unknown part is refused");
+    assert_eq!(err.message, ISSUE_PART_NOT_FOUND);
+    assert_eq!(log(db).len(), 2, "the work order and part lookups ran; nothing was written");
+}
+
+/// `TRM-613`: "refuse to issue a part to a work order when the recorded
+/// stock is below the quantity requested."
+#[tokio::test]
+async fn issuing_more_than_the_current_stock_is_refused() {
+    let db = mock()
+        .append_query_results([[work_order_row(96, 42, 10)]]) // work order
+        .append_query_results([[part_row(800, 42)]]) // part
+        .append_query_results([[stock_movement_row(900, 42, 800, "Entry", 1.0)]]) // current_stock: 1
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        work_order_posting_use_case(&db).issue(96, None, 800, 3.0),
+    )
+    .await
+    .expect_err("insufficient stock is refused");
+    assert_eq!(err.message, INSUFFICIENT_STOCK);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+/// `TRM-609`/`613`/`614`: a valid issue writes a negative-quantity `Issue`
+/// stock movement and a costed posting in one transaction, costed by
+/// `TRM-608`'s precedence -- here the part's moving average, which outranks
+/// its registered unit value.
+#[tokio::test]
+async fn issuing_a_part_writes_a_stock_movement_and_a_costed_posting() {
+    let db = mock()
+        .append_query_results([[work_order_row(96, 42, 10)]]) // work order
+        .append_query_results([[part_row_with_cost(800, 42, Some(7_500))]]) // part
+        .append_query_results([[stock_movement_row(900, 42, 800, "Entry", 10.0)]]) // current_stock: 10
+        .append_exec_results([inserted(901)]) // insert the Issue movement
+        .append_query_results([[stock_movement_row(901, 42, 800, "Issue", -3.0)]]) // refetch
+        .append_exec_results([inserted(500)]) // insert the posting
+        .append_query_results([[work_order_posting_row(500, 42, 96, None, 800, 3.0, 7_500, 22_500, "MovingAverageCost")]]) // refetch
+        .into_connection();
+
+    let saved = run_with_user(
+        Some(owner(42)),
+        work_order_posting_use_case(&db).issue(96, None, 800, 3.0),
+    )
+    .await
+    .expect("a valid issue is accepted");
+    assert_eq!(saved.quantity, 3.0);
+    assert_eq!(saved.unit_value_cents, 7_500);
+    assert_eq!(saved.total_value_cents, 22_500);
+    assert_eq!(saved.cost_source, business::domain::enums::CostSource::MovingAverageCost);
+
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("-3"), "the ledger movement must carry the negative issued quantity: {sql}");
+}
+
+// ------------------------------------------------------- EPIC-SP-04-S01 vehicle expenses
+use business::domain::enums::ExpenseOrigin;
+use business::domain::vehicle_expense::VehicleExpense;
+use business::gateway::vehicle_expense_gateway::VehicleExpenseGateway;
+use business::use_cases::vehicle_expense_use_case::{
+    CATEGORY_REQUIRED, COMPETENCE_PERIOD_REQUIRED, DUPLICATE_EXPENSE_INVOICE,
+    VALUE_MUST_BE_POSITIVE as EXPENSE_VALUE_MUST_BE_POSITIVE, VEHICLE_NOT_FOUND as EXPENSE_VEHICLE_NOT_FOUND,
+    VehicleExpenseUseCase,
+};
+
+fn vehicle_expense_use_case(db: &DatabaseConnection) -> VehicleExpenseUseCase {
+    VehicleExpenseUseCase::new(VehicleExpenseGateway::new(db.clone()), VehicleGateway::new(db.clone()))
+}
+
+fn new_vehicle_expense(tenant_id: Option<i64>) -> VehicleExpense {
+    VehicleExpense {
+        id: None,
+        uuid: None,
+        tenant_id,
+        vehicle_id: 10,
+        category: "Tolls".into(),
+        competence_period: "2026-09".into(),
+        issue_date: chrono::NaiveDate::from_ymd_opt(2026, 9, 29).unwrap(),
+        supplier: None,
+        invoice_number: Some("INV-1".into()),
+        description: None,
+        value_cents: 5_000,
+        origin: ExpenseOrigin::Manual,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn vehicle_expense_row(
+    id: i64,
+    tenant_id: i64,
+    vehicle_id: i64,
+    category: &str,
+    invoice_number: Option<&str>,
+) -> entity::vehicle_expense_entity::Model {
+    entity::vehicle_expense_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        vehicle_id,
+        category: category.into(),
+        competence_period: "2026-09".into(),
+        issue_date: chrono::NaiveDate::from_ymd_opt(2026, 9, 29).unwrap(),
+        supplier: None,
+        invoice_number: invoice_number.map(|s| s.into()),
+        description: None,
+        value_cents: 5_000,
+        origin: "Manual".into(),
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_blank_expense_category_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let expense = VehicleExpense {
+        category: "   ".into(),
+        ..new_vehicle_expense(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
+        .await
+        .expect_err("a blank category is refused");
+    assert_eq!(err.message, CATEGORY_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_blank_competence_period_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let expense = VehicleExpense {
+        competence_period: "   ".into(),
+        ..new_vehicle_expense(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
+        .await
+        .expect_err("a blank competence period is refused");
+    assert_eq!(err.message, COMPETENCE_PERIOD_REQUIRED);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_non_positive_expense_value_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let expense = VehicleExpense {
+        value_cents: 0,
+        ..new_vehicle_expense(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
+        .await
+        .expect_err("a non-positive value is refused");
+    assert_eq!(err.message, EXPENSE_VALUE_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn an_expense_against_a_vehicle_of_another_tenant_is_refused() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(new_vehicle_expense(Some(42))),
+    )
+    .await
+    .expect_err("a vehicle from another tenant is refused");
+    assert_eq!(err.message, EXPENSE_VEHICLE_NOT_FOUND);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+/// `TRM-661`: "one invoice number produces at most one live expense per
+/// vehicle and category."
+#[tokio::test]
+async fn a_duplicate_invoice_number_in_the_same_category_is_refused() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // vehicle
+        .append_query_results([[vehicle_expense_row(900, 42, 10, "Tolls", Some("INV-1"))]]) // duplicate check
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(new_vehicle_expense(Some(42))),
+    )
+    .await
+    .expect_err("a duplicate invoice number in the same category is refused");
+    assert_eq!(err.message, DUPLICATE_EXPENSE_INVOICE);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn a_valid_vehicle_expense_is_accepted() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // vehicle
+        .append_query_results([Vec::<entity::vehicle_expense_entity::Model>::new()]) // duplicate check: none
+        .append_exec_results([inserted(900)])
+        .append_query_results([[vehicle_expense_row(900, 42, 10, "Tolls", Some("INV-1"))]])
+        .into_connection();
+    let saved = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(new_vehicle_expense(Some(42))),
+    )
+    .await
+    .expect("a valid vehicle expense is accepted");
+    assert_eq!(saved.id, Some(900));
+}
+
+// ------------------------------------------------------- EPIC-FU-01-S01 fuel ledger
+use business::domain::enums::FuelEntryOrigin;
+use business::domain::fuel_entry::FuelEntry;
+use business::gateway::fuel_entry_gateway::FuelEntryGateway;
+use business::use_cases::fuel_entry_use_case::{
+    FuelEntryUseCase, VALUE_MUST_NOT_BE_NEGATIVE, VEHICLE_NOT_FOUND as FUEL_VEHICLE_NOT_FOUND,
+    VOLUME_MUST_BE_POSITIVE,
+};
+
+fn fuel_entry_use_case(db: &DatabaseConnection) -> FuelEntryUseCase {
+    FuelEntryUseCase::new(FuelEntryGateway::new(db.clone()), VehicleGateway::new(db.clone()))
+}
+
+fn new_fuel_entry(tenant_id: Option<i64>) -> FuelEntry {
+    FuelEntry {
+        id: None,
+        uuid: None,
+        tenant_id,
+        vehicle_id: 10,
+        recorded_at: at().naive_utc(),
+        volume_liters: 50.0,
+        value_cents: 30_000,
+        odometer_km: Some(123_456.0),
+        station: Some("Posto Ipiranga".into()),
+        full_tank: true,
+        origin: FuelEntryOrigin::Manual,
+        provider_transaction_id: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+fn fuel_entry_row(id: i64, tenant_id: i64, vehicle_id: i64) -> entity::fuel_entry_entity::Model {
+    entity::fuel_entry_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        vehicle_id,
+        recorded_at: at(),
+        volume_liters: 50.0,
+        value_cents: 30_000,
+        odometer_km: Some(123_456.0),
+        station: Some("Posto Ipiranga".into()),
+        full_tank: true,
+        origin: "Manual".into(),
+        provider_transaction_id: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_non_positive_fuel_volume_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let entry = FuelEntry {
+        volume_liters: 0.0,
+        ..new_fuel_entry(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(entry))
+        .await
+        .expect_err("a non-positive volume is refused");
+    assert_eq!(err.message, VOLUME_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_negative_fuel_value_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let entry = FuelEntry {
+        value_cents: -1,
+        ..new_fuel_entry(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(entry))
+        .await
+        .expect_err("a negative value is refused");
+    assert_eq!(err.message, VALUE_MUST_NOT_BE_NEGATIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_fuel_entry_against_a_vehicle_of_another_tenant_is_refused() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))))
+        .await
+        .expect_err("a vehicle from another tenant is refused");
+    assert_eq!(err.message, FUEL_VEHICLE_NOT_FOUND);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn a_valid_fuel_entry_is_accepted() {
+    let db = mock()
+        .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // vehicle
+        .append_exec_results([inserted(900)])
+        .append_query_results([[fuel_entry_row(900, 42, 10)]])
+        .into_connection();
+    let saved = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))))
+        .await
+        .expect("a valid fuel entry is accepted");
+    assert_eq!(saved.id, Some(900));
+    assert_eq!(saved.origin, FuelEntryOrigin::Manual);
+}
+
+// ------------------------------------------------------- EPIC-FU-07-S01 internal tank
+use business::domain::internal_tank::InternalTank;
+use business::gateway::internal_tank_gateway::InternalTankGateway;
+use business::use_cases::internal_tank_use_case::{
+    ALERT_LEVEL_MUST_NOT_BE_NEGATIVE, CAPACITY_MUST_BE_POSITIVE, INTERNAL_TANK_NOT_CONFIGURED,
+    InternalTankUseCase, REFERENCE_STOCK_OUT_OF_RANGE, RESERVE_LEVEL_MUST_NOT_BE_NEGATIVE,
+};
+
+fn internal_tank_use_case(db: &DatabaseConnection) -> InternalTankUseCase {
+    InternalTankUseCase::new(InternalTankGateway::new(db.clone()))
+}
+
+fn new_internal_tank(tenant_id: Option<i64>) -> InternalTank {
+    InternalTank {
+        id: None,
+        uuid: None,
+        tenant_id,
+        capacity_liters: 10_000.0,
+        reference_stock_liters: 6_000.0,
+        reference_at: at().naive_utc(),
+        alert_level_liters: 4_000.0,
+        reserve_level_liters: 500.0,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+fn internal_tank_row(id: i64, tenant_id: i64) -> entity::internal_tank_entity::Model {
+    entity::internal_tank_entity::Model {
+        id,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(tenant_id),
+        capacity_liters: 10_000.0,
+        reference_stock_liters: 6_000.0,
+        reference_at: at(),
+        alert_level_liters: 4_000.0,
+        reserve_level_liters: 500.0,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn a_non_positive_tank_capacity_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let tank = InternalTank {
+        capacity_liters: 0.0,
+        ..new_internal_tank(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).configure(tank))
+        .await
+        .expect_err("a non-positive capacity is refused");
+    assert_eq!(err.message, CAPACITY_MUST_BE_POSITIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_reference_stock_above_capacity_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let tank = InternalTank {
+        reference_stock_liters: 20_000.0,
+        ..new_internal_tank(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).configure(tank))
+        .await
+        .expect_err("a reference stock above capacity is refused");
+    assert_eq!(err.message, REFERENCE_STOCK_OUT_OF_RANGE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_negative_alert_level_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let tank = InternalTank {
+        alert_level_liters: -1.0,
+        ..new_internal_tank(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).configure(tank))
+        .await
+        .expect_err("a negative alert level is refused");
+    assert_eq!(err.message, ALERT_LEVEL_MUST_NOT_BE_NEGATIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn a_negative_reserve_level_is_rejected_before_any_query() {
+    let db = mock().into_connection();
+    let tank = InternalTank {
+        reserve_level_liters: -1.0,
+        ..new_internal_tank(Some(42))
+    };
+    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).configure(tank))
+        .await
+        .expect_err("a negative reserve level is refused");
+    assert_eq!(err.message, RESERVE_LEVEL_MUST_NOT_BE_NEGATIVE);
+    assert!(log(db).is_empty());
+}
+
+#[tokio::test]
+async fn configuring_for_the_first_time_inserts_a_new_row() {
+    let db = mock()
+        .append_query_results([Vec::<entity::internal_tank_entity::Model>::new()]) // no existing row
+        .append_exec_results([inserted(900)])
+        .append_query_results([[internal_tank_row(900, 42)]])
+        .into_connection();
+    let saved = run_with_user(
+        Some(owner(42)),
+        internal_tank_use_case(&db).configure(new_internal_tank(Some(42))),
+    )
+    .await
+    .expect("a valid first configuration is accepted");
+    assert_eq!(saved.id, Some(900));
+}
+
+/// `TRM-1540`: reconfiguring replaces the manager's last reading in place --
+/// it does not append a second row for the same tenant.
+#[tokio::test]
+async fn reconfiguring_updates_the_existing_row_in_place() {
+    let db = mock()
+        .append_query_results([[internal_tank_row(900, 42)]]) // existing row found
+        .append_exec_results([inserted(900)]) // update, same id
+        .append_query_results([[internal_tank_row(900, 42)]]) // refetch
+        .into_connection();
+    let saved = run_with_user(
+        Some(owner(42)),
+        internal_tank_use_case(&db).configure(new_internal_tank(Some(42))),
+    )
+    .await
+    .expect("reconfiguring an existing tank is accepted");
+    assert_eq!(saved.id, Some(900));
+    assert!(!format!("{:?}", log(db)).contains("INSERT"), "reconfiguring must update, not insert");
+}
+
+#[tokio::test]
+async fn reading_an_unconfigured_tank_is_reported_distinctly() {
+    let db = mock()
+        .append_query_results([Vec::<entity::internal_tank_entity::Model>::new()])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).get_current(Some(42)))
+        .await
+        .expect_err("an unconfigured tank is reported, not defaulted");
+    assert_eq!(err.message, INTERNAL_TANK_NOT_CONFIGURED);
+}
+
+// ------------------------------------------------------- EPIC-FU-02-S01 fuel provider sync
+use business::domain::business_error::BusinessError;
+use business::gateway::fuel_provider::{AckStatus, FuelProvider, ProviderFuelTransaction};
+use business::use_cases::fuel_sync_use_case::FuelSyncUseCase;
+use std::sync::Mutex;
+
+struct FakeFuelProvider {
+    transactions: Vec<ProviderFuelTransaction>,
+    acked: Mutex<Vec<(String, AckStatus)>>,
+}
+
+impl FakeFuelProvider {
+    fn new(transactions: Vec<ProviderFuelTransaction>) -> Self {
+        Self {
+            transactions,
+            acked: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl FuelProvider for FakeFuelProvider {
+    async fn fetch_pending(&self) -> Result<Vec<ProviderFuelTransaction>, BusinessError> {
+        Ok(self.transactions.clone())
+    }
+
+    async fn acknowledge(&self, results: &[(String, AckStatus)]) -> Result<(), BusinessError> {
+        *self.acked.lock().unwrap() = results.to_vec();
+        Ok(())
+    }
+}
+
+fn fuel_sync_use_case(db: &DatabaseConnection, provider: FakeFuelProvider) -> FuelSyncUseCase<FakeFuelProvider> {
+    FuelSyncUseCase::new(provider, FuelEntryGateway::new(db.clone()), VehicleGateway::new(db.clone()))
+}
+
+fn provider_transaction(external_id: &str, fleet_prefix: Option<&str>) -> ProviderFuelTransaction {
+    ProviderFuelTransaction {
+        external_id: external_id.to_string(),
+        fleet_prefix: fleet_prefix.map(str::to_string),
+        plate: None,
+        fleet_name: None,
+        recorded_at: Some(at()),
+        volume_liters: 50.0,
+        value_cents: 30_000,
+        odometer_km: Some(123_456.0),
+        station: Some("Posto Ipiranga".into()),
+        full_tank: true,
+    }
+}
+
+/// `TRM-508`: a transaction whose vehicle cannot be resolved is acknowledged
+/// `PENDENTE`, not silently dropped or imported anyway.
+#[tokio::test]
+async fn a_transaction_with_no_matching_vehicle_is_reported_pending() {
+    let provider = FakeFuelProvider::new(vec![provider_transaction("ext-1", Some("999"))]);
+    let db = mock()
+        .append_query_results([Vec::<entity::vehicle_entity::Model>::new()]) // find_by_prefix: none
+        .into_connection();
+
+    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
+        .await
+        .expect("a sync with an unmatched transaction still succeeds overall");
+    assert_eq!(outcome.fetched, 1);
+    assert_eq!(outcome.unmatched, 1);
+    assert_eq!(outcome.imported, 0);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"), "an unmatched transaction is never written");
+}
+
+/// `TRM-511`/`514`: a transaction naming an unseen `externo_id` is imported
+/// as a new ledger row, `origin` stamped `CtaSync`.
+#[tokio::test]
+async fn a_new_transaction_for_a_matched_vehicle_is_imported() {
+    let provider = FakeFuelProvider::new(vec![provider_transaction("ext-2", Some("2642"))]);
+    let db = mock()
+        .append_query_results([[entity::vehicle_entity::Model {
+            prefix: Some("2642".into()),
+            ..vehicle_row(10, 42, "ABC1D23", "Active")
+        }]]) // find_by_prefix: matched
+        .append_query_results([Vec::<entity::fuel_entry_entity::Model>::new()]) // find_by_provider_transaction_id: none
+        .append_exec_results([inserted(900)])
+        .append_query_results([[fuel_entry_row(900, 42, 10)]])
+        .into_connection();
+
+    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
+        .await
+        .expect("a valid sync succeeds");
+    assert_eq!(outcome.imported, 1);
+    assert_eq!(outcome.unmatched, 0);
+}
+
+/// `TRM-512`: a re-sent `externo_id` with a changed field is corrected in
+/// place, never re-imported as a second row.
+#[tokio::test]
+async fn a_resent_transaction_with_a_changed_field_is_corrected_in_place() {
+    let mut tx = provider_transaction("ext-3", Some("2642"));
+    tx.volume_liters = 99.0; // differs from fuel_entry_row's own 50.0
+    let provider = FakeFuelProvider::new(vec![tx]);
+    let db = mock()
+        .append_query_results([[entity::vehicle_entity::Model {
+            prefix: Some("2642".into()),
+            ..vehicle_row(10, 42, "ABC1D23", "Active")
+        }]])
+        .append_query_results([[fuel_entry_row(900, 42, 10)]]) // existing row found
+        .append_exec_results([inserted(900)]) // corrected in place, same id
+        .append_query_results([[fuel_entry_row(900, 42, 10)]])
+        .into_connection();
+
+    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
+        .await
+        .expect("a correction succeeds");
+    assert_eq!(outcome.updated, 1);
+    assert_eq!(outcome.imported, 0);
+}
+
+/// `TRM-512`'s own qualifier: "only if one of them actually changed" -- a
+/// re-sent transaction identical to what is already stored writes nothing.
+#[tokio::test]
+async fn a_resent_transaction_with_no_actual_change_writes_nothing() {
+    let provider = FakeFuelProvider::new(vec![provider_transaction("ext-4", Some("2642"))]);
+    let db = mock()
+        .append_query_results([[entity::vehicle_entity::Model {
+            prefix: Some("2642".into()),
+            ..vehicle_row(10, 42, "ABC1D23", "Active")
+        }]])
+        .append_query_results([[fuel_entry_row(900, 42, 10)]]) // identical to the incoming transaction
+        .into_connection();
+
+    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
+        .await
+        .expect("a no-op correction still succeeds");
+    assert_eq!(outcome.updated, 0);
+    assert_eq!(outcome.imported, 0);
+    assert!(!format!("{:?}", log(db)).contains("UPDATE"), "nothing changed, so nothing is written");
+}

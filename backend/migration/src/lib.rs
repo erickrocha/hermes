@@ -42,6 +42,12 @@ mod m20260926_000006_create_part_table;
 mod m20260926_000007_create_stock_movement_table;
 mod m20260927_000001_create_purchase_order_table;
 mod m20260927_000002_link_purchase_order_and_work_order_item;
+mod m20260929_000001_create_vehicle_expense_table;
+mod m20260929_000002_create_work_order_posting_table;
+mod m20260929_000003_create_fuel_entry_table;
+mod m20260929_000004_create_internal_tank_table;
+mod m20260929_000005_add_fuel_entry_provider_transaction_id;
+mod m20260929_000006_create_preventive_plan_table;
 
 pub struct Migrator;
 
@@ -89,6 +95,12 @@ impl MigratorTrait for Migrator {
             Box::new(m20260926_000007_create_stock_movement_table::Migration),
             Box::new(m20260927_000001_create_purchase_order_table::Migration),
             Box::new(m20260927_000002_link_purchase_order_and_work_order_item::Migration),
+            Box::new(m20260929_000001_create_vehicle_expense_table::Migration),
+            Box::new(m20260929_000002_create_work_order_posting_table::Migration),
+            Box::new(m20260929_000003_create_fuel_entry_table::Migration),
+            Box::new(m20260929_000004_create_internal_tank_table::Migration),
+            Box::new(m20260929_000005_add_fuel_entry_provider_transaction_id::Migration),
+            Box::new(m20260929_000006_create_preventive_plan_table::Migration),
         ]
     }
 }

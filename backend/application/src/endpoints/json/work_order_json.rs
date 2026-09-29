@@ -46,4 +46,9 @@ pub struct WorkOrderJson {
     /// leaves it empty, the same convention `ChecklistTemplateJson` uses.
     #[serde(default)]
     pub items: Vec<WorkOrderItemJson>,
+    /// `EPIC-MT-02-S01` (`TRM-688`): postings summed, plus the external-
+    /// service invoice value when `externalService` is set. "Other costs"
+    /// has no entity in hermes yet, so it is not included. Ignored on write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_cents: Option<i64>,
 }

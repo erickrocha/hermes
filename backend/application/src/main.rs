@@ -26,6 +26,10 @@ use crate::routes::resource_routes::resources_routes;
 use crate::routes::tenant_routes::tenant_routes;
 use crate::routes::user_routes::user_routes;
 use crate::routes::vehicle_routes::vehicle_routes;
+use crate::routes::vehicle_expense_routes::vehicle_expense_routes;
+use crate::routes::fuel_entry_routes::fuel_entry_routes;
+use crate::routes::preventive_plan_routes::preventive_plan_routes;
+use crate::routes::internal_tank_routes::internal_tank_routes;
 use axum::Router;
 use axum::http::{Method, header};
 use axum::routing::get;
@@ -138,6 +142,8 @@ impl Modify for SecurityAddon {
         endpoints::work_order_endpoint::add_item,
         endpoints::work_order_endpoint::conclude,
         endpoints::work_order_endpoint::cancel,
+        endpoints::work_order_endpoint::issue_part,
+        endpoints::work_order_endpoint::list_postings,
         endpoints::maintenance_plan_endpoint::add,
         endpoints::maintenance_plan_endpoint::get_by_uuid,
         endpoints::maintenance_plan_endpoint::list_all,
@@ -158,6 +164,18 @@ impl Modify for SecurityAddon {
         endpoints::purchase_order_endpoint::mark_ordered,
         endpoints::purchase_order_endpoint::mark_purchased,
         endpoints::purchase_order_endpoint::cancel,
+        endpoints::vehicle_expense_endpoint::add,
+        endpoints::vehicle_expense_endpoint::get_by_uuid,
+        endpoints::vehicle_expense_endpoint::list_all,
+        endpoints::fuel_entry_endpoint::add,
+        endpoints::fuel_entry_endpoint::get_by_uuid,
+        endpoints::fuel_entry_endpoint::list_all,
+        endpoints::fuel_entry_endpoint::sync,
+        endpoints::preventive_plan_endpoint::add,
+        endpoints::preventive_plan_endpoint::get_by_uuid,
+        endpoints::preventive_plan_endpoint::list_all,
+        endpoints::internal_tank_endpoint::configure,
+        endpoints::internal_tank_endpoint::get_current,
         endpoints::vehicle_assignment_endpoint::assign,
         endpoints::vehicle_assignment_endpoint::current,
         endpoints::vehicle_assignment_endpoint::end,
@@ -193,6 +211,7 @@ impl Modify for SecurityAddon {
             endpoints::json::checklist_answer_json::ChecklistAnswerJson,
             endpoints::json::work_order_json::WorkOrderJson,
             endpoints::json::work_order_item_json::WorkOrderItemJson,
+            endpoints::json::work_order_posting_json::WorkOrderPostingJson,
             endpoints::json::maintenance_plan_json::MaintenancePlanJson,
             endpoints::json::service_type_json::ServiceTypeJson,
             endpoints::json::priced_service_json::PricedServiceJson,
@@ -201,6 +220,11 @@ impl Modify for SecurityAddon {
             endpoints::json::stock_movement_json::StockAdjustmentJson,
             endpoints::json::purchase_order_json::PurchaseOrderJson,
             endpoints::json::purchase_order_json::MarkOrderedJson,
+            endpoints::json::vehicle_expense_json::VehicleExpenseJson,
+            endpoints::json::fuel_entry_json::FuelEntryJson,
+            endpoints::json::fuel_entry_json::FuelSyncOutcomeJson,
+            endpoints::json::preventive_plan_json::PreventivePlanJson,
+            endpoints::json::internal_tank_json::InternalTankJson,
             endpoints::json::vehicle_json::VehicleJson,
             endpoints::json::vehicle_assignment_json::VehicleAssignmentJson,
             endpoints::json::vehicle_assignment_json::AssignDriverRequest,
@@ -330,6 +354,10 @@ async fn start() -> anyhow::Result<()> {
         .nest("/extra-trip", extra_trip_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
         .nest("/vehicle", vehicle_routes(state.clone()))
+        .nest("/vehicle-expense", vehicle_expense_routes(state.clone()))
+        .nest("/fuel-entry", fuel_entry_routes(state.clone()))
+        .nest("/preventive-plan", preventive_plan_routes(state.clone()))
+        .nest("/internal-tank", internal_tank_routes(state.clone()))
         .layer(cors)
         .with_state(state);
 
@@ -487,6 +515,10 @@ mod openapi_contract_tests {
             "priced_service_routes" => "/priced-service",
             "part_routes" => "/part",
             "purchase_order_routes" => "/purchase-order",
+            "vehicle_expense_routes" => "/vehicle-expense",
+            "fuel_entry_routes" => "/fuel-entry",
+            "preventive_plan_routes" => "/preventive-plan",
+            "internal_tank_routes" => "/internal-tank",
             "transport_demand_routes" => "/transport-demand",
             "extra_trip_routes" => "/extra-trip",
             _ => "",

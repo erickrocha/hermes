@@ -324,8 +324,7 @@ pub fn can_create_extra_trip(actor: &User, target_tenant_id: Option<i64>) -> boo
 }
 
 pub fn can_read_extra_trip(actor: &User, trip_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == trip_tenant_id)
+    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == trip_tenant_id)
 }
 
 /// `EPIC-CK-02-S01` (`HRMS-651`, `C-025`): the same hierarchy every other
@@ -374,8 +373,7 @@ pub fn can_create_checklist_run(actor: &User, target_tenant_id: Option<i64>) -> 
 }
 
 pub fn can_read_checklist_run(actor: &User, run_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == run_tenant_id)
+    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == run_tenant_id)
 }
 
 /// `EPIC-MT-01-S01` (`HRMS-700`, `C-026`): the same hierarchy every other
@@ -428,8 +426,7 @@ pub fn can_create_maintenance_plan(actor: &User, target_tenant_id: Option<i64>) 
 }
 
 pub fn can_read_maintenance_plan(actor: &User, plan_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == plan_tenant_id)
+    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == plan_tenant_id)
 }
 
 /// `EPIC-MT-05-S01` (`HRMS-704`, `C-026`): the same hierarchy every other
@@ -541,6 +538,89 @@ pub fn can_administer_purchase_order(actor: &User, purchase_order_tenant_id: Opt
 pub fn can_read_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
     is_unbound_sys_admin(actor)
         || (actor.tenant_id.is_some() && actor.tenant_id == purchase_order_tenant_id)
+}
+
+/// `EPIC-SP-04-S01` (`HRMS-803`, `C-030`): a vehicle expense is financial
+/// record-keeping, the same shape `customer`/`holiday` already use -- unlike
+/// `part`/`stock_movement`/`purchase_order`, it is not widened to `Mechanic`,
+/// since recording a toll or plan-fee invoice is back-office paperwork, not
+/// day-to-day garage/stores work.
+pub fn can_administer_vehicle_expense(
+    actor: &User,
+    vehicle_expense_tenant_id: Option<i64>,
+) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.role == Role::TenantOwner
+            && actor.tenant_id.is_some()
+            && actor.tenant_id == vehicle_expense_tenant_id)
+}
+
+pub fn can_create_vehicle_expense(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    actor.role == Role::TenantOwner
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_read_vehicle_expense(actor: &User, vehicle_expense_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == vehicle_expense_tenant_id)
+}
+
+/// `EPIC-FU-01-S01` (`HRMS-942`, `C-029`): recording a fuelling is the same
+/// day-to-day operational work `part`/`stock_movement`/`purchase_order`
+/// already widen to `Mechanic` for -- unlike `vehicle_expense`'s own
+/// back-office financial tier, a fuelling is routine stores-shaped activity.
+pub fn can_create_fuel_entry(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_read_fuel_entry(actor: &User, fuel_entry_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == fuel_entry_tenant_id)
+}
+
+/// `EPIC-FU-07-S01` (`HRMS-943`, `C-029`): `TRM-1540` names "a reference
+/// stock reported by **the manager**" -- the same `TenantOwner`-only tier
+/// `vehicle_expense` uses, not the `Mechanic`-widened stores tier `fuel_entry`
+/// itself uses. Configuring the tank is a fleet-wide setting, not a per-
+/// fuelling operational record.
+pub fn can_configure_internal_tank(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    actor.role == Role::TenantOwner
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_read_internal_tank(actor: &User, internal_tank_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == internal_tank_tenant_id)
+}
+
+/// `EPIC-MT-07-S01` (`HRMS-706`, `C-027`): the same hierarchy
+/// `maintenance_plan` already uses (`EPIC-MT-03-S01`) -- registering a
+/// preventive plan is squarely maintenance work, not owner-only.
+pub fn can_create_preventive_plan(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+pub fn can_read_preventive_plan(actor: &User, preventive_plan_tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some() && actor.tenant_id == preventive_plan_tenant_id)
 }
 
 #[cfg(test)]
@@ -971,7 +1051,13 @@ mod tests {
             assert!(!can_reassign_role(&sysadmin, &role, Some(7)));
 
             let actor = user(role.clone(), Some(7));
-            for target in [Role::SysAdmin, Role::TenantOwner, Role::TenantUser, Role::Driver, Role::Mechanic] {
+            for target in [
+                Role::SysAdmin,
+                Role::TenantOwner,
+                Role::TenantUser,
+                Role::Driver,
+                Role::Mechanic,
+            ] {
                 assert_eq!(can_create_user_with_role(&actor, &target), None);
             }
             assert!(!is_unbound_sys_admin(&actor));
@@ -1107,5 +1193,112 @@ mod tests {
 
         // A row with no owner is readable by nobody but the platform.
         assert!(!can_read_vehicle(&owner_of_1, None));
+    }
+
+    #[test]
+    fn only_a_tenant_owner_or_sysadmin_may_create_a_vehicle_expense() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        assert!(can_create_vehicle_expense(&sysadmin_unbound, Some(1)));
+        assert!(!can_create_vehicle_expense(&sysadmin_unbound, None));
+
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_create_vehicle_expense(&owner_1, Some(1)));
+        assert!(!can_create_vehicle_expense(&owner_1, Some(2)));
+
+        // Unlike `part`/`purchase_order`, a mechanic may not record one.
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        assert!(!can_create_vehicle_expense(&mechanic_1, Some(1)));
+
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(!can_create_vehicle_expense(&member_1, Some(1)));
+    }
+
+    #[test]
+    fn reading_a_vehicle_expense_is_wider_than_administering_it_but_never_crosses_a_tenant() {
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(can_read_vehicle_expense(&member_1, Some(1)));
+        assert!(!can_administer_vehicle_expense(&member_1, Some(1)));
+        assert!(!can_read_vehicle_expense(&member_1, Some(2)));
+
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_administer_vehicle_expense(&owner_1, Some(1)));
+        assert!(!can_administer_vehicle_expense(&owner_1, Some(2)));
+    }
+
+    #[test]
+    fn a_mechanic_may_record_a_fuel_entry_unlike_a_vehicle_expense() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        assert!(can_create_fuel_entry(&sysadmin_unbound, Some(1)));
+        assert!(!can_create_fuel_entry(&sysadmin_unbound, None));
+
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_create_fuel_entry(&owner_1, Some(1)));
+        assert!(!can_create_fuel_entry(&owner_1, Some(2)));
+
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        assert!(can_create_fuel_entry(&mechanic_1, Some(1)));
+        assert!(!can_create_fuel_entry(&mechanic_1, Some(2)));
+
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(!can_create_fuel_entry(&member_1, Some(1)));
+    }
+
+    #[test]
+    fn reading_a_fuel_entry_never_crosses_a_tenant() {
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(can_read_fuel_entry(&member_1, Some(1)));
+        assert!(!can_read_fuel_entry(&member_1, Some(2)));
+
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_read_fuel_entry(&sysadmin, Some(1)));
+    }
+
+    #[test]
+    fn only_a_tenant_owner_or_sysadmin_may_configure_the_internal_tank() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        assert!(can_configure_internal_tank(&sysadmin_unbound, Some(1)));
+        assert!(!can_configure_internal_tank(&sysadmin_unbound, None));
+
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_configure_internal_tank(&owner_1, Some(1)));
+        assert!(!can_configure_internal_tank(&owner_1, Some(2)));
+
+        // Unlike `fuel_entry`, a mechanic may not configure the tank.
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        assert!(!can_configure_internal_tank(&mechanic_1, Some(1)));
+    }
+
+    #[test]
+    fn reading_the_internal_tank_never_crosses_a_tenant() {
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(can_read_internal_tank(&member_1, Some(1)));
+        assert!(!can_read_internal_tank(&member_1, Some(2)));
+
+        let sysadmin = user(Role::SysAdmin, None);
+        assert!(can_read_internal_tank(&sysadmin, Some(1)));
+    }
+
+    #[test]
+    fn a_mechanic_may_create_a_preventive_plan() {
+        let sysadmin_unbound = user(Role::SysAdmin, None);
+        assert!(can_create_preventive_plan(&sysadmin_unbound, Some(1)));
+        assert!(!can_create_preventive_plan(&sysadmin_unbound, None));
+
+        let owner_1 = user(Role::TenantOwner, Some(1));
+        assert!(can_create_preventive_plan(&owner_1, Some(1)));
+        assert!(!can_create_preventive_plan(&owner_1, Some(2)));
+
+        let mechanic_1 = user(Role::Mechanic, Some(1));
+        assert!(can_create_preventive_plan(&mechanic_1, Some(1)));
+
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(!can_create_preventive_plan(&member_1, Some(1)));
+    }
+
+    #[test]
+    fn reading_a_preventive_plan_never_crosses_a_tenant() {
+        let member_1 = user(Role::TenantUser, Some(1));
+        assert!(can_read_preventive_plan(&member_1, Some(1)));
+        assert!(!can_read_preventive_plan(&member_1, Some(2)));
     }
 }

@@ -16,3 +16,7 @@ pub mod transport_demand_routes;
 pub mod extra_trip_routes;
 pub mod user_routes;
 pub mod vehicle_routes;
+pub mod vehicle_expense_routes;
+pub mod fuel_entry_routes;
+pub mod preventive_plan_routes;
+pub mod internal_tank_routes;

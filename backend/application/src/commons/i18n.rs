@@ -196,6 +196,30 @@ pub enum ErrorKey {
     PurchaseOrderForbidden,
     /// `HRMS-802`: no such purchase order, or it belongs to another tenant.
     PurchaseOrderNotFound,
+    /// `HRMS-803`: a role that may not record vehicle expenses.
+    VehicleExpenseForbidden,
+    /// `HRMS-803`: no such vehicle expense, or it belongs to another tenant.
+    VehicleExpenseNotFound,
+    /// `HRMS-803` (`TRM-661`): this vehicle already has an expense in this
+    /// category for that invoice number.
+    DuplicateExpenseInvoice,
+    /// `HRMS-942`: a role that may not record fuel entries.
+    FuelEntryForbidden,
+    /// `HRMS-942`: no such fuel entry, or it belongs to another tenant.
+    FuelEntryNotFound,
+    /// `HRMS-943`: a role that may not configure the internal tank.
+    InternalTankForbidden,
+    /// `HRMS-943`: the internal tank has not been configured for this tenant.
+    InternalTankNotConfigured,
+    /// `HRMS-944`: the fuel-management provider's credential is not
+    /// configured for this deployment.
+    FuelSyncUnavailable,
+    /// `HRMS-706`: a role that may not manage preventive plans.
+    PreventivePlanForbidden,
+    /// `HRMS-706`: no such preventive plan, or it belongs to another tenant.
+    PreventivePlanNotFound,
+    /// `HRMS-706`: this vehicle already has a preventive plan with this name.
+    DuplicatePreventivePlan,
     /// HRMS-925 (D-23(c)): this plate is already registered in the caller's
     /// own tenant. Never raised for another tenant's vehicle.
     DuplicatePlate,
@@ -279,6 +303,17 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "PartNotFound",
             ErrorKey::PurchaseOrderForbidden => "PurchaseOrderForbidden",
             ErrorKey::PurchaseOrderNotFound => "PurchaseOrderNotFound",
+            ErrorKey::VehicleExpenseForbidden => "VehicleExpenseForbidden",
+            ErrorKey::VehicleExpenseNotFound => "VehicleExpenseNotFound",
+            ErrorKey::DuplicateExpenseInvoice => "DuplicateExpenseInvoice",
+            ErrorKey::FuelEntryForbidden => "FuelEntryForbidden",
+            ErrorKey::FuelEntryNotFound => "FuelEntryNotFound",
+            ErrorKey::InternalTankForbidden => "InternalTankForbidden",
+            ErrorKey::InternalTankNotConfigured => "InternalTankNotConfigured",
+            ErrorKey::FuelSyncUnavailable => "FuelSyncUnavailable",
+            ErrorKey::PreventivePlanForbidden => "PreventivePlanForbidden",
+            ErrorKey::PreventivePlanNotFound => "PreventivePlanNotFound",
+            ErrorKey::DuplicatePreventivePlan => "DuplicatePreventivePlan",
             ErrorKey::DuplicatePlate => "DuplicatePlate",
             ErrorKey::TrackerLinkForbidden => "TrackerLinkForbidden",
             ErrorKey::DuplicateTrackerDevice => "DuplicateTrackerDevice",
@@ -353,6 +388,17 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "part-not-found",
             ErrorKey::PurchaseOrderForbidden => "purchase-order-forbidden",
             ErrorKey::PurchaseOrderNotFound => "purchase-order-not-found",
+            ErrorKey::VehicleExpenseForbidden => "vehicle-expense-forbidden",
+            ErrorKey::VehicleExpenseNotFound => "vehicle-expense-not-found",
+            ErrorKey::DuplicateExpenseInvoice => "duplicate-expense-invoice",
+            ErrorKey::FuelEntryForbidden => "fuel-entry-forbidden",
+            ErrorKey::FuelEntryNotFound => "fuel-entry-not-found",
+            ErrorKey::InternalTankForbidden => "internal-tank-forbidden",
+            ErrorKey::InternalTankNotConfigured => "internal-tank-not-configured",
+            ErrorKey::FuelSyncUnavailable => "fuel-sync-unavailable",
+            ErrorKey::PreventivePlanForbidden => "preventive-plan-forbidden",
+            ErrorKey::PreventivePlanNotFound => "preventive-plan-not-found",
+            ErrorKey::DuplicatePreventivePlan => "duplicate-preventive-plan",
             ErrorKey::DuplicatePlate => "duplicate-plate",
             ErrorKey::TrackerLinkForbidden => "tracker-link-forbidden",
             ErrorKey::DuplicateTrackerDevice => "duplicate-tracker-device",
@@ -602,6 +648,17 @@ mod tests {
             ErrorKey::PartNotFound,
             ErrorKey::PurchaseOrderForbidden,
             ErrorKey::PurchaseOrderNotFound,
+            ErrorKey::VehicleExpenseForbidden,
+            ErrorKey::VehicleExpenseNotFound,
+            ErrorKey::DuplicateExpenseInvoice,
+            ErrorKey::FuelEntryForbidden,
+            ErrorKey::FuelEntryNotFound,
+            ErrorKey::InternalTankForbidden,
+            ErrorKey::InternalTankNotConfigured,
+            ErrorKey::FuelSyncUnavailable,
+            ErrorKey::PreventivePlanForbidden,
+            ErrorKey::PreventivePlanNotFound,
+            ErrorKey::DuplicatePreventivePlan,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

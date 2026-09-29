@@ -482,7 +482,10 @@ pub enum PurchaseOrderStatus {
 
 impl PurchaseOrderStatus {
     pub fn is_active(&self) -> bool {
-        !matches!(self, PurchaseOrderStatus::Purchased | PurchaseOrderStatus::Cancelled)
+        !matches!(
+            self,
+            PurchaseOrderStatus::Purchased | PurchaseOrderStatus::Cancelled
+        )
     }
 }
 
@@ -584,6 +587,131 @@ impl FromStr for CostSource {
             "RegisteredUnitValue" => Ok(Self::RegisteredUnitValue),
             "None" => Ok(Self::None),
             _ => Err(format!("Invalid cost source: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-SP-04-S01` (`HRMS-803`, `C-030`): `TRM-660` lists "origin" as one of
+/// a vehicle expense's own fields. No producer for `Import` exists in this
+/// epic -- `EPIC-SP-06`'s toll-invoice OCR import is its own producer,
+/// writing through this same vocabulary rather than a parallel one, the same
+/// "grow the vocabulary the day its second producer exists" discipline
+/// `StockMovementType::Issue` already established.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum ExpenseOrigin {
+    #[default]
+    Manual,
+    Import,
+}
+
+impl Display for ExpenseOrigin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpenseOrigin::Manual => write!(f, "Manual"),
+            ExpenseOrigin::Import => write!(f, "Import"),
+        }
+    }
+}
+
+impl FromStr for ExpenseOrigin {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Manual" => Ok(Self::Manual),
+            "Import" => Ok(Self::Import),
+            _ => Err(format!("Invalid expense origin: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-FU-01-S01` (`HRMS-942`, `C-029`): `TRM-514` lists "origin" as one of
+/// a fuelling's own fields; legacy's vocabulary is `cta`/`cta_sync`/
+/// `motorista_foto`/`manual`. Declared in full now -- `CtaSync`/`DriverPhoto`
+/// have no producer in this epic (`EPIC-FU-02`/`03` are their own, not yet
+/// built) -- the same "grow the vocabulary the day its second producer
+/// exists" discipline `StockMovementType::Issue` already established, cheap
+/// to declare up front and costly to migrate onto later.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum FuelEntryOrigin {
+    #[default]
+    Manual,
+    CtaSync,
+    DriverPhoto,
+}
+
+impl Display for FuelEntryOrigin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuelEntryOrigin::Manual => write!(f, "Manual"),
+            FuelEntryOrigin::CtaSync => write!(f, "CtaSync"),
+            FuelEntryOrigin::DriverPhoto => write!(f, "DriverPhoto"),
+        }
+    }
+}
+
+impl FromStr for FuelEntryOrigin {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Manual" => Ok(Self::Manual),
+            "CtaSync" => Ok(Self::CtaSync),
+            "DriverPhoto" => Ok(Self::DriverPhoto),
+            _ => Err(format!("Invalid fuel entry origin: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-MT-07-S01` (`HRMS-706`, `C-027`): `TRM-301` -- a preventive plan is
+/// controlled by kilometres, by date, or by both.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum PreventiveControlType {
+    Kilometers,
+    Days,
+    #[default]
+    Both,
+}
+
+impl Display for PreventiveControlType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreventiveControlType::Kilometers => write!(f, "Kilometers"),
+            PreventiveControlType::Days => write!(f, "Days"),
+            PreventiveControlType::Both => write!(f, "Both"),
+        }
+    }
+}
+
+impl FromStr for PreventiveControlType {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Kilometers" => Ok(Self::Kilometers),
+            "Days" => Ok(Self::Days),
+            "Both" => Ok(Self::Both),
+            _ => Err(format!("Invalid preventive control type: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-MT-07-S01` (`TRM-302`/`303`): a preventive plan's own status, always
+/// derived at read time from the vehicle's current odometer and today's date
+/// -- never stored, the same "computed, never a stored figure that can drift"
+/// bias `TRM-602` already established for stock. Ordered worst-first so a
+/// caller can take the max across several plans.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum PreventiveStatus {
+    #[default]
+    Ok,
+    Attention,
+    Overdue,
+}
+
+impl Display for PreventiveStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreventiveStatus::Ok => write!(f, "Ok"),
+            PreventiveStatus::Attention => write!(f, "Attention"),
+            PreventiveStatus::Overdue => write!(f, "Overdue"),
         }
     }
 }

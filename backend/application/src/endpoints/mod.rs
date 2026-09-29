@@ -24,4 +24,8 @@ pub mod purchase_order_endpoint;
 pub mod user_endpoint;
 pub mod vehicle_endpoint;
 pub mod vehicle_assignment_endpoint;
+pub mod vehicle_expense_endpoint;
+pub mod fuel_entry_endpoint;
+pub mod preventive_plan_endpoint;
+pub mod internal_tank_endpoint;
 pub mod welcome_endpoint;
