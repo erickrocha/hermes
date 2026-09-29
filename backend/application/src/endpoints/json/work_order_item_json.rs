@@ -22,4 +22,9 @@ pub struct WorkOrderItemJson {
     pub resolved_at: Option<chrono::NaiveDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_description: Option<String>,
+    /// `EPIC-SP-03-S02` (`TRM-645`): true when this item is a synthetic
+    /// placeholder standing in for a purchase order raised with no named
+    /// pendency, rather than a real repair pendency. Read-only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_purchase_placeholder: bool,
 }

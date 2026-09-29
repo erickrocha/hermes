@@ -36,7 +36,11 @@ use business::use_cases::work_order_use_case::WorkOrderUseCase;
 
 fn use_case(state: &AppState) -> PurchaseOrderUseCase {
     let db = state.conn.as_ref().clone();
-    PurchaseOrderUseCase::new(PurchaseOrderGateway::new(db.clone()), PartGateway::new(db))
+    PurchaseOrderUseCase::new(
+        PurchaseOrderGateway::new(db.clone()),
+        PartGateway::new(db.clone()),
+        work_order_use_case(state),
+    )
 }
 
 fn part_use_case(state: &AppState) -> PartUseCase {
@@ -98,6 +102,24 @@ async fn resolve_work_order_id(
     Ok(work_order.id)
 }
 
+/// `TRM-644`: resolves the named pendency's uuid to its id, scoped to this
+/// work order the same way `mark_item_awaiting_parts` itself checks.
+/// `find_by_id` (via `Gateway`) already applies tenant scoping, so a found
+/// item is by construction visible to the caller.
+async fn resolve_work_order_item_id(
+    state: &AppState,
+    locale: &Locale,
+    uuid: Option<String>,
+) -> Result<Option<i64>, ExceptionResponse> {
+    let Some(uuid) = uuid else { return Ok(None) };
+    let item = WorkOrderItemGateway::new(state.conn.as_ref().clone())
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?
+        .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
+    Ok(Some(item.id))
+}
+
 async fn resolve_vehicle_id(
     state: &AppState,
     locale: &Locale,
@@ -121,6 +143,10 @@ async fn json(state: &AppState, purchase_order: PurchaseOrder) -> PurchaseOrderJ
         status: Some(purchase_order.status.to_string()),
         work_order_uuid: match purchase_order.work_order_id {
             Some(id) => work_order_uuid_of(state, id).await,
+            None => None,
+        },
+        work_order_item_uuid: match purchase_order.work_order_item_id {
+            Some(id) => work_order_item_uuid_of(state, id).await,
             None => None,
         },
         vehicle_uuid: match purchase_order.vehicle_id {
@@ -151,6 +177,15 @@ async fn work_order_uuid_of(state: &AppState, work_order_id: i64) -> Option<Stri
         .map(|m| bytes_para_string(m.uuid))
 }
 
+async fn work_order_item_uuid_of(state: &AppState, item_id: i64) -> Option<String> {
+    WorkOrderItemGateway::new(state.conn.as_ref().clone())
+        .find_by_id(item_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| bytes_para_string(m.uuid))
+}
+
 async fn vehicle_uuid_of(state: &AppState, vehicle_id: i64) -> Option<String> {
     VehicleGateway::new(state.conn.as_ref().clone())
         .find_by_id(vehicle_id)
@@ -166,9 +201,9 @@ async fn vehicle_uuid_of(state: &AppState, vehicle_id: i64) -> Option<String> {
     path = "/purchase-order",
     request_body = PurchaseOrderJson,
     responses(
-        (status = 201, description = "The purchase order is raised (TRM-640), always `Requested` (TRM-641) regardless of what the caller sends. `number` (`PO-{id}`) is server-derived, a distinct prefix from `Part`'s own `PC-{id}` (closing U-170 by construction). Refused when this work order already has an active order for this part (TRM-642). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only).", body = PurchaseOrderJson),
-        (status = 400, description = "Bad request, including a non-positive quantity, an unknown part, or a duplicate active order for this part on this work order", body = BadRequestErrorJson),
-        (status = 404, description = "Part, work order or vehicle not found, **or any of them belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 201, description = "The purchase order is raised (TRM-640), always `Requested` (TRM-641) regardless of what the caller sends. `number` (`PO-{id}`) is server-derived, a distinct prefix from `Part`'s own `PC-{id}` (closing U-170 by construction). Refused when this work order already has an active order for this part (TRM-642). When `workOrderUuid` is given, naming `workOrderItemUuid` links that existing pendency (TRM-644); naming none instead opens a synthetic placeholder pendency (TRM-645) -- either way the work order's own status recomputes to `AwaitingParts` (TRM-646). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only).", body = PurchaseOrderJson),
+        (status = 400, description = "Bad request, including a non-positive quantity, an unknown part, a duplicate active order for this part on this work order, or a pendency named without its own work order", body = BadRequestErrorJson),
+        (status = 404, description = "Part, work order, pendency or vehicle not found, **or any of them belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller's role may not raise purchase orders", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -190,6 +225,8 @@ pub async fn add(
     }
     let work_order_id =
         resolve_work_order_id(&state, &locale, &current_user, payload.work_order_uuid).await?;
+    let work_order_item_id =
+        resolve_work_order_item_id(&state, &locale, payload.work_order_item_uuid).await?;
     let vehicle_id = resolve_vehicle_id(&state, &locale, &current_user, payload.vehicle_uuid).await?;
 
     let purchase_order = PurchaseOrder {
@@ -202,6 +239,7 @@ pub async fn add(
         observation: payload.observation,
         status: Default::default(),
         work_order_id,
+        work_order_item_id,
         vehicle_id,
         ordered_at: None,
         expected_delivery_date: None,
@@ -346,7 +384,7 @@ pub async fn mark_ordered(
     path = "/purchase-order/uuid/{uuid}/mark-purchased",
     params(("uuid" = String, Path, description = "Purchase order UUID")),
     responses(
-        (status = 200, description = "`Ordered` -> `Purchased` (TRM-641). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only).", body = PurchaseOrderJson),
+        (status = 200, description = "`Ordered` -> `Purchased` (TRM-641). If this order links a pendency, receiving it resolves a synthetic placeholder outright (TRM-647) or returns a real pendency to `Pending` (TRM-648), recomputing the work order's own status (TRM-649). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only).", body = PurchaseOrderJson),
         (status = 400, description = "The order is not currently `Ordered`", body = BadRequestErrorJson),
         (status = 404, description = "Purchase order not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),

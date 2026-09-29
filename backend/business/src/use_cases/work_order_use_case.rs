@@ -17,6 +17,8 @@ pub const DESCRIPTION_REQUIRED: &str = "A work order needs a description";
 pub const NEGATIVE_ODOMETER: &str = "Odometer reading cannot be negative";
 pub const ITEM_DESCRIPTION_REQUIRED: &str = "A work order item needs a description";
 pub const WORK_ORDER_NOT_FOUND: &str = "Work order not found";
+pub const ITEM_NOT_FOUND: &str = "Work order item not found";
+pub const ITEM_NOT_ON_THIS_WORK_ORDER: &str = "This item does not belong to the named work order";
 
 pub struct WorkOrderUseCase {
     gateway: WorkOrderGateway,
@@ -200,6 +202,110 @@ impl WorkOrderUseCase {
             WorkOrderStatus::Open
         } else {
             current.clone()
+        }
+    }
+
+    /// `EPIC-SP-03-S02` (`TRM-644`/`646`): names an existing pendency as the
+    /// one a purchase order was raised from -- the item moves to
+    /// `AwaitingParts` and is annotated with the order, and the work order's
+    /// own status is recomputed the same way `add_item` recomputes it.
+    pub async fn mark_item_awaiting_parts(
+        &self,
+        work_order_id: i64,
+        item_id: i64,
+        purchase_order_id: i64,
+    ) -> Result<WorkOrder, BusinessError> {
+        let work_order = self.loaded(work_order_id).await?;
+        let item = self.loaded_item(item_id).await?;
+        if item.work_order_id != work_order_id {
+            return Err(BusinessError::new(ITEM_NOT_ON_THIS_WORK_ORDER.to_string()));
+        }
+
+        let updated_item = WorkOrderItem {
+            status: WorkOrderItemStatus::AwaitingParts,
+            purchase_order_id: Some(purchase_order_id),
+            is_purchase_placeholder: false,
+            ..item
+        };
+        self.recomputed_after(work_order, updated_item).await
+    }
+
+    /// `EPIC-SP-03-S02` (`TRM-647`/`648`/`649`): on receipt, a synthetic
+    /// placeholder pendency (`TRM-645`) is resolved outright -- it only ever
+    /// represented the purchase -- while a real pendency (`TRM-644`) returns
+    /// to `Pending` with its purchase-order annotation cleared, because
+    /// receiving the part does not mean the repair was done. Either way the
+    /// work order's own status is recomputed, which is `TRM-649`'s "move
+    /// from awaiting-part to in-execution" the moment no item still awaits
+    /// one.
+    pub async fn resolve_purchase_pendency(&self, item_id: i64) -> Result<WorkOrder, BusinessError> {
+        let item = self.loaded_item(item_id).await?;
+        let work_order = self.loaded(item.work_order_id).await?;
+
+        let updated_item = if item.is_purchase_placeholder {
+            WorkOrderItem {
+                status: WorkOrderItemStatus::Resolved,
+                resolved_at: Some(Utc::now().naive_utc()),
+                ..item
+            }
+        } else {
+            WorkOrderItem {
+                status: WorkOrderItemStatus::Pending,
+                purchase_order_id: None,
+                ..item
+            }
+        };
+        self.recomputed_after(work_order, updated_item).await
+    }
+
+    async fn loaded(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
+        let existing = self.gateway.find_by_id(work_order_id).await.map_err(database_error)?;
+        match existing {
+            Some(model) => Ok(WorkOrderEntityMapper::from_model(model)),
+            None => Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string())),
+        }
+    }
+
+    async fn loaded_item(&self, item_id: i64) -> Result<WorkOrderItem, BusinessError> {
+        let existing = self.items.find_by_id(item_id).await.map_err(database_error)?;
+        match existing {
+            Some(model) => Ok(WorkOrderItemEntityMapper::from_model(model)),
+            None => Err(BusinessError::new(ITEM_NOT_FOUND.to_string())),
+        }
+    }
+
+    /// Shared by `mark_item_awaiting_parts` and `resolve_purchase_pendency`:
+    /// persist the item's new state, then recompute and persist the parent
+    /// work order's status from the full item set -- the same two-step
+    /// `add_item` already uses.
+    async fn recomputed_after(
+        &self,
+        work_order: WorkOrder,
+        item: WorkOrderItem,
+    ) -> Result<WorkOrder, BusinessError> {
+        let entity = self.items.persist(item).await.map_err(database_error)?;
+        let saved_item = WorkOrderItemEntityMapper::from_active_model(entity);
+
+        let all_items = self
+            .items
+            .find_by_work_order(work_order.id.unwrap_or_default())
+            .await
+            .map_err(database_error)?;
+        let all_items = WorkOrderItemEntityMapper::from_models(all_items);
+
+        let new_status = Self::recompute_status(&work_order.status, &saved_item, &all_items);
+        if new_status == work_order.status {
+            Ok(work_order)
+        } else {
+            let entity = self
+                .gateway
+                .persist(WorkOrder {
+                    status: new_status,
+                    ..work_order
+                })
+                .await
+                .map_err(database_error)?;
+            Ok(WorkOrderEntityMapper::from_active_model(entity))
         }
     }
 

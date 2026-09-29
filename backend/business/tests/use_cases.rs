@@ -3073,8 +3073,8 @@ use business::gateway::work_order_gateway::WorkOrderGateway;
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::work_order_use_case::{
     DESCRIPTION_REQUIRED, ITEM_DESCRIPTION_REQUIRED as WO_ITEM_DESCRIPTION_REQUIRED,
-    NEGATIVE_ODOMETER, NOT_A_TENANT_VEHICLE as WO_NOT_A_TENANT_VEHICLE, WORK_ORDER_NOT_FOUND,
-    WorkOrderUseCase,
+    ITEM_NOT_ON_THIS_WORK_ORDER, NEGATIVE_ODOMETER, NOT_A_TENANT_VEHICLE as WO_NOT_A_TENANT_VEHICLE,
+    WORK_ORDER_NOT_FOUND, WorkOrderUseCase,
 };
 
 fn work_order_use_case(db: &DatabaseConnection) -> WorkOrderUseCase {
@@ -3251,6 +3251,8 @@ fn new_work_order_item(status: WorkOrderItemStatus) -> WorkOrderItem {
         resolved_by: None,
         resolved_at: None,
         resolution_description: None,
+        purchase_order_id: None,
+        is_purchase_placeholder: false,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -3276,6 +3278,8 @@ fn work_order_item_row(
         resolved_by: None,
         resolved_at: None,
         resolution_description: None,
+        purchase_order_id: None,
+        is_purchase_placeholder: false,
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -3513,6 +3517,113 @@ async fn cancelling_an_already_cancelled_work_order_is_a_no_op() {
         .expect("a no-op still succeeds");
     assert_eq!(work_order.status, WorkOrderStatus::Cancelled);
     assert!(!format!("{:?}", log(db)).contains("UPDATE"), "a terminal order is not re-stamped");
+}
+
+// ------------------------------------------------------- EPIC-SP-03-S02 purchase-order pendency wiring
+/// `TRM-644`/`646`: naming an existing pendency moves it to `AwaitingParts`
+/// and recomputes the parent work order the same way `add_item` does.
+#[tokio::test]
+async fn linking_an_existing_pendency_to_a_purchase_order_sets_it_awaiting_parts_and_recomputes_the_work_order()
+{
+    let db = mock()
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]]) // the work order
+        .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]]) // the named pendency
+        .append_exec_results([inserted(97)]) // item update
+        .append_query_results([[entity::work_order_item_entity::Model {
+            status: "AwaitingParts".into(),
+            purchase_order_id: Some(950),
+            ..work_order_item_row(97, 42, 96, "AwaitingParts")
+        }]]) // item refetch
+        .append_query_results([[entity::work_order_item_entity::Model {
+            status: "AwaitingParts".into(),
+            purchase_order_id: Some(950),
+            ..work_order_item_row(97, 42, 96, "AwaitingParts")
+        }]]) // all items on the work order
+        .append_exec_results([inserted(96)]) // work order update
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]]) // refetch
+        .into_connection();
+
+    let updated = run_with_user(
+        Some(owner(42)),
+        work_order_use_case(&db).mark_item_awaiting_parts(96, 97, 950),
+    )
+    .await
+    .expect("linking an existing pendency succeeds");
+    assert_eq!(updated.status, WorkOrderStatus::AwaitingParts);
+}
+
+#[tokio::test]
+async fn linking_a_pendency_from_a_different_work_order_is_refused() {
+    let db = mock()
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_query_results([[work_order_item_row(97, 42, 999, "Pending")]]) // belongs to a different order
+        .into_connection();
+
+    let err = run_with_user(
+        Some(owner(42)),
+        work_order_use_case(&db).mark_item_awaiting_parts(96, 97, 950),
+    )
+    .await
+    .expect_err("an item from another work order is refused");
+    assert_eq!(err.message, ITEM_NOT_ON_THIS_WORK_ORDER);
+}
+
+/// `TRM-647`: a synthetic placeholder only ever represented the purchase
+/// itself, so receiving it resolves the item outright. As the work order's
+/// sole item, `recompute_status`'s own "nothing left pending" fallback
+/// leaves the order's status untouched (`EPIC-MT-01-S03`'s existing rule:
+/// conclusion is a deliberate administrative act, never inferred) -- so
+/// `AwaitingParts` persists here until someone calls `conclude`.
+#[tokio::test]
+async fn resolving_a_placeholder_pendency_marks_it_resolved() {
+    let db = mock()
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "AwaitingParts")
+        }]]) // the placeholder item
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]]) // its work order
+        .append_exec_results([inserted(98)]) // item update
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "Resolved")
+        }]]) // item refetch
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "Resolved")
+        }]]) // all items -- only the placeholder, now resolved
+        .into_connection();
+
+    let updated = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_purchase_pendency(98))
+        .await
+        .expect("resolving a placeholder pendency succeeds");
+    assert_eq!(updated.status, WorkOrderStatus::AwaitingParts);
+}
+
+/// `TRM-648`/`649`: a real pendency returns to `Pending` -- receiving the
+/// part does not mean the repair was done -- and the work order's status
+/// recomputes away from `AwaitingParts` the moment nothing still awaits one.
+#[tokio::test]
+async fn resolving_a_real_pendency_returns_it_to_pending_and_recomputes_the_work_order() {
+    let db = mock()
+        .append_query_results([[entity::work_order_item_entity::Model {
+            purchase_order_id: Some(950),
+            ..work_order_item_row(99, 42, 96, "AwaitingParts")
+        }]]) // the real pendency
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]]) // its work order
+        .append_exec_results([inserted(99)]) // item update
+        .append_query_results([[work_order_item_row(99, 42, 96, "Pending")]]) // item refetch
+        .append_query_results([[work_order_item_row(99, 42, 96, "Pending")]]) // all items
+        .append_exec_results([inserted(96)]) // work order update
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]]) // refetch
+        .into_connection();
+
+    let updated = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_purchase_pendency(99))
+        .await
+        .expect("resolving a real pendency succeeds");
+    assert_eq!(updated.status, WorkOrderStatus::Open);
 }
 
 // ------------------------------------------------------- EPIC-MT-03-S01 maintenance plan
@@ -4104,13 +4215,17 @@ async fn an_adjustment_records_the_difference_from_current_stock() {
 use business::domain::purchase_order::PurchaseOrder;
 use business::gateway::purchase_order_gateway::PurchaseOrderGateway;
 use business::use_cases::purchase_order_use_case::{
-    DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND as PO_PART_NOT_FOUND, PURCHASE_ORDER_NOT_FOUND,
-    PurchaseOrderUseCase, QUANTITY_MUST_BE_POSITIVE as PO_QUANTITY_MUST_BE_POSITIVE,
-    WRONG_STATUS_FOR_TRANSITION,
+    DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND as PO_PART_NOT_FOUND,
+    PENDENCY_REQUIRES_WORK_ORDER, PURCHASE_ORDER_NOT_FOUND, PurchaseOrderUseCase,
+    QUANTITY_MUST_BE_POSITIVE as PO_QUANTITY_MUST_BE_POSITIVE, WRONG_STATUS_FOR_TRANSITION,
 };
 
 fn purchase_order_use_case(db: &DatabaseConnection) -> PurchaseOrderUseCase {
-    PurchaseOrderUseCase::new(PurchaseOrderGateway::new(db.clone()), PartGateway::new(db.clone()))
+    PurchaseOrderUseCase::new(
+        PurchaseOrderGateway::new(db.clone()),
+        PartGateway::new(db.clone()),
+        work_order_use_case(db),
+    )
 }
 
 fn new_purchase_order(tenant_id: Option<i64>, part_id: i64, quantity: f64, work_order_id: Option<i64>) -> PurchaseOrder {
@@ -4124,6 +4239,7 @@ fn new_purchase_order(tenant_id: Option<i64>, part_id: i64, quantity: f64, work_
         observation: None,
         status: Default::default(),
         work_order_id,
+        work_order_item_id: None,
         vehicle_id: None,
         ordered_at: None,
         expected_delivery_date: None,
@@ -4145,6 +4261,7 @@ fn purchase_order_row(id: i64, tenant_id: i64, part_id: i64, status: &str) -> en
         observation: None,
         status: status.into(),
         work_order_id: Some(94),
+        work_order_item_id: None,
         vehicle_id: None,
         ordered_at: None,
         expected_delivery_date: None,
@@ -4200,7 +4317,10 @@ async fn saving_a_new_purchase_order_inserts_once() {
     let db = mock()
         .append_query_results([[part_row(800, 42)]]) // part exists
         .append_exec_results([inserted(950)]) // insert
-        .append_query_results([[purchase_order_row(950, 42, 800, "Requested")]]) // refetch
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_id: None,
+            ..purchase_order_row(950, 42, 800, "Requested")
+        }]]) // refetch: no work order named, so no pendency wiring runs
         .into_connection();
     let purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
     let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
@@ -4254,4 +4374,147 @@ async fn a_missing_purchase_order_is_reported_not_silently_ignored() {
         .await
         .expect_err("a missing purchase order is reported");
     assert_eq!(err.message, PURCHASE_ORDER_NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_pendency_named_without_its_own_work_order_is_refused_before_any_query() {
+    let db = mock().into_connection();
+    let mut purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
+    purchase_order.work_order_item_id = Some(97);
+    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect_err("a pendency named with no work order is refused");
+    assert_eq!(err.message, PENDENCY_REQUIRES_WORK_ORDER);
+    assert!(log(db).is_empty());
+}
+
+/// `TRM-644`/`646`: raising a purchase order against a named pendency links
+/// that item and moves the work order to `AwaitingParts`.
+#[tokio::test]
+async fn raising_a_purchase_order_against_an_existing_pendency_links_it() {
+    let db = mock()
+        .append_query_results([[part_row(800, 42)]]) // part exists
+        .append_query_results([Vec::<entity::purchase_order_entity::Model>::new()]) // no duplicate
+        .append_exec_results([inserted(950)]) // insert the purchase order
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_id: Some(96),
+            work_order_item_id: None,
+            ..purchase_order_row(950, 42, 800, "Requested")
+        }]]) // refetch, pendency not yet linked
+        // -- mark_item_awaiting_parts(96, 97, 950) --
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]])
+        .append_exec_results([inserted(97)])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            status: "AwaitingParts".into(),
+            purchase_order_id: Some(950),
+            ..work_order_item_row(97, 42, 96, "AwaitingParts")
+        }]])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            status: "AwaitingParts".into(),
+            purchase_order_id: Some(950),
+            ..work_order_item_row(97, 42, 96, "AwaitingParts")
+        }]])
+        .append_exec_results([inserted(96)])
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]])
+        // -- persist the purchase order's own work_order_item_id --
+        .append_exec_results([inserted(950)])
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_id: Some(96),
+            work_order_item_id: Some(97),
+            ..purchase_order_row(950, 42, 800, "Requested")
+        }]]) // final refetch: pendency now linked
+        .into_connection();
+
+    let mut purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(96));
+    purchase_order.work_order_item_id = Some(97);
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect("linking an existing pendency succeeds");
+    assert_eq!(saved.id, Some(950));
+}
+
+/// `TRM-645`/`646`: raising a purchase order against a work order with no
+/// named pendency opens a synthetic placeholder item instead.
+#[tokio::test]
+async fn raising_a_purchase_order_with_no_named_pendency_opens_a_synthetic_placeholder() {
+    let db = mock()
+        .append_query_results([[part_row(800, 42)]]) // part exists
+        .append_query_results([Vec::<entity::purchase_order_entity::Model>::new()]) // no duplicate
+        .append_exec_results([inserted(950)]) // insert the purchase order
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_id: Some(96),
+            work_order_item_id: None,
+            ..purchase_order_row(950, 42, 800, "Requested")
+        }]]) // refetch
+        // -- add_item(96, placeholder) --
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_exec_results([inserted(98)])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "AwaitingParts")
+        }]])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "AwaitingParts")
+        }]])
+        .append_exec_results([inserted(96)])
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]])
+        // -- persist the purchase order's own work_order_item_id --
+        .append_exec_results([inserted(950)])
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_id: Some(96),
+            work_order_item_id: Some(98),
+            ..purchase_order_row(950, 42, 800, "Requested")
+        }]]) // final refetch: synthetic pendency now linked
+        .into_connection();
+
+    let purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(96));
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
+        .await
+        .expect("opening a synthetic placeholder pendency succeeds");
+    assert_eq!(saved.id, Some(950));
+}
+
+/// `TRM-647`/`648`/`649`: receiving a purchase order resolves its linked
+/// pendency.
+#[tokio::test]
+async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
+    let db = mock()
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_item_id: Some(98),
+            ..purchase_order_row(950, 42, 800, "Ordered")
+        }]]) // loaded
+        .append_exec_results([inserted(950)]) // status -> Purchased
+        .append_query_results([[entity::purchase_order_entity::Model {
+            work_order_item_id: Some(98),
+            status: "Purchased".into(),
+            ..purchase_order_row(950, 42, 800, "Purchased")
+        }]]) // refetch
+        // -- resolve_purchase_pendency(98) --
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "AwaitingParts")
+        }]])
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]])
+        .append_exec_results([inserted(98)])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "Resolved")
+        }]])
+        .append_query_results([[entity::work_order_item_entity::Model {
+            is_purchase_placeholder: true,
+            purchase_order_id: Some(950),
+            ..work_order_item_row(98, 42, 96, "Resolved")
+        }]])
+        .into_connection();
+
+    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_purchased(950))
+        .await
+        .expect("receiving a linked purchase order succeeds");
+    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Purchased);
 }

@@ -62,6 +62,7 @@ fn item_json(item: WorkOrderItem) -> WorkOrderItemJson {
         resolved_by: item.resolved_by,
         resolved_at: item.resolved_at,
         resolution_description: item.resolution_description,
+        is_purchase_placeholder: item.is_purchase_placeholder,
     }
 }
 
@@ -271,6 +272,8 @@ pub async fn add_item(
         resolved_by: payload.resolved_by,
         resolved_at: payload.resolved_at,
         resolution_description: payload.resolution_description,
+        purchase_order_id: None,
+        is_purchase_placeholder: false,
         created_at: None,
         created_by: None,
         updated_at: None,

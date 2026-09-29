@@ -289,6 +289,8 @@ impl ChecklistRunUseCase {
                 resolved_by: None,
                 resolved_at: None,
                 resolution_description: None,
+                purchase_order_id: None,
+                is_purchase_placeholder: false,
                 created_at: None,
                 created_by: None,
                 updated_at: None,

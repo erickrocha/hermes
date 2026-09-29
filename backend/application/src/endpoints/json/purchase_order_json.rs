@@ -24,6 +24,11 @@ pub struct PurchaseOrderJson {
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_order_uuid: Option<String>,
+    /// `TRM-644`: the pendency this order was raised from, when there was
+    /// one. Absent (with `workOrderUuid` present) creates a synthetic
+    /// placeholder pendency instead (`TRM-645`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_order_item_uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vehicle_uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
