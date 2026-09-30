@@ -1,7 +1,8 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
+use crate::domain::enums::{DemandKind, Role};
+use crate::use_cases::effective_schedule::parse_days_of_week;
 use crate::domain::transport_demand::{TransportDemand, TransportDemandEntityMapper};
 use crate::gateway::transport_demand_gateway::TransportDemandGateway;
 use crate::gateway::user_gateway::UserGateway;
@@ -14,6 +15,10 @@ use sea_orm::DbErr;
 pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this tenant";
 /// `specific_vehicle_id` does not name a vehicle of the demand's own tenant.
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
+/// `TRM-003`: the days of the week must be readable.
+pub const DAYS_OF_WEEK_UNREADABLE: &str = "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
+/// A stated kind needs the field that makes it a day's work.
+pub const KIND_NEEDS_ITS_DAYS: &str = "A line needs its days of the week; a one-off trip needs its specific date";
 
 pub struct TransportDemandUseCase {
     gateway: TransportDemandGateway,
@@ -73,6 +78,20 @@ impl TransportDemandUseCase {
             let msg = "Demand type is required".to_string();
             log::error!("[TransportDemandUseCase::validated] {}", msg);
             return Err(BusinessError::new(msg));
+        }
+
+        if demand.days_of_week.as_deref().is_some_and(|d| !d.trim().is_empty() && parse_days_of_week(d).is_none()) {
+            return Err(BusinessError::new(DAYS_OF_WEEK_UNREADABLE.to_string()));
+        }
+        let needs_its_field = match demand.demand_kind {
+            Some(DemandKind::Line) | Some(DemandKind::ExtraLine) => {
+                !demand.days_of_week.as_deref().is_some_and(|d| parse_days_of_week(d).is_some())
+            }
+            Some(DemandKind::OneOffTrip) => demand.specific_date.is_none(),
+            None => false,
+        };
+        if needs_its_field {
+            return Err(BusinessError::new(KIND_NEEDS_ITS_DAYS.to_string()));
         }
 
         if let Some(driver_id) = demand.specific_driver_id {

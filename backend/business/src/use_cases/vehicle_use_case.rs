@@ -108,6 +108,8 @@ impl VehicleUseCase {
             spare_tire_count: vehicle.spare_tire_count,
             spare_tire_type: vehicle.spare_tire_type,
             spare_tire_notes: vehicle.spare_tire_notes,
+            tank_capacity_liters: vehicle.tank_capacity_liters,
+            reference_km_per_liter: vehicle.reference_km_per_liter,
             garage_tag: vehicle.garage_tag,
             garage_tag_origin: vehicle.garage_tag_origin,
             created_at: existing.created_at,
@@ -142,6 +144,16 @@ impl VehicleUseCase {
         let model = vehicle.model.trim().to_string();
         if model.is_empty() {
             let msg = "Vehicle model is required".to_string();
+            log::error!("[VehicleUseCase::validated] {}", msg);
+            return Err(BusinessError::new(msg));
+        }
+        if vehicle.tank_capacity_liters.is_some_and(|c| c.is_nan() || c <= 0.0) {
+            let msg = "Vehicle tank capacity must be positive".to_string();
+            log::error!("[VehicleUseCase::validated] {}", msg);
+            return Err(BusinessError::new(msg));
+        }
+        if vehicle.reference_km_per_liter.is_some_and(|c| c.is_nan() || c <= 0.0) {
+            let msg = "Vehicle reference consumption must be positive".to_string();
             log::error!("[VehicleUseCase::validated] {}", msg);
             return Err(BusinessError::new(msg));
         }

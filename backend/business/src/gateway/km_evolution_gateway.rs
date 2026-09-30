@@ -83,6 +83,36 @@ impl KmEvolutionGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// `TRM-538`: the reading immediately before (or at) an instant.
+    pub async fn find_before(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<km_evolution_entity::Model>, DbErr> {
+        tenant_select(KmEvolutionQuery::find(), km_evolution_entity::Column::TenantId)
+            .filter(km_evolution_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(km_evolution_entity::Column::RecordedAt.lte(at.and_utc()))
+            .order_by_desc(km_evolution_entity::Column::RecordedAt)
+            .order_by_desc(km_evolution_entity::Column::Id)
+            .one(&self.db)
+            .await
+    }
+
+    /// `TRM-538`: the reading immediately after an instant.
+    pub async fn find_after(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<km_evolution_entity::Model>, DbErr> {
+        tenant_select(KmEvolutionQuery::find(), km_evolution_entity::Column::TenantId)
+            .filter(km_evolution_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(km_evolution_entity::Column::RecordedAt.gt(at.and_utc()))
+            .order_by_asc(km_evolution_entity::Column::RecordedAt)
+            .order_by_asc(km_evolution_entity::Column::Id)
+            .one(&self.db)
+            .await
+    }
+
     /// `AD-041`/`TRM-155`: the vehicle's official reading is whichever entry
     /// is **chronologically latest by `recorded_at`**, not whichever was
     /// inserted last -- a backdated correction (`Adjustment`) does not need

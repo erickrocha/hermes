@@ -68,6 +68,23 @@ impl Gateway<ExtraTrip, extra_trip_entity::Model, extra_trip_entity::ActiveModel
 }
 
 impl ExtraTripGateway {
+    /// `TRM-784`: the vehicle's trips from `from` on that are still to be made,
+    /// newest registration first -- when the latest entered the system marks
+    /// when its preparation must be redone.
+    pub async fn find_upcoming_by_vehicle(
+        &self,
+        vehicle_id: i64,
+        from: chrono::NaiveDate,
+    ) -> Result<Vec<extra_trip_entity::Model>, DbErr> {
+        tenant_select(ExtraTripQuery::find(), extra_trip_entity::Column::TenantId)
+            .filter(extra_trip_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(extra_trip_entity::Column::TripDate.gte(from))
+            .filter(extra_trip_entity::Column::Status.ne("Cancelled"))
+            .order_by_desc(extra_trip_entity::Column::CreatedAt)
+            .all(&self.db)
+            .await
+    }
+
     /// `PD-028`.
     pub async fn find_page(
         &self,
@@ -111,6 +128,19 @@ fn code_date_query(
         .filter(extra_trip_entity::Column::OrderCode.eq(order_code))
         .filter(extra_trip_entity::Column::TripDate.eq(trip_date))
         .filter(extra_trip_entity::Column::TenantId.eq(tenant_id))
+}
+
+impl ExtraTripGateway {
+    /// `TRM-001`: the non-cancelled trips under way on a date -- from their trip
+    /// date to their return date (or the trip date alone when none is given).
+    pub async fn find_on_date(&self, date: chrono::NaiveDate) -> Result<Vec<extra_trip_entity::Model>, DbErr> {
+        let trips = tenant_select(ExtraTripQuery::find(), extra_trip_entity::Column::TenantId)
+            .filter(extra_trip_entity::Column::TripDate.lte(date))
+            .filter(extra_trip_entity::Column::Status.ne("Cancelled"))
+            .all(&self.db)
+            .await?;
+        Ok(trips.into_iter().filter(|t| t.return_date.unwrap_or(t.trip_date) >= date).collect())
+    }
 }
 
 /// `HRMS-607` (`D-09`): same technique every other gateway's own tests use.

@@ -477,6 +477,8 @@ fn vehicle_model() -> vehicle_entity::Model {
         spare_tire_count: None,
         spare_tire_type: None,
         spare_tire_notes: None,
+        tank_capacity_liters: None,
+        reference_km_per_liter: None,
         garage_tag: None,
         garage_tag_origin: None,
         created_at: at(),
@@ -796,6 +798,7 @@ fn transport_demand_model() -> transport_demand_entity::Model {
         uuid: string_to_bytes(UUID),
         tenant_id: Some(42),
         demand_type: "RecurringLine".into(),
+        demand_kind: None,
         customer_id: Some(20),
         line_name: Some("Morning shuttle".into()),
         shift_start: chrono::NaiveTime::from_hms_opt(6, 0, 0),
@@ -849,6 +852,7 @@ fn transport_demand_round_trips_through_the_mapper() {
 fn a_partial_transport_demand_active_model_defaults_active_to_true() {
     let partial = transport_demand_entity::ActiveModel {
         demand_type: ActiveValue::Set("RecurringLine".into()),
+        demand_kind: ActiveValue::Set(None),
         ..Default::default()
     };
     let demand = TransportDemandEntityMapper::from_active_model(partial);

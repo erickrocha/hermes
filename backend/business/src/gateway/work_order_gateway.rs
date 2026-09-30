@@ -86,6 +86,16 @@ impl WorkOrderGateway {
             .await
     }
 
+    /// `TRM-333`: a vehicle's work orders that are not concluded or cancelled.
+    pub async fn find_active_by_vehicle(&self, vehicle_id: i64) -> Result<Vec<work_order_entity::Model>, DbErr> {
+        tenant_select(WorkOrderQuery::find(), work_order_entity::Column::TenantId)
+            .filter(work_order_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(work_order_entity::Column::Status.is_not_in(["Concluded", "Cancelled"]))
+            .order_by_asc(work_order_entity::Column::Id)
+            .all(&self.db)
+            .await
+    }
+
     /// `EPIC-MT-03-S01`: the work orders a maintenance plan covers.
     pub async fn find_by_maintenance_plan(
         &self,

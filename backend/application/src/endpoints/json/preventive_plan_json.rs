@@ -69,3 +69,16 @@ pub struct PreventiveExtensionJson {
     pub resulting_limit_km: f64,
     pub description: String,
 }
+
+/// `EPIC-MT-07-S08` (`HRMS-713`): an intermediate inspection alert on a plan
+/// (`TRM-323…325`). `inspectionModel` names the inspection to run until
+/// inspection models exist as their own records.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PreventiveAlertJson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    pub at_km: f64,
+    pub title: String,
+    pub inspection_model: String,
+}

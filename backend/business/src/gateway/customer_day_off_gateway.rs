@@ -86,6 +86,16 @@ impl CustomerDayOffGateway {
     }
 }
 
+impl CustomerDayOffGateway {
+    /// `TRM-001`: the client day-offs on a date, for the effective schedule.
+    pub async fn find_by_date(&self, date: chrono::NaiveDate) -> Result<Vec<customer_day_off_entity::Model>, DbErr> {
+        tenant_select(DayOffQuery::find(), customer_day_off_entity::Column::TenantId)
+            .filter(customer_day_off_entity::Column::Date.eq(date))
+            .all(&self.db)
+            .await
+    }
+}
+
 /// `HRMS-601` (`D-09`): same technique `customer_gateway.rs`'s own tests use.
 #[cfg(test)]
 mod tests {

@@ -86,6 +86,16 @@ impl ScheduleExceptionGateway {
     }
 }
 
+impl ScheduleExceptionGateway {
+    /// `TRM-001`: the day exceptions for a date, for the effective schedule.
+    pub async fn find_by_date(&self, date: chrono::NaiveDate) -> Result<Vec<schedule_exception_entity::Model>, DbErr> {
+        tenant_select(ExceptionQuery::find(), schedule_exception_entity::Column::TenantId)
+            .filter(schedule_exception_entity::Column::Date.eq(date))
+            .all(&self.db)
+            .await
+    }
+}
+
 /// `HRMS-606` (`D-09`): same technique every other gateway's own tests use.
 #[cfg(test)]
 mod tests {

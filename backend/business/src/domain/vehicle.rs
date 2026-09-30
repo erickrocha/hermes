@@ -31,6 +31,8 @@ pub struct Vehicle {
     pub spare_tire_count: Option<i32>,
     pub spare_tire_type: Option<String>,
     pub spare_tire_notes: Option<String>,
+    pub tank_capacity_liters: Option<f64>,
+    pub reference_km_per_liter: Option<f64>,
     pub garage_tag: Option<String>,
     /// Absent, not defaulted, when no tag has ever been set (unlike
     /// `status`, which always has one). `C-028` owns writing this pair.
@@ -68,6 +70,8 @@ impl EntityMapper<Vehicle, Model, ActiveModel> for VehicleEntityMapper {
             spare_tire_count: Set(d.spare_tire_count),
             spare_tire_type: Set(d.spare_tire_type),
             spare_tire_notes: Set(d.spare_tire_notes),
+            tank_capacity_liters: Set(d.tank_capacity_liters),
+            reference_km_per_liter: Set(d.reference_km_per_liter),
             garage_tag: Set(d.garage_tag),
             garage_tag_origin: Set(d.garage_tag_origin.map(|o| o.to_string())),
             // Stamped by `impl_tenant_auditable_before_save!`, never by a caller.
@@ -97,6 +101,8 @@ impl EntityMapper<Vehicle, Model, ActiveModel> for VehicleEntityMapper {
             spare_tire_count: e.spare_tire_count,
             spare_tire_type: e.spare_tire_type,
             spare_tire_notes: e.spare_tire_notes,
+            tank_capacity_liters: e.tank_capacity_liters,
+            reference_km_per_liter: e.reference_km_per_liter,
             garage_tag: e.garage_tag,
             // A stored value the vocabulary no longer knows degrades to
             // absent, not to a guessed origin -- there is no "default" tag
@@ -135,6 +141,8 @@ impl EntityMapper<Vehicle, Model, ActiveModel> for VehicleEntityMapper {
                 spare_tire_count: e.spare_tire_count.take().flatten(),
                 spare_tire_type: e.spare_tire_type.take().flatten(),
                 spare_tire_notes: e.spare_tire_notes.take().flatten(),
+                tank_capacity_liters: e.tank_capacity_liters.take().flatten(),
+                reference_km_per_liter: e.reference_km_per_liter.take().flatten(),
                 garage_tag: e.garage_tag.take().flatten(),
                 garage_tag_origin: e
                     .garage_tag_origin

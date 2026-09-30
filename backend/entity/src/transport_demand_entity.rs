@@ -17,6 +17,8 @@ pub struct Model {
     /// Free text (`tipo_necessidade`): no stated vocabulary, same reasoning
     /// `vehicle.vehicle_type` (`C-023`) used.
     pub demand_type: String,
+    /// `EPIC-SC-04-S01`: the stated kind (`Line`/`ExtraLine`/`OneOffTrip`); `None` = unclassified.
+    pub demand_kind: Option<String>,
     pub customer_id: Option<i64>,
     pub line_name: Option<String>,
     pub shift_start: Option<Time>,

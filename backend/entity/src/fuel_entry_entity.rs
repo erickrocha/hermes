@@ -26,6 +26,17 @@ pub struct Model {
     pub full_tank: bool,
     pub origin: String,
     pub provider_transaction_id: Option<String>,
+    /// `TRM-535`: the driver who reported a receipt (`EPIC-FU-03-S01`).
+    pub reported_by_user_id: Option<i64>,
+    /// `TRM-540`: set only when the driver overrode a divergent odometer.
+    pub odometer_override_note: Option<String>,
+    /// `TRM-548`: when the provider confirmed this driver-reported fuelling.
+    pub provider_confirmed_at: Option<DateTimeUtc>,
+    /// `TRM-552`: soft delete only. Every ledger read excludes a deleted row.
+    pub deleted_at: Option<DateTimeUtc>,
+    /// `TRM-554`: the entry this one was unified into.
+    pub unified_into_id: Option<i64>,
+    pub unification_note: Option<String>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

@@ -141,6 +141,7 @@ async fn json(state: &AppState, demand: TransportDemand) -> TransportDemandJson 
         uuid: demand.uuid,
         tenant_id: demand.tenant_id,
         demand_type: demand.demand_type,
+        demand_kind: demand.demand_kind.map(|k| k.to_string()),
         customer_uuid,
         line_name: demand.line_name,
         shift_start: demand.shift_start,
@@ -194,6 +195,7 @@ pub async fn add(
         uuid: None,
         tenant_id,
         demand_type: payload.demand_type,
+        demand_kind: parse_kind(&locale, payload.demand_kind.as_deref())?,
         customer_id,
         line_name: payload.line_name,
         shift_start: payload.shift_start,
@@ -320,6 +322,7 @@ pub async fn update(
         uuid: existing.uuid,
         tenant_id: existing.tenant_id,
         demand_type: payload.demand_type,
+        demand_kind: parse_kind(&locale, payload.demand_kind.as_deref())?,
         customer_id,
         line_name: payload.line_name,
         shift_start: payload.shift_start,
@@ -363,4 +366,14 @@ pub(crate) async fn find_visible(
         ));
     }
     Ok(demand)
+}
+
+/// `TRM-002`: a stated kind must be one of the three, never guessed.
+fn parse_kind(locale: &Locale, kind: Option<&str>) -> Result<Option<business::domain::enums::DemandKind>, ExceptionResponse> {
+    match kind {
+        None => Ok(None),
+        Some(text) => std::str::FromStr::from_str(text)
+            .map(Some)
+            .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue)),
+    }
 }

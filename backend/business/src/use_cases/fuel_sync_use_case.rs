@@ -11,6 +11,8 @@ use crate::domain::enums::FuelEntryOrigin;
 use crate::domain::fuel_entry::FuelEntry;
 use crate::gateway::fuel_entry_gateway::FuelEntryGateway;
 use crate::gateway::fuel_provider::{AckStatus, FuelProvider, ProviderFuelTransaction};
+use crate::domain::tenant_rule_setting::RuleSettings;
+use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
 use crate::gateway::vehicle_gateway::VehicleGateway;
 use crate::use_cases::vehicle_use_case::VehicleUseCase;
 use entity::vehicle_entity;
@@ -23,6 +25,9 @@ pub struct FuelSyncOutcome {
     pub fetched: usize,
     pub imported: usize,
     pub updated: usize,
+    /// `TRM-545`/`548`: driver-reported fuellings the provider's posting was
+    /// matched to, rather than imported a second time.
+    pub reconciled: usize,
     pub unmatched: usize,
 }
 
@@ -30,14 +35,21 @@ pub struct FuelSyncUseCase<P: FuelProvider> {
     provider: P,
     fuel_entries: FuelEntryGateway,
     vehicles: VehicleGateway,
+    rules: TenantRuleSettingGateway,
 }
 
 impl<P: FuelProvider> FuelSyncUseCase<P> {
-    pub fn new(provider: P, fuel_entries: FuelEntryGateway, vehicles: VehicleGateway) -> Self {
+    pub fn new(
+        provider: P,
+        fuel_entries: FuelEntryGateway,
+        vehicles: VehicleGateway,
+        rules: TenantRuleSettingGateway,
+    ) -> Self {
         Self {
             provider,
             fuel_entries,
             vehicles,
+            rules,
         }
     }
 
@@ -54,6 +66,7 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             ..Default::default()
         };
         let mut acks: Vec<(String, AckStatus)> = Vec::with_capacity(transactions.len());
+        let rules = self.rules.settings_for(tenant_id).await.map_err(database_error)?;
 
         for tx in transactions {
             let Some(vehicle) = self.matched_vehicle(&tx, tenant_id).await? else {
@@ -77,7 +90,9 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
 
             match existing {
                 Some(row) => {
-                    if Self::changed(&row, &tx) {
+                    // A deleted fuelling stays deleted (`TRM-552`); its transaction id still
+                    // stops the provider's re-send from being imported again.
+                    if row.deleted_at.is_none() && Self::changed(&row, &tx) {
                         self.apply_correction(row, &tx).await?;
                         outcome.updated += 1;
                     }
@@ -90,8 +105,12 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
                         ));
                         continue;
                     };
-                    self.import(&vehicle, recorded_at, &tx).await?;
-                    outcome.imported += 1;
+                    if self.reconcile(&vehicle, recorded_at, &tx, &rules).await? {
+                        outcome.reconciled += 1;
+                    } else {
+                        self.import(&vehicle, recorded_at, &tx).await?;
+                        outcome.imported += 1;
+                    }
                 }
             }
             acks.push((tx.external_id.clone(), AckStatus::Success));
@@ -156,8 +175,15 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             odometer_km: tx.odometer_km,
             station: tx.station.clone().or(row.station),
             full_tank: tx.full_tank,
-            origin: FuelEntryOrigin::CtaSync,
+            // A reconciled driver record keeps its origin (`TRM-548`).
+            origin: row.origin.parse().unwrap_or(FuelEntryOrigin::CtaSync),
             provider_transaction_id: Some(tx.external_id.clone()),
+            reported_by_user_id: row.reported_by_user_id,
+            odometer_override_note: row.odometer_override_note,
+            provider_confirmed_at: row.provider_confirmed_at.map(|dt| dt.naive_utc()),
+            deleted_at: None,
+            unified_into_id: None,
+            unification_note: row.unification_note,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -165,6 +191,60 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
         };
         self.fuel_entries.persist(corrected).await.map_err(database_error)?;
         Ok(())
+    }
+
+    /// `TRM-545…549`: a provider transaction and a driver-reported fuelling
+    /// are the same event when the vehicle matches, the datetime is within the
+    /// window and the volume within tolerance. The driver's record is kept and
+    /// the provider's official figures overlaid on it (`TRM-548`).
+    async fn reconcile(
+        &self,
+        vehicle: &vehicle_entity::Model,
+        recorded_at: chrono::DateTime<chrono::Utc>,
+        tx: &ProviderFuelTransaction,
+        rules: &RuleSettings,
+    ) -> Result<bool, BusinessError> {
+        let at = recorded_at.naive_utc();
+        let window = chrono::Duration::hours(rules.reconciliation_window_hours as i64);
+        let candidates = self
+            .fuel_entries
+            .find_unreconciled_driver_entries(vehicle.id, at - window, at + window)
+            .await
+            .map_err(database_error)?;
+        let Some(row) = pick_candidate(at, tx.volume_liters, candidates, rules) else {
+            return Ok(false);
+        };
+        // `TRM-549`: re-verify at write time that nobody reconciled it meanwhile.
+        let fresh = self.fuel_entries.find_by_id(row.id).await.map_err(database_error)?;
+        if fresh.is_none_or(|f| f.provider_transaction_id.is_some()) {
+            return Ok(false);
+        }
+        let adopted = FuelEntry {
+            id: Some(row.id),
+            uuid: Some(bytes_para_string(row.uuid)),
+            tenant_id: row.tenant_id,
+            vehicle_id: row.vehicle_id,
+            recorded_at: at,
+            volume_liters: tx.volume_liters,
+            value_cents: tx.value_cents,
+            odometer_km: tx.odometer_km.or(row.odometer_km),
+            station: row.station,
+            full_tank: tx.full_tank,
+            origin: FuelEntryOrigin::DriverPhoto,
+            provider_transaction_id: Some(tx.external_id.clone()),
+            reported_by_user_id: row.reported_by_user_id,
+            odometer_override_note: row.odometer_override_note,
+            provider_confirmed_at: Some(chrono::Utc::now().naive_utc()),
+            deleted_at: None,
+            unified_into_id: None,
+            unification_note: row.unification_note,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        self.fuel_entries.persist(adopted).await.map_err(database_error)?;
+        Ok(true)
     }
 
     async fn import(
@@ -186,6 +266,12 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             full_tank: tx.full_tank,
             origin: FuelEntryOrigin::CtaSync,
             provider_transaction_id: Some(tx.external_id.clone()),
+            reported_by_user_id: None,
+            odometer_override_note: None,
+            provider_confirmed_at: None,
+            deleted_at: None,
+            unified_into_id: None,
+            unification_note: None,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -194,6 +280,21 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
         self.fuel_entries.persist(entry).await.map_err(database_error)?;
         Ok(())
     }
+}
+
+/// `TRM-545`/`547`: of the candidates whose volume is within the greater of the
+/// absolute and relative tolerance, the one closest in time.
+pub fn pick_candidate(
+    at: chrono::NaiveDateTime,
+    volume_liters: f64,
+    candidates: Vec<entity::fuel_entry_entity::Model>,
+    rules: &RuleSettings,
+) -> Option<entity::fuel_entry_entity::Model> {
+    let tolerance = rules.reconciliation_volume_tolerance_liters.max(volume_liters * rules.reconciliation_volume_tolerance_ratio);
+    candidates
+        .into_iter()
+        .filter(|c| (c.volume_liters - volume_liters).abs() <= tolerance)
+        .min_by_key(|c| (c.recorded_at.naive_utc() - at).num_seconds().abs())
 }
 
 fn database_error(e: sea_orm::DbErr) -> BusinessError {

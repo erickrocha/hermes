@@ -52,6 +52,22 @@ mod m20260929_000007_link_work_order_and_preventive_plan;
 mod m20260929_000008_link_work_order_item_and_preventive_plan;
 mod m20260929_000009_create_preventive_plan_extension;
 mod m20260929_000010_add_preventive_plan_last_work_order;
+mod m20260930_000001_create_preventive_plan_alert;
+mod m20260930_000002_create_technical_inspection;
+mod m20260930_000003_create_inspection_model;
+mod m20260930_000004_add_fuel_entry_receipt_fields;
+mod m20260930_000005_add_fuel_entry_provider_confirmed_at;
+mod m20260930_000006_add_fuel_entry_soft_delete_and_unification;
+mod m20260930_000007_add_vehicle_tank_capacity;
+mod m20260930_000008_create_fuel_gauge_setting;
+mod m20260930_000009_create_tenant_rule_setting;
+mod m20260930_000010_add_reference_consumption;
+mod m20260930_000011_create_garage_service_model;
+mod m20260930_000012_create_garage_attendance_tables;
+mod m20260930_000013_create_vehicle_presence_event;
+mod m20260930_000014_add_garage_validity_settings;
+mod m20260930_000015_create_garage_call_and_alert_settings;
+mod m20260930_000016_add_transport_demand_kind;
 
 pub struct Migrator;
 
@@ -109,6 +125,22 @@ impl MigratorTrait for Migrator {
             Box::new(m20260929_000008_link_work_order_item_and_preventive_plan::Migration),
             Box::new(m20260929_000009_create_preventive_plan_extension::Migration),
             Box::new(m20260929_000010_add_preventive_plan_last_work_order::Migration),
+            Box::new(m20260930_000001_create_preventive_plan_alert::Migration),
+            Box::new(m20260930_000002_create_technical_inspection::Migration),
+            Box::new(m20260930_000003_create_inspection_model::Migration),
+            Box::new(m20260930_000004_add_fuel_entry_receipt_fields::Migration),
+            Box::new(m20260930_000005_add_fuel_entry_provider_confirmed_at::Migration),
+            Box::new(m20260930_000006_add_fuel_entry_soft_delete_and_unification::Migration),
+            Box::new(m20260930_000007_add_vehicle_tank_capacity::Migration),
+            Box::new(m20260930_000008_create_fuel_gauge_setting::Migration),
+            Box::new(m20260930_000009_create_tenant_rule_setting::Migration),
+            Box::new(m20260930_000010_add_reference_consumption::Migration),
+            Box::new(m20260930_000011_create_garage_service_model::Migration),
+            Box::new(m20260930_000012_create_garage_attendance_tables::Migration),
+            Box::new(m20260930_000013_create_vehicle_presence_event::Migration),
+            Box::new(m20260930_000014_add_garage_validity_settings::Migration),
+            Box::new(m20260930_000015_create_garage_call_and_alert_settings::Migration),
+            Box::new(m20260930_000016_add_transport_demand_kind::Migration),
         ]
     }
 }

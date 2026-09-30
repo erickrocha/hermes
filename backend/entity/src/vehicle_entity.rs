@@ -38,6 +38,10 @@ pub struct Model {
     pub spare_tire_count: Option<i32>,
     pub spare_tire_type: Option<String>,
     pub spare_tire_notes: Option<String>,
+    /// `EPIC-FU-06-S01`: registered tank capacity in litres; `None` = not registered.
+    pub tank_capacity_liters: Option<f64>,
+    /// `EPIC-FU-06-S04`: registered reference consumption, km per litre (tenant data).
+    pub reference_km_per_liter: Option<f64>,
     /// The garage's current tag for this vehicle (free text, e.g. a queue
     /// state) and who set it -- persisted as a `GarageTagOrigin` name, the
     /// same shape as `status`. Owned by `C-028`'s garage domain once it

@@ -5,7 +5,7 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::internal_tank_json::{InternalTankJson, InternalTankQuery};
+use crate::endpoints::json::internal_tank_json::{InternalTankJson, InternalTankQuery, TankStockJson};
 use axum::Json;
 use axum::extract::{Extension, Query, State};
 use business::domain::authorization::{can_configure_internal_tank, can_read_internal_tank};
@@ -18,7 +18,8 @@ use business::use_cases::internal_tank_use_case::{
 };
 
 fn use_case(state: &AppState) -> InternalTankUseCase {
-    InternalTankUseCase::new(InternalTankGateway::new(state.conn.as_ref().clone()))
+    let db = state.conn.as_ref().clone();
+    InternalTankUseCase::new(InternalTankGateway::new(db.clone()), business::gateway::fuel_entry_gateway::FuelEntryGateway::new(db))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
@@ -129,4 +130,41 @@ pub async fn get_current(
         return Err(ExceptionResponse::NotFound(locale, ErrorKey::InternalTankNotConfigured));
     }
     Ok(Json(json(tank)))
+}
+
+#[utoipa::path(
+    get,
+    tag = "InternalTank",
+    path = "/internal-tank/stock",
+    params(InternalTankQuery),
+    responses(
+        (status = 200, description = "The tank's current stock: the reference stock less every provider-posted fuelling after the reference instant, floored at zero (TRM-1541/1542), with `deliveryAlert` once it reaches the alert level (TRM-1544). When no fuelling record exists at all the figure is withheld and `suppressed` says why (TRM-1543). **Roles:** any authenticated role; own tenant only.", body = TankStockJson),
+        (status = 404, description = "The internal tank has not been configured for this tenant", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn stock(
+    state: State<AppState>,
+    Query(query): Query<InternalTankQuery>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+) -> HttpResponse<Json<TankStockJson>> {
+    let target_tenant_id = current_user.tenant_id.or(query.tenant_id);
+    let (tank, stock) = use_case(&state).stock(target_tenant_id).await.map_err(|e| {
+        if e.message == INTERNAL_TANK_NOT_CONFIGURED {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::InternalTankNotConfigured)
+        } else {
+            ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+        }
+    })?;
+    if !can_read_internal_tank(&current_user, tank.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::InternalTankNotConfigured));
+    }
+    Ok(Json(TankStockJson {
+        current_stock_liters: stock.current_stock_liters,
+        delivery_alert: stock.delivery_alert,
+        suppressed: stock.suppressed.map(str::to_string),
+    }))
 }

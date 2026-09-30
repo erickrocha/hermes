@@ -252,6 +252,8 @@ impl Mapper<Vehicle, VehicleJson> for VehicleMapper {
             spare_tire_count: t.spare_tire_count,
             spare_tire_type: t.spare_tire_type,
             spare_tire_notes: t.spare_tire_notes,
+            tank_capacity_liters: t.tank_capacity_liters,
+            reference_km_per_liter: t.reference_km_per_liter,
             garage_tag: t.garage_tag,
             garage_tag_origin: t.garage_tag_origin.map(|o| o.to_string()),
             created_at: t.created_at,
@@ -279,6 +281,8 @@ impl Mapper<Vehicle, VehicleJson> for VehicleMapper {
             spare_tire_count: u.spare_tire_count,
             spare_tire_type: u.spare_tire_type,
             spare_tire_notes: u.spare_tire_notes,
+            tank_capacity_liters: u.tank_capacity_liters,
+            reference_km_per_liter: u.reference_km_per_liter,
             garage_tag: u.garage_tag,
             // Endpoints call `reject_unknown_garage_tag_origin` first
             // (HRMS-941); `None` in means `None` out, never a guessed origin.

@@ -221,6 +221,38 @@ pub enum ErrorKey {
     /// `HRMS-706`: this vehicle already has a preventive plan with this name.
     DuplicatePreventivePlan,
     PreventivePlanNotDue,
+    /// `HRMS-713`: no such preventive-plan alert, or it belongs to another tenant.
+    PreventiveAlertNotFound,
+    /// `HRMS-714`: no such technical inspection, or it belongs to another tenant.
+    TechnicalInspectionNotFound,
+    /// `HRMS-715`: this tenant already has an inspection model with this name.
+    DuplicateInspectionModel,
+    /// `HRMS-948`: a receipt's odometer is outside the readings around its date.
+    OdometerOutsideWindow,
+    /// `HRMS-953`: a role that may not configure the tank gauge.
+    FuelGaugeSettingsForbidden,
+    /// `HRMS-956`: a role that may not manage the garage catalogue.
+    GarageForbidden,
+    /// `HRMS-956`: no such garage service, or it belongs to another tenant.
+    GarageServiceNotFound,
+    /// `HRMS-956`: the tenant already has a garage service of this normalised name.
+    DuplicateGarageService,
+    /// `HRMS-958`: no such triage, or it belongs to another tenant.
+    GarageAttendanceNotFound,
+    /// `HRMS-958`: the vehicle already has an active triage.
+    GarageAttendanceAlreadyActive,
+    /// `HRMS-959`: the triage is already closed.
+    GarageAttendanceClosed,
+    /// `HRMS-958`: the catalogue has no active service to open a triage against.
+    GarageNoServices,
+    /// `HRMS-960`: only the presence integration may stamp a vehicle.
+    PresenceForbidden,
+    /// `HRMS-960`: a presence event earlier than the vehicle's latest.
+    PresenceOutOfOrder,
+    /// `HRMS-963`: a vehicle can only be called to base while away.
+    GarageVehicleNotAway,
+    /// `HRMS-715`: no such inspection model, or it belongs to another tenant.
+    InspectionModelNotFound,
     /// HRMS-925 (D-23(c)): this plate is already registered in the caller's
     /// own tenant. Never raised for another tenant's vehicle.
     DuplicatePlate,
@@ -316,6 +348,22 @@ impl ErrorKey {
             ErrorKey::PreventivePlanNotFound => "PreventivePlanNotFound",
             ErrorKey::DuplicatePreventivePlan => "DuplicatePreventivePlan",
             ErrorKey::PreventivePlanNotDue => "PreventivePlanNotDue",
+            ErrorKey::PreventiveAlertNotFound => "PreventiveAlertNotFound",
+            ErrorKey::TechnicalInspectionNotFound => "TechnicalInspectionNotFound",
+            ErrorKey::DuplicateInspectionModel => "DuplicateInspectionModel",
+            ErrorKey::OdometerOutsideWindow => "OdometerOutsideWindow",
+            ErrorKey::FuelGaugeSettingsForbidden => "FuelGaugeSettingsForbidden",
+            ErrorKey::GarageForbidden => "GarageForbidden",
+            ErrorKey::GarageServiceNotFound => "GarageServiceNotFound",
+            ErrorKey::DuplicateGarageService => "DuplicateGarageService",
+            ErrorKey::GarageAttendanceNotFound => "GarageAttendanceNotFound",
+            ErrorKey::GarageAttendanceAlreadyActive => "GarageAttendanceAlreadyActive",
+            ErrorKey::GarageAttendanceClosed => "GarageAttendanceClosed",
+            ErrorKey::GarageNoServices => "GarageNoServices",
+            ErrorKey::PresenceForbidden => "PresenceForbidden",
+            ErrorKey::PresenceOutOfOrder => "PresenceOutOfOrder",
+            ErrorKey::GarageVehicleNotAway => "GarageVehicleNotAway",
+            ErrorKey::InspectionModelNotFound => "InspectionModelNotFound",
             ErrorKey::DuplicatePlate => "DuplicatePlate",
             ErrorKey::TrackerLinkForbidden => "TrackerLinkForbidden",
             ErrorKey::DuplicateTrackerDevice => "DuplicateTrackerDevice",
@@ -402,6 +450,22 @@ impl ErrorKey {
             ErrorKey::PreventivePlanNotFound => "preventive-plan-not-found",
             ErrorKey::DuplicatePreventivePlan => "duplicate-preventive-plan",
             ErrorKey::PreventivePlanNotDue => "preventive-plan-not-due",
+            ErrorKey::PreventiveAlertNotFound => "preventive-alert-not-found",
+            ErrorKey::TechnicalInspectionNotFound => "technical-inspection-not-found",
+            ErrorKey::DuplicateInspectionModel => "duplicate-inspection-model",
+            ErrorKey::OdometerOutsideWindow => "odometer-outside-window",
+            ErrorKey::FuelGaugeSettingsForbidden => "fuel-gauge-settings-forbidden",
+            ErrorKey::GarageForbidden => "garage-forbidden",
+            ErrorKey::GarageServiceNotFound => "garage-service-not-found",
+            ErrorKey::DuplicateGarageService => "duplicate-garage-service",
+            ErrorKey::GarageAttendanceNotFound => "garage-attendance-not-found",
+            ErrorKey::GarageAttendanceAlreadyActive => "garage-attendance-already-active",
+            ErrorKey::GarageAttendanceClosed => "garage-attendance-closed",
+            ErrorKey::GarageNoServices => "garage-no-services",
+            ErrorKey::PresenceForbidden => "presence-forbidden",
+            ErrorKey::PresenceOutOfOrder => "presence-out-of-order",
+            ErrorKey::GarageVehicleNotAway => "garage-vehicle-not-away",
+            ErrorKey::InspectionModelNotFound => "inspection-model-not-found",
             ErrorKey::DuplicatePlate => "duplicate-plate",
             ErrorKey::TrackerLinkForbidden => "tracker-link-forbidden",
             ErrorKey::DuplicateTrackerDevice => "duplicate-tracker-device",
@@ -663,6 +727,22 @@ mod tests {
             ErrorKey::PreventivePlanNotFound,
             ErrorKey::DuplicatePreventivePlan,
             ErrorKey::PreventivePlanNotDue,
+            ErrorKey::PreventiveAlertNotFound,
+            ErrorKey::TechnicalInspectionNotFound,
+            ErrorKey::DuplicateInspectionModel,
+            ErrorKey::InspectionModelNotFound,
+            ErrorKey::OdometerOutsideWindow,
+            ErrorKey::FuelGaugeSettingsForbidden,
+            ErrorKey::GarageForbidden,
+            ErrorKey::GarageServiceNotFound,
+            ErrorKey::DuplicateGarageService,
+            ErrorKey::GarageAttendanceNotFound,
+            ErrorKey::GarageAttendanceAlreadyActive,
+            ErrorKey::GarageAttendanceClosed,
+            ErrorKey::GarageNoServices,
+            ErrorKey::PresenceForbidden,
+            ErrorKey::PresenceOutOfOrder,
+            ErrorKey::GarageVehicleNotAway,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

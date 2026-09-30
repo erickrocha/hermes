@@ -13,6 +13,11 @@ pub struct TransportDemandJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,
     pub demand_type: String,
+    /// `EPIC-SC-04-S01` (`TRM-002`): `Line`, `ExtraLine` or `OneOffTrip` -- stated, never inferred
+    /// from `demandType`. A recurring kind needs `daysOfWeek`; a `OneOffTrip` needs `specificDate`.
+    /// Absent = unclassified, and left out of the effective schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demand_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub customer_uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -582,6 +582,18 @@ pub fn can_create_fuel_entry(actor: &User, target_tenant_id: Option<i64>) -> boo
         && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
 }
 
+/// `EPIC-FU-03-S01` (`HRMS-948`, `TRM-520`): a driver reports their own
+/// fuelling from a receipt (`C-031` gives them the client for it); the stores
+/// tier may report one on a driver's behalf.
+pub fn can_report_fuel_receipt(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic | Role::Driver)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
 pub fn can_read_fuel_entry(actor: &User, fuel_entry_tenant_id: Option<i64>) -> bool {
     is_unbound_sys_admin(actor)
         || (actor.tenant_id.is_some() && actor.tenant_id == fuel_entry_tenant_id)
@@ -599,6 +611,48 @@ pub fn can_configure_internal_tank(actor: &User, target_tenant_id: Option<i64>) 
     actor.role == Role::TenantOwner
         && actor.tenant_id.is_some()
         && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+/// `EPIC-FU-06-S03` (`HRMS-953`): the gauge thresholds are a fleet-wide tenant
+/// setting, like the internal tank's -- the owner's to set. Named rather than
+/// reused (`PD-020`).
+pub fn can_configure_fuel_gauge(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    can_configure_internal_tank(actor, target_tenant_id)
+}
+
+/// `EPIC-GA-01-S01` (`HRMS-956`, `C-028`): the garage catalogue is the tenant
+/// owner's to define; everyone of the tenant reads it. Named rather than
+/// reused (`PD-020`).
+pub fn can_manage_garage_catalogue(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    can_configure_internal_tank(actor, target_tenant_id)
+}
+
+/// `EPIC-GA-02-S01` (`HRMS-958`): running the yard -- opening a triage, marking
+/// its services, checking a vehicle out -- is the owner's and the mechanic's.
+pub fn can_operate_garage(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return target_tenant_id.is_some();
+    }
+    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
+        && actor.tenant_id.is_some()
+        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+/// `EPIC-GA-03-S01` (`HRMS-960`, `TRM-788`): arrival and departure stamps are the
+/// presence domain's exclusive output, so only the platform's own integration
+/// (an unbound administrator) publishes them -- no tenant user can stamp a vehicle.
+pub fn can_publish_presence(actor: &User) -> bool {
+    is_unbound_sys_admin(actor)
+}
+
+/// `EPIC-GA-05-S02` (`HRMS-963`, `TRM-483`): calling a vehicle to base is the
+/// manager's -- the tenant owner's -- decision.
+pub fn can_call_vehicle_to_base(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    can_configure_internal_tank(actor, target_tenant_id)
+}
+
+pub fn can_read_garage(actor: &User, tenant_id: Option<i64>) -> bool {
+    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == tenant_id)
 }
 
 pub fn can_read_internal_tank(actor: &User, internal_tank_tenant_id: Option<i64>) -> bool {

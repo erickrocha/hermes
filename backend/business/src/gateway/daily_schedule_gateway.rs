@@ -83,6 +83,16 @@ impl DailyScheduleGateway {
     }
 }
 
+impl DailyScheduleGateway {
+    /// `TRM-001`: the manual day entries for a date, for the effective schedule.
+    pub async fn find_by_date(&self, date: chrono::NaiveDate) -> Result<Vec<daily_schedule_entity::Model>, DbErr> {
+        tenant_select(ScheduleQuery::find(), daily_schedule_entity::Column::TenantId)
+            .filter(daily_schedule_entity::Column::Date.eq(date))
+            .all(&self.db)
+            .await
+    }
+}
+
 /// `HRMS-605` (`D-09`): same technique every other gateway's own tests use.
 #[cfg(test)]
 mod tests {

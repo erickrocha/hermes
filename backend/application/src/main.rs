@@ -28,7 +28,16 @@ use crate::routes::user_routes::user_routes;
 use crate::routes::vehicle_routes::vehicle_routes;
 use crate::routes::vehicle_expense_routes::vehicle_expense_routes;
 use crate::routes::fuel_entry_routes::fuel_entry_routes;
+use crate::routes::fuel_gauge_setting_routes::fuel_gauge_setting_routes;
+use crate::routes::garage_attendance_routes::garage_attendance_routes;
+use crate::routes::garage_call_routes::garage_call_routes;
+use crate::routes::garage_service_model_routes::garage_service_model_routes;
+use crate::routes::schedule_routes::schedule_routes;
+use crate::routes::vehicle_presence_routes::vehicle_presence_routes;
 use crate::routes::preventive_plan_routes::preventive_plan_routes;
+use crate::routes::technical_inspection_routes::technical_inspection_routes;
+use crate::routes::tenant_rule_setting_routes::tenant_rule_setting_routes;
+use crate::routes::inspection_model_routes::inspection_model_routes;
 use crate::routes::internal_tank_routes::internal_tank_routes;
 use axum::Router;
 use axum::http::{Method, header};
@@ -172,14 +181,49 @@ impl Modify for SecurityAddon {
         endpoints::fuel_entry_endpoint::list_all,
         endpoints::fuel_entry_endpoint::sync,
         endpoints::fuel_entry_endpoint::report,
+        endpoints::fuel_entry_endpoint::average,
+        endpoints::fuel_entry_endpoint::receipt,
+        endpoints::fuel_entry_endpoint::gauge,
+        endpoints::fuel_gauge_setting_endpoint::configure,
+        endpoints::fuel_gauge_setting_endpoint::get_current,
+        endpoints::garage_service_model_endpoint::add,
+        endpoints::garage_service_model_endpoint::update,
+        endpoints::garage_service_model_endpoint::get_by_uuid,
+        endpoints::garage_service_model_endpoint::list_all,
+        endpoints::garage_attendance_endpoint::open,
+        endpoints::garage_attendance_endpoint::get_by_uuid,
+        endpoints::garage_attendance_endpoint::active,
+        endpoints::garage_attendance_endpoint::mark_service,
+        endpoints::garage_attendance_endpoint::checkout,
+        endpoints::garage_attendance_endpoint::queue,
+        endpoints::garage_call_endpoint::call,
+        endpoints::garage_call_endpoint::cancel,
+        endpoints::garage_call_endpoint::get_active,
+        endpoints::schedule_endpoint::effective,
+        endpoints::vehicle_presence_endpoint::record,
+        endpoints::vehicle_presence_endpoint::snapshot,
+        endpoints::tenant_rule_setting_endpoint::configure,
+        endpoints::tenant_rule_setting_endpoint::get_current,
+        endpoints::fuel_entry_endpoint::delete,
+        endpoints::fuel_entry_endpoint::restore,
+        endpoints::fuel_entry_endpoint::unify,
         endpoints::preventive_plan_endpoint::add,
         endpoints::preventive_plan_endpoint::get_by_uuid,
         endpoints::preventive_plan_endpoint::generate_work_order,
         endpoints::preventive_plan_endpoint::extend,
         endpoints::preventive_plan_endpoint::update,
+        endpoints::preventive_plan_endpoint::add_alert,
+        endpoints::preventive_plan_endpoint::pending_alerts,
+        endpoints::preventive_plan_endpoint::discharge_alert,
+        endpoints::technical_inspection_endpoint::add,
+        endpoints::technical_inspection_endpoint::get_by_uuid,
+        endpoints::inspection_model_endpoint::add,
+        endpoints::inspection_model_endpoint::get_by_uuid,
+        endpoints::inspection_model_endpoint::list_all,
         endpoints::preventive_plan_endpoint::list_all,
         endpoints::internal_tank_endpoint::configure,
         endpoints::internal_tank_endpoint::get_current,
+        endpoints::internal_tank_endpoint::stock,
         endpoints::vehicle_assignment_endpoint::assign,
         endpoints::vehicle_assignment_endpoint::current,
         endpoints::vehicle_assignment_endpoint::end,
@@ -228,11 +272,34 @@ impl Modify for SecurityAddon {
             endpoints::json::fuel_entry_json::FuelEntryJson,
             endpoints::json::fuel_entry_json::FuelSyncOutcomeJson,
             endpoints::json::fuel_entry_json::FuelReportJson,
+            endpoints::json::fuel_entry_json::ConsumptionAverageJson,
+            endpoints::json::fuel_entry_json::FuelReceiptJson,
+            endpoints::json::fuel_entry_json::FuelUnifyJson,
+            endpoints::json::fuel_entry_json::TankGaugeJson,
+            endpoints::json::fuel_gauge_setting_json::FuelGaugeSettingJson,
+            endpoints::json::garage_service_model_json::GarageServiceModelJson,
+            endpoints::json::garage_attendance_json::GarageAttendanceOpenJson,
+            endpoints::json::garage_attendance_json::GarageAttendanceJson,
+            endpoints::json::garage_attendance_json::GarageServiceJson,
+            endpoints::json::garage_attendance_json::GarageServiceMarkJson,
+            endpoints::json::garage_attendance_json::GarageQueueEntryJson,
+            endpoints::json::garage_attendance_json::GarageCallRequestJson,
+            endpoints::json::garage_attendance_json::GarageCallJson,
+            endpoints::json::schedule_json::EffectiveScheduleJson,
+            endpoints::json::schedule_json::ScheduleItemJson,
+            endpoints::json::vehicle_presence_json::VehiclePresenceEventJson,
+            endpoints::json::vehicle_presence_json::VehiclePresenceJson,
+            endpoints::json::tenant_rule_setting_json::TenantRuleSettingJson,
             endpoints::json::preventive_plan_json::PreventivePlanJson,
             endpoints::json::preventive_plan_json::PreventiveWorkOrderJson,
             endpoints::json::preventive_plan_json::PreventiveExtensionRequestJson,
             endpoints::json::preventive_plan_json::PreventiveExtensionJson,
+            endpoints::json::preventive_plan_json::PreventiveAlertJson,
+            endpoints::json::technical_inspection_json::TechnicalInspectionJson,
+            endpoints::json::technical_inspection_json::TechnicalInspectionItemJson,
+            endpoints::json::inspection_model_json::InspectionModelJson,
             endpoints::json::internal_tank_json::InternalTankJson,
+            endpoints::json::internal_tank_json::TankStockJson,
             endpoints::json::vehicle_json::VehicleJson,
             endpoints::json::vehicle_assignment_json::VehicleAssignmentJson,
             endpoints::json::vehicle_assignment_json::AssignDriverRequest,
@@ -365,6 +432,15 @@ async fn start() -> anyhow::Result<()> {
         .nest("/vehicle-expense", vehicle_expense_routes(state.clone()))
         .nest("/fuel-entry", fuel_entry_routes(state.clone()))
         .nest("/preventive-plan", preventive_plan_routes(state.clone()))
+        .nest("/fuel-gauge-settings", fuel_gauge_setting_routes(state.clone()))
+        .nest("/garage-service", garage_service_model_routes(state.clone()))
+        .nest("/garage-attendance", garage_attendance_routes(state.clone()))
+        .nest("/garage-call", garage_call_routes(state.clone()))
+        .nest("/schedule", schedule_routes(state.clone()))
+        .nest("/vehicle-presence", vehicle_presence_routes(state.clone()))
+        .nest("/tenant-rule-settings", tenant_rule_setting_routes(state.clone()))
+        .nest("/technical-inspection", technical_inspection_routes(state.clone()))
+        .nest("/inspection-model", inspection_model_routes(state.clone()))
         .nest("/internal-tank", internal_tank_routes(state.clone()))
         .layer(cors)
         .with_state(state);
@@ -526,6 +602,15 @@ mod openapi_contract_tests {
             "vehicle_expense_routes" => "/vehicle-expense",
             "fuel_entry_routes" => "/fuel-entry",
             "preventive_plan_routes" => "/preventive-plan",
+            "fuel_gauge_setting_routes" => "/fuel-gauge-settings",
+            "garage_service_model_routes" => "/garage-service",
+            "garage_attendance_routes" => "/garage-attendance",
+            "garage_call_routes" => "/garage-call",
+            "schedule_routes" => "/schedule",
+            "vehicle_presence_routes" => "/vehicle-presence",
+            "tenant_rule_setting_routes" => "/tenant-rule-settings",
+            "technical_inspection_routes" => "/technical-inspection",
+            "inspection_model_routes" => "/inspection-model",
             "internal_tank_routes" => "/internal-tank",
             "transport_demand_routes" => "/transport-demand",
             "extra_trip_routes" => "/extra-trip",

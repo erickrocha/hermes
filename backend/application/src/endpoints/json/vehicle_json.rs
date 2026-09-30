@@ -40,6 +40,12 @@ pub struct VehicleJson {
     pub spare_tire_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spare_tire_notes: Option<String>,
+    /// `EPIC-FU-06-S01`: registered tank capacity in litres (`TRM-580`/`581`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tank_capacity_liters: Option<f64>,
+    /// `EPIC-FU-06-S04`: reference consumption in km per litre (`TRM-569`), used while the vehicle's own average is immature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_km_per_liter: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub garage_tag: Option<String>,
     /// One of `Manual`, `Tracker`, `Automatic` (`C-023`). Unlike `status`,

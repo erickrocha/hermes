@@ -80,6 +80,14 @@ impl PreventivePlanGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// A vehicle's preventive plans.
+    pub async fn find_by_vehicle(&self, vehicle_id: i64) -> Result<Vec<preventive_plan_entity::Model>, DbErr> {
+        tenant_select(PreventivePlanQuery::find(), preventive_plan_entity::Column::TenantId)
+            .filter(preventive_plan_entity::Column::VehicleId.eq(vehicle_id))
+            .all(&self.db)
+            .await
+    }
+
     /// `TRM-300`: the duplicate-refusal pre-check -- "at most one plan per
     /// vehicle and plan type."
     pub async fn find_by_vehicle_and_name(

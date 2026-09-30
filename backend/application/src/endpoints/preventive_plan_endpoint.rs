@@ -7,7 +7,7 @@ use crate::endpoints::json::error_response_json::{
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::preventive_plan_json::{
-    PreventiveExtensionJson, PreventiveExtensionRequestJson, PreventivePlanJson, PreventiveWorkOrderJson,
+    PreventiveAlertJson, PreventiveExtensionJson, PreventiveExtensionRequestJson, PreventivePlanJson, PreventiveWorkOrderJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -19,7 +19,12 @@ use business::domain::authorization::{can_create_preventive_plan, can_read_preve
 use business::domain::enums::{PreventiveControlType, PreventiveStatus};
 use business::domain::preventive_plan::PreventivePlan;
 use business::domain::user::User;
+use business::gateway::preventive_plan_alert_gateway::PreventivePlanAlertGateway;
 use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::use_cases::preventive_plan_alert_use_case::{
+    ALERT_INVALID, ALERT_NOT_FOUND, ALERT_NOT_PENDING, DUPLICATE_ALERT, PreventivePlanAlertUseCase,
+};
+use business::domain::preventive_plan_alert::PreventivePlanAlert;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
 use business::gateway::work_order_gateway::WorkOrderGateway;
@@ -38,7 +43,8 @@ fn use_case(state: &AppState) -> PreventivePlanUseCase {
         VehicleGateway::new(db.clone()),
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
-        PreventivePlanExtensionGateway::new(db),
+        PreventivePlanExtensionGateway::new(db.clone()),
+        business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
     )
 }
 
@@ -386,5 +392,139 @@ pub async fn update(
             Ok(Json(json(&state, plan, status).await))
         }
         Err(e) => Err(error(locale, &e.message)),
+    }
+}
+
+fn alert_use_case(state: &AppState) -> PreventivePlanAlertUseCase {
+    let db = state.conn.as_ref().clone();
+    PreventivePlanAlertUseCase::new(
+        PreventivePlanAlertGateway::new(db.clone()),
+        PreventivePlanGateway::new(db.clone()),
+        VehicleGateway::new(db),
+    )
+}
+
+fn alert_json(a: PreventivePlanAlert) -> PreventiveAlertJson {
+    PreventiveAlertJson { uuid: a.uuid, at_km: a.at_km, title: a.title, inspection_model: a.inspection_model }
+}
+
+fn alert_error(locale: Locale, message: &str) -> ExceptionResponse {
+    match message {
+        ALERT_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventiveAlertNotFound),
+        PREVENTIVE_PLAN_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound),
+        ALERT_INVALID | DUPLICATE_ALERT | ALERT_NOT_PENDING => {
+            ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
+        }
+        _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+    }
+}
+
+#[utoipa::path(
+    post,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/uuid/{uuid}/alert",
+    params(("uuid" = String, Path, description = "Preventive plan UUID")),
+    request_body = PreventiveAlertJson,
+    responses(
+        (status = 201, description = "An intermediate inspection alert is declared on the plan, `atKm` kilometres into its cycle (TRM-323). **Roles:** SysAdmin, TenantOwner, Mechanic (own tenant only).", body = PreventiveAlertJson),
+        (status = 400, description = "Non-positive distance, blank title or inspection model, or an alert already at this distance", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage preventive plans", body = ForbiddenErrorJson),
+        (status = 404, description = "Plan not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn add_alert(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<PreventiveAlertJson>,
+) -> HttpResponse<(StatusCode, Json<PreventiveAlertJson>)> {
+    let (plan, _) = use_case(&state)
+        .find_by_uuid(uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    if !can_read_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+    }
+    if !can_create_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+    }
+    match alert_use_case(&state).add(uuid, payload.at_km, payload.title, payload.inspection_model).await {
+        Ok(a) => Ok((StatusCode::CREATED, Json(alert_json(a)))),
+        Err(e) => Err(alert_error(locale, &e.message)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/uuid/{uuid}/alert",
+    params(("uuid" = String, Path, description = "Preventive plan UUID")),
+    responses(
+        (status = 200, description = "The plan's pending intermediate alerts (TRM-324): kilometres driven since the last service have reached the threshold and it is not discharged for the current cycle, ascending by kilometre. **Roles:** any caller of the plan's own tenant; SysAdmin.", body = Vec<PreventiveAlertJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 404, description = "Plan not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn pending_alerts(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<Json<Vec<PreventiveAlertJson>>> {
+    let (plan, _) = use_case(&state)
+        .find_by_uuid(uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    if !can_read_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+    }
+    match alert_use_case(&state).pending(uuid).await {
+        Ok(alerts) => Ok(Json(alerts.into_iter().map(alert_json).collect())),
+        Err(e) => Err(alert_error(locale, &e.message)),
+    }
+}
+
+#[utoipa::path(
+    post,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/alert/{uuid}/discharge",
+    params(("uuid" = String, Path, description = "Alert UUID")),
+    responses(
+        (status = 200, description = "The alert is discharged for the plan's current cycle; a real service reopens it (TRM-325). **Roles:** SysAdmin, TenantOwner, Mechanic (own tenant only).", body = PreventiveAlertJson),
+        (status = 400, description = "The alert is not pending in the current cycle", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage preventive plans", body = ForbiddenErrorJson),
+        (status = 404, description = "Alert not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn discharge_alert(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<Json<PreventiveAlertJson>> {
+    let alert = PreventivePlanAlertGateway::new(state.conn.as_ref().clone())
+        .find_by_uuid(uuid.clone())
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventiveAlertNotFound))?;
+    if !can_read_preventive_plan(&current_user, alert.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventiveAlertNotFound));
+    }
+    if !can_create_preventive_plan(&current_user, alert.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+    }
+    match alert_use_case(&state).discharge(uuid).await {
+        Ok(a) => Ok(Json(alert_json(a))),
+        Err(e) => Err(alert_error(locale, &e.message)),
     }
 }

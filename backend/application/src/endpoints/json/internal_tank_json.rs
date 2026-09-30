@@ -28,3 +28,15 @@ pub struct InternalTankJson {
 pub struct InternalTankQuery {
     pub tenant_id: Option<i64>,
 }
+
+/// `EPIC-FU-07-S02` (`HRMS-947`, `TRM-1541…1544`): the tank's current stock.
+/// `currentStockLiters` is absent when `suppressed` says why (`TRM-1543`).
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TankStockJson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_stock_liters: Option<f64>,
+    pub delivery_alert: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppressed: Option<String>,
+}

@@ -15,6 +15,8 @@ use sea_orm::DbErr;
 /// `vehicle_assignment_use_case` use.
 pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this tenant";
 /// `vehicle_id` does not name a vehicle of the allocation's own tenant.
+/// `TRM-003`: an allocation's own days of the week, when given, must be readable.
+pub const DAYS_OF_WEEK_UNREADABLE: &str = "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 
 pub struct TransportDemandAllocationUseCase {
@@ -86,6 +88,13 @@ impl TransportDemandAllocationUseCase {
         &self,
         allocation: TransportDemandAllocation,
     ) -> Result<TransportDemandAllocation, BusinessError> {
+        if allocation
+            .days_of_week
+            .as_deref()
+            .is_some_and(|d| !d.trim().is_empty() && crate::use_cases::effective_schedule::parse_days_of_week(d).is_none())
+        {
+            return Err(BusinessError::new(DAYS_OF_WEEK_UNREADABLE.to_string()));
+        }
         let driver = self
             .users
             .find_by_id(allocation.driver_id)

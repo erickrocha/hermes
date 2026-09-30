@@ -39,6 +39,7 @@ impl Gateway<FuelEntry, fuel_entry_entity::Model, fuel_entry_entity::ActiveModel
 
     async fn find_by_id(&self, id: i64) -> Result<Option<fuel_entry_entity::Model>, DbErr> {
         tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
             .filter(fuel_entry_entity::Column::Id.eq(id))
             .one(&self.db)
             .await
@@ -46,6 +47,7 @@ impl Gateway<FuelEntry, fuel_entry_entity::Model, fuel_entry_entity::ActiveModel
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<fuel_entry_entity::Model>, DbErr> {
         tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
             .filter(fuel_entry_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
             .one(&self.db)
             .await
@@ -53,6 +55,7 @@ impl Gateway<FuelEntry, fuel_entry_entity::Model, fuel_entry_entity::ActiveModel
 
     async fn find_all(&self) -> Result<Vec<fuel_entry_entity::Model>, DbErr> {
         tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
             .all(&self.db)
             .await
     }
@@ -66,6 +69,7 @@ impl FuelEntryGateway {
         page_size: u64,
     ) -> Result<(Vec<fuel_entry_entity::Model>, u64), DbErr> {
         let query = tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
             .order_by_desc(fuel_entry_entity::Column::RecordedAt);
         fetch_page(query, &self.db, page, page_size).await
     }
@@ -80,6 +84,7 @@ impl FuelEntryGateway {
         station: Option<String>,
     ) -> Result<Vec<fuel_entry_entity::Model>, DbErr> {
         let mut query = tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
             .order_by_asc(fuel_entry_entity::Column::RecordedAt);
         if let Some(from) = from {
             query = query.filter(fuel_entry_entity::Column::RecordedAt.gte(from.and_utc()));
@@ -94,6 +99,38 @@ impl FuelEntryGateway {
             query = query.filter(fuel_entry_entity::Column::Station.eq(station));
         }
         query.all(&self.db).await
+    }
+
+    /// `TRM-545`/`546`: driver-reported fuellings of a vehicle inside a window
+    /// that no provider transaction has been matched to yet.
+    pub async fn find_unreconciled_driver_entries(
+        &self,
+        vehicle_id: i64,
+        from: chrono::NaiveDateTime,
+        to: chrono::NaiveDateTime,
+    ) -> Result<Vec<fuel_entry_entity::Model>, DbErr> {
+        tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
+            .filter(fuel_entry_entity::Column::Origin.eq("DriverPhoto"))
+            .filter(fuel_entry_entity::Column::ProviderTransactionId.is_null())
+            .filter(fuel_entry_entity::Column::RecordedAt.gte(from.and_utc()))
+            .filter(fuel_entry_entity::Column::RecordedAt.lte(to.and_utc()))
+            .all(&self.db)
+            .await
+    }
+
+    /// `TRM-553`: the vehicle's most recently soft-deleted fuelling -- not one
+    /// absorbed by a unification, whose litres the keeper already carries.
+    pub async fn find_last_deleted_by_vehicle(&self, vehicle_id: i64) -> Result<Option<fuel_entry_entity::Model>, DbErr> {
+        tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(fuel_entry_entity::Column::DeletedAt.is_not_null())
+            .filter(fuel_entry_entity::Column::UnifiedIntoId.is_null())
+            .order_by_desc(fuel_entry_entity::Column::DeletedAt)
+            .order_by_desc(fuel_entry_entity::Column::Id)
+            .one(&self.db)
+            .await
     }
 
     /// `TRM-511`/`512`: identifies an already-imported transaction so the

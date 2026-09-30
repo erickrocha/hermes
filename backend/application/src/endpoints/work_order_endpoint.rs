@@ -68,7 +68,8 @@ fn preventive_plan_use_case(state: &AppState) -> PreventivePlanUseCase {
         VehicleGateway::new(db.clone()),
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
-        PreventivePlanExtensionGateway::new(db),
+        PreventivePlanExtensionGateway::new(db.clone()),
+        business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
     )
 }
 

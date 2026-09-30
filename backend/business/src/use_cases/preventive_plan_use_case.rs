@@ -10,6 +10,8 @@ use crate::domain::enums::WorkOrderItemStatus;
 use crate::domain::preventive_plan_extension::{PreventivePlanExtension, PreventivePlanExtensionEntityMapper};
 use crate::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
 use crate::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use crate::domain::tenant_rule_setting::RuleSettings;
+use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
 use crate::gateway::vehicle_gateway::VehicleGateway;
 use crate::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use crate::gateway::work_order_gateway::WorkOrderGateway;
@@ -26,15 +28,8 @@ pub const EXTENSION_DESCRIPTION_REQUIRED: &str = "An extension needs a descripti
 pub const EXTENSION_ITEM_NOT_LINKED: &str = "The work-order item is not linked to this preventive plan";
 pub const EXTENSION_ITEM_NOT_PENDING: &str = "Only a pending work-order item can be resolved by an extension";
 pub const EXTENSION_ITEM_NOT_FOUND: &str = "Work order item not found";
-/// `TRM-313`'s `[TC]`: the most one extension may grant.
-pub const MAX_EXTENSION_KM: f64 = 50_000.0;
 pub const ORIGIN_ORDER_NOT_ON_VEHICLE: &str = "The originating work order does not belong to this plan's vehicle";
 pub const PLAN_NOT_DUE: &str = "This preventive plan is not yet due";
-
-/// `TRM-303`'s own `TC`: within 1,000 km or 15 days of the next service is
-/// "requiring attention," not yet overdue.
-pub const ATTENTION_KM_MARGIN: f64 = 1_000.0;
-pub const ATTENTION_DAYS_MARGIN: i64 = 15;
 
 pub struct PreventivePlanUseCase {
     gateway: PreventivePlanGateway,
@@ -42,6 +37,7 @@ pub struct PreventivePlanUseCase {
     work_orders: WorkOrderGateway,
     items: WorkOrderItemGateway,
     extensions: PreventivePlanExtensionGateway,
+    rules: TenantRuleSettingGateway,
 }
 
 impl PreventivePlanUseCase {
@@ -51,8 +47,9 @@ impl PreventivePlanUseCase {
         work_orders: WorkOrderGateway,
         items: WorkOrderItemGateway,
         extensions: PreventivePlanExtensionGateway,
+        rules: TenantRuleSettingGateway,
     ) -> Self {
-        Self { gateway, vehicles, work_orders, items, extensions }
+        Self { gateway, vehicles, work_orders, items, extensions, rules }
     }
 
     /// `TRM-330`: edits a plan's control type, intervals and base (last
@@ -104,15 +101,16 @@ impl PreventivePlanUseCase {
         granted_km: f64,
         description: String,
     ) -> Result<PreventivePlanExtension, BusinessError> {
-        if !(granted_km > 0.0 && granted_km <= MAX_EXTENSION_KM) {
-            return Err(BusinessError::new(EXTENSION_GRANT_INVALID.to_string()));
-        }
         let description = description.trim().to_string();
         if description.is_empty() {
             return Err(BusinessError::new(EXTENSION_DESCRIPTION_REQUIRED.to_string()));
         }
 
         let (plan, _) = self.find_by_uuid(plan_uuid).await?;
+        let rules = self.rules.settings_for(plan.tenant_id).await.map_err(database_error)?;
+        if granted_km.is_nan() || granted_km <= 0.0 || granted_km > rules.preventive_max_extension_km {
+            return Err(BusinessError::new(EXTENSION_GRANT_INVALID.to_string()));
+        }
         let item = self
             .items
             .find_by_uuid(item_uuid)
@@ -330,11 +328,17 @@ impl PreventivePlanUseCase {
             .await
             .map_err(database_error)?;
         let current_km = vehicle.and_then(|v| v.odometer_km);
-        Ok(compute_status(plan, current_km, chrono::Utc::now().date_naive()))
+        let rules = self.rules.settings_for(plan.tenant_id).await.map_err(database_error)?;
+        Ok(compute_status(plan, current_km, chrono::Utc::now().date_naive(), &rules))
     }
 }
 
-fn compute_status(plan: &PreventivePlan, current_km: Option<f64>, today: chrono::NaiveDate) -> PreventiveStatus {
+fn compute_status(
+    plan: &PreventivePlan,
+    current_km: Option<f64>,
+    today: chrono::NaiveDate,
+    rules: &RuleSettings,
+) -> PreventiveStatus {
     let mut status = PreventiveStatus::Ok;
 
     if matches!(plan.control_type, PreventiveControlType::Kilometers | PreventiveControlType::Both) {
@@ -346,7 +350,7 @@ fn compute_status(plan: &PreventivePlan, current_km: Option<f64>, today: chrono:
         if let (Some(next), Some(current)) = (next, current_km) {
             status = worse(status, if current >= next {
                 PreventiveStatus::Overdue
-            } else if current >= next - ATTENTION_KM_MARGIN {
+            } else if current >= next - rules.preventive_attention_km_margin {
                 PreventiveStatus::Attention
             } else {
                 PreventiveStatus::Ok
@@ -360,7 +364,7 @@ fn compute_status(plan: &PreventivePlan, current_km: Option<f64>, today: chrono:
         let next = last + Duration::days(interval as i64);
         status = worse(status, if today >= next {
             PreventiveStatus::Overdue
-        } else if today >= next - Duration::days(ATTENTION_DAYS_MARGIN) {
+        } else if today >= next - Duration::days(rules.preventive_attention_days_margin as i64) {
             PreventiveStatus::Attention
         } else {
             PreventiveStatus::Ok
@@ -434,24 +438,24 @@ mod tests {
     #[test]
     fn kilometre_plan_goes_ok_then_attention_then_overdue() {
         let p = plan(PreventiveControlType::Kilometers);
-        assert_eq!(compute_status(&p, Some(55_000.0), day(9, 1)), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, Some(59_000.0), day(9, 1)), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, Some(60_000.0), day(9, 1)), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, Some(55_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        assert_eq!(compute_status(&p, Some(59_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Attention);
+        assert_eq!(compute_status(&p, Some(60_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
     }
 
     #[test]
     fn date_plan_goes_ok_then_attention_then_overdue() {
         let p = plan(PreventiveControlType::Days); // next = 2026-04-01
-        assert_eq!(compute_status(&p, None, day(2, 1)), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, None, day(3, 20)), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, None, day(4, 1)), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, None, day(2, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        assert_eq!(compute_status(&p, None, day(3, 20), &RuleSettings::default()), PreventiveStatus::Attention);
+        assert_eq!(compute_status(&p, None, day(4, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
     }
 
     #[test]
     fn a_plan_controlled_by_both_takes_the_worse_axis() {
         let p = plan(PreventiveControlType::Both);
-        assert_eq!(compute_status(&p, Some(55_000.0), day(4, 1)), PreventiveStatus::Overdue);
-        assert_eq!(compute_status(&p, Some(60_000.0), day(2, 1)), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, Some(55_000.0), day(4, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, Some(60_000.0), day(2, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
     }
 
     #[test]
@@ -459,18 +463,26 @@ mod tests {
         let mut p = plan(PreventiveControlType::Both);
         p.last_service_km = None;
         p.last_service_date = None;
-        assert_eq!(compute_status(&p, Some(999_999.0), day(12, 1)), PreventiveStatus::Ok);
+        assert_eq!(compute_status(&p, Some(999_999.0), day(12, 1), &RuleSettings::default()), PreventiveStatus::Ok);
         let p = plan(PreventiveControlType::Kilometers);
-        assert_eq!(compute_status(&p, None, day(12, 1)), PreventiveStatus::Ok);
+        assert_eq!(compute_status(&p, None, day(12, 1), &RuleSettings::default()), PreventiveStatus::Ok);
     }
 
     #[test]
     fn an_active_extension_limit_replaces_last_plus_interval() {
         let mut p = plan(PreventiveControlType::Kilometers); // due at 60,000
-        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1)), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
         p.extension_limit_km = Some(65_000.0);
-        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1)), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, Some(64_500.0), day(9, 1)), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, Some(65_000.0), day(9, 1)), PreventiveStatus::Overdue);
+        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        assert_eq!(compute_status(&p, Some(64_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Attention);
+        assert_eq!(compute_status(&p, Some(65_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+    }
+
+    #[test]
+    fn a_tenant_can_widen_the_attention_margin() {
+        let p = plan(PreventiveControlType::Kilometers); // due at 60,000
+        assert_eq!(compute_status(&p, Some(56_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        let cautious = RuleSettings { preventive_attention_km_margin: 5_000.0, ..RuleSettings::default() };
+        assert_eq!(compute_status(&p, Some(56_000.0), day(9, 1), &cautious), PreventiveStatus::Attention);
     }
 }

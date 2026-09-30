@@ -2,6 +2,8 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
 use chrono::NaiveDateTime;
 use entity::transport_demand_entity::{ActiveModel, Model};
+use crate::domain::enums::DemandKind;
+use std::str::FromStr;
 use sea_orm::prelude::{Date, Time};
 use sea_orm::{NotSet, Set};
 
@@ -12,6 +14,7 @@ pub struct TransportDemand {
     pub uuid: Option<String>,
     pub tenant_id: Option<i64>,
     pub demand_type: String,
+    pub demand_kind: Option<DemandKind>,
     pub customer_id: Option<i64>,
     pub line_name: Option<String>,
     pub shift_start: Option<Time>,
@@ -45,6 +48,7 @@ impl EntityMapper<TransportDemand, Model, ActiveModel> for TransportDemandEntity
             },
             tenant_id: Set(d.tenant_id),
             demand_type: Set(d.demand_type),
+            demand_kind: Set(d.demand_kind.map(|k| k.to_string())),
             customer_id: Set(d.customer_id),
             line_name: Set(d.line_name),
             shift_start: Set(d.shift_start),
@@ -70,6 +74,7 @@ impl EntityMapper<TransportDemand, Model, ActiveModel> for TransportDemandEntity
             uuid: Some(bytes_para_string(e.uuid)),
             tenant_id: e.tenant_id,
             demand_type: e.demand_type,
+            demand_kind: e.demand_kind.and_then(|k| DemandKind::from_str(&k).ok()),
             customer_id: e.customer_id,
             line_name: e.line_name,
             shift_start: e.shift_start,
@@ -99,6 +104,7 @@ impl EntityMapper<TransportDemand, Model, ActiveModel> for TransportDemandEntity
                 uuid: e.uuid.take().map(bytes_para_string),
                 tenant_id: e.tenant_id.take().flatten(),
                 demand_type: e.demand_type.take().unwrap_or_default(),
+                demand_kind: e.demand_kind.take().flatten().and_then(|k| DemandKind::from_str(&k).ok()),
                 customer_id: e.customer_id.take().flatten(),
                 line_name: e.line_name.take().flatten(),
                 shift_start: e.shift_start.take().flatten(),

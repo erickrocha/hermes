@@ -1,6 +1,12 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
+impl PartialEq for BusinessError {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+    }
+}
+
 pub struct BusinessError {
     pub message: String,
     /// Distinguishes "the record you named does not exist" from every other

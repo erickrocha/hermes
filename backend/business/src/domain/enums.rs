@@ -408,6 +408,7 @@ pub enum WorkOrderOrigin {
     Manual,
     Checklist,
     Preventive,
+    Inspection,
 }
 
 impl Display for WorkOrderOrigin {
@@ -416,6 +417,7 @@ impl Display for WorkOrderOrigin {
             WorkOrderOrigin::Manual => write!(f, "Manual"),
             WorkOrderOrigin::Checklist => write!(f, "Checklist"),
             WorkOrderOrigin::Preventive => write!(f, "Preventive"),
+            WorkOrderOrigin::Inspection => write!(f, "Inspection"),
         }
     }
 }
@@ -427,6 +429,7 @@ impl FromStr for WorkOrderOrigin {
             "Manual" => Ok(Self::Manual),
             "Checklist" => Ok(Self::Checklist),
             "Preventive" => Ok(Self::Preventive),
+            "Inspection" => Ok(Self::Inspection),
             _ => Err(format!("Invalid work order origin: {}", value)),
         }
     }
@@ -715,6 +718,215 @@ impl Display for PreventiveStatus {
             PreventiveStatus::Ok => write!(f, "Ok"),
             PreventiveStatus::Attention => write!(f, "Attention"),
             PreventiveStatus::Overdue => write!(f, "Overdue"),
+        }
+    }
+}
+
+/// `EPIC-GA-01-S01` (`HRMS-956`, `TRM-431`): a garage service is external
+/// (washing, fuelling...) or internal (cleaning, WC...), recorded explicitly --
+/// never inferred from its name.
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, ToSchema)]
+pub enum GarageServiceGroup {
+    External,
+    Internal,
+}
+
+impl Display for GarageServiceGroup {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GarageServiceGroup::External => write!(f, "External"),
+            GarageServiceGroup::Internal => write!(f, "Internal"),
+        }
+    }
+}
+
+impl FromStr for GarageServiceGroup {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "External" => Ok(Self::External),
+            "Internal" => Ok(Self::Internal),
+            _ => Err(format!("Invalid garage service group: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-GA-02-S01` (`HRMS-958`, `TRM-411`): a triage is active until it reaches one of the three terminal states.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum GarageAttendanceStatus {
+    #[default]
+    Open,
+    Finished,
+    ReleasedWithPendency,
+    LeftForOperation,
+}
+
+impl Display for GarageAttendanceStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GarageAttendanceStatus::Open => write!(f, "Open"),
+            GarageAttendanceStatus::Finished => write!(f, "Finished"),
+            GarageAttendanceStatus::ReleasedWithPendency => write!(f, "ReleasedWithPendency"),
+            GarageAttendanceStatus::LeftForOperation => write!(f, "LeftForOperation"),
+        }
+    }
+}
+
+impl FromStr for GarageAttendanceStatus {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Open" => Ok(Self::Open),
+            "Finished" => Ok(Self::Finished),
+            "ReleasedWithPendency" => Ok(Self::ReleasedWithPendency),
+            "LeftForOperation" => Ok(Self::LeftForOperation),
+            _ => Err(format!("Invalid GarageAttendanceStatus: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-GA-02-S01` (`HRMS-958`, `TRM-414`): how a triage came to exist.
+#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum GarageAttendanceOrigin {
+    #[default]
+    Manual,
+    ArrivalAtBase,
+}
+
+impl Display for GarageAttendanceOrigin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GarageAttendanceOrigin::Manual => write!(f, "Manual"),
+            GarageAttendanceOrigin::ArrivalAtBase => write!(f, "ArrivalAtBase"),
+        }
+    }
+}
+
+impl FromStr for GarageAttendanceOrigin {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Manual" => Ok(Self::Manual),
+            "ArrivalAtBase" => Ok(Self::ArrivalAtBase),
+            _ => Err(format!("Invalid GarageAttendanceOrigin: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-GA-02-S02` (`HRMS-959`, `TRM-438`): the four states a service can be in.
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum GarageServiceState {
+    #[default]
+    Pending,
+    Performed,
+    NotNeeded,
+    NotDone,
+}
+
+impl Display for GarageServiceState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GarageServiceState::Pending => write!(f, "Pending"),
+            GarageServiceState::Performed => write!(f, "Performed"),
+            GarageServiceState::NotNeeded => write!(f, "NotNeeded"),
+            GarageServiceState::NotDone => write!(f, "NotDone"),
+        }
+    }
+}
+
+impl FromStr for GarageServiceState {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Pending" => Ok(Self::Pending),
+            "Performed" => Ok(Self::Performed),
+            "NotNeeded" => Ok(Self::NotNeeded),
+            "NotDone" => Ok(Self::NotDone),
+            _ => Err(format!("Invalid GarageServiceState: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-GA-03-S01` (`HRMS-960`, `TRM-770…773`): a physical arrival at the base
+/// or departure from it.
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum PresenceEventKind {
+    #[default]
+    Arrival,
+    Departure,
+}
+
+impl Display for PresenceEventKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PresenceEventKind::Arrival => write!(f, "Arrival"),
+            PresenceEventKind::Departure => write!(f, "Departure"),
+        }
+    }
+}
+
+impl FromStr for PresenceEventKind {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Arrival" => Ok(Self::Arrival),
+            "Departure" => Ok(Self::Departure),
+            _ => Err(format!("Invalid presence event: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-GA-03-S01` (`D-24(e)`, `TRM-788`): what a presence stamp was derived
+/// from. Only a real tracker reading may stamp arrival or departure; a
+/// schedule-derived estimate may set a display tag but never a stamp.
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum PresenceSource {
+    #[default]
+    Tracker,
+    ScheduleEstimate,
+}
+
+impl FromStr for PresenceSource {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Tracker" => Ok(Self::Tracker),
+            "ScheduleEstimate" => Ok(Self::ScheduleEstimate),
+            _ => Err(format!("Invalid presence source: {}", value)),
+        }
+    }
+}
+
+/// `EPIC-SC-04-S01` (`HRMS-610`, `TRM-002`): the three kinds of transport demand
+/// -- a recurring line, an `linha_extra` and a one-off trip (`viagem_avulsa`).
+/// Stated by the owner on the demand, never inferred from its free-text
+/// `demand_type` or its name: the garage reads "going to travel" (a one-off trip)
+/// apart from a line or charter (`TRM-475`), and a guess there is a wrong alert.
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Serialize, Deserialize, ToSchema)]
+pub enum DemandKind {
+    Line,
+    ExtraLine,
+    OneOffTrip,
+}
+
+impl Display for DemandKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DemandKind::Line => write!(f, "Line"),
+            DemandKind::ExtraLine => write!(f, "ExtraLine"),
+            DemandKind::OneOffTrip => write!(f, "OneOffTrip"),
+        }
+    }
+}
+
+impl FromStr for DemandKind {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "Line" => Ok(Self::Line),
+            "ExtraLine" => Ok(Self::ExtraLine),
+            "OneOffTrip" => Ok(Self::OneOffTrip),
+            _ => Err(format!("Invalid demand kind: {}", value)),
         }
     }
 }
