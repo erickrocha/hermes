@@ -31,5 +31,6 @@ pub mod vehicle_gateway;
 pub mod vehicle_assignment_gateway;
 pub mod vehicle_expense_gateway;
 pub mod fuel_entry_gateway;
+pub mod preventive_plan_extension_gateway;
 pub mod preventive_plan_gateway;
 pub mod internal_tank_gateway;

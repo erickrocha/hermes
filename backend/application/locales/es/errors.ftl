@@ -88,6 +88,7 @@ fuel-sync-unavailable = El proveedor de combustible no está configurado para es
 preventive-plan-forbidden = No tiene permiso para gestionar planes preventivos
 preventive-plan-not-found = Plan preventivo no encontrado
 duplicate-preventive-plan = Este vehículo ya tiene un plan preventivo con este nombre
+preventive-plan-not-due = Este plan preventivo aún no está vencido
 duplicate-plate = Ya existe un vehículo registrado con esta matrícula
 tracker-link-forbidden = Solo el administrador de la plataforma puede vincular un rastreador
 duplicate-tracker-device = Este rastreador ya está vinculado a un vehículo

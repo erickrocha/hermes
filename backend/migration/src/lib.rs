@@ -48,6 +48,10 @@ mod m20260929_000003_create_fuel_entry_table;
 mod m20260929_000004_create_internal_tank_table;
 mod m20260929_000005_add_fuel_entry_provider_transaction_id;
 mod m20260929_000006_create_preventive_plan_table;
+mod m20260929_000007_link_work_order_and_preventive_plan;
+mod m20260929_000008_link_work_order_item_and_preventive_plan;
+mod m20260929_000009_create_preventive_plan_extension;
+mod m20260929_000010_add_preventive_plan_last_work_order;
 
 pub struct Migrator;
 
@@ -101,6 +105,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260929_000004_create_internal_tank_table::Migration),
             Box::new(m20260929_000005_add_fuel_entry_provider_transaction_id::Migration),
             Box::new(m20260929_000006_create_preventive_plan_table::Migration),
+            Box::new(m20260929_000007_link_work_order_and_preventive_plan::Migration),
+            Box::new(m20260929_000008_link_work_order_item_and_preventive_plan::Migration),
+            Box::new(m20260929_000009_create_preventive_plan_extension::Migration),
+            Box::new(m20260929_000010_add_preventive_plan_last_work_order::Migration),
         ]
     }
 }

@@ -36,4 +36,5 @@ pub mod vehicle_tracking;
 pub mod vehicle_expense;
 pub mod fuel_entry;
 pub mod preventive_plan;
+pub mod preventive_plan_extension;
 pub mod internal_tank;

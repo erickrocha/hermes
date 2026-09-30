@@ -70,6 +70,32 @@ impl FuelEntryGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// `TRM-1553`: the report's rows -- the caller's tenant's fuellings inside
+    /// the optional period/vehicle/station filters, oldest first, unpaged.
+    pub async fn find_report(
+        &self,
+        from: Option<chrono::NaiveDateTime>,
+        to: Option<chrono::NaiveDateTime>,
+        vehicle_id: Option<i64>,
+        station: Option<String>,
+    ) -> Result<Vec<fuel_entry_entity::Model>, DbErr> {
+        let mut query = tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .order_by_asc(fuel_entry_entity::Column::RecordedAt);
+        if let Some(from) = from {
+            query = query.filter(fuel_entry_entity::Column::RecordedAt.gte(from.and_utc()));
+        }
+        if let Some(to) = to {
+            query = query.filter(fuel_entry_entity::Column::RecordedAt.lte(to.and_utc()));
+        }
+        if let Some(vehicle_id) = vehicle_id {
+            query = query.filter(fuel_entry_entity::Column::VehicleId.eq(vehicle_id));
+        }
+        if let Some(station) = station {
+            query = query.filter(fuel_entry_entity::Column::Station.eq(station));
+        }
+        query.all(&self.db).await
+    }
+
     /// `TRM-511`/`512`: identifies an already-imported transaction so the
     /// sync can correct it in place rather than re-import it as a duplicate.
     pub async fn find_by_provider_transaction_id(

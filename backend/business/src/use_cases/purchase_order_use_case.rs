@@ -103,6 +103,7 @@ impl PurchaseOrderUseCase {
                         resolution_description: None,
                         purchase_order_id: saved.id,
                         is_purchase_placeholder: true,
+                        preventive_plan_id: None,
                         created_at: None,
                         created_by: None,
                         updated_at: None,

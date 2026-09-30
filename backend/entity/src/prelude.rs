@@ -30,4 +30,5 @@ pub use super::vehicle_assignment_entity::Entity as VehicleAssignmentEntity;
 pub use super::vehicle_expense_entity::Entity as VehicleExpenseEntity;
 pub use super::fuel_entry_entity::Entity as FuelEntryEntity;
 pub use super::preventive_plan_entity::Entity as PreventivePlanEntity;
+pub use super::preventive_plan_extension_entity::Entity as PreventivePlanExtensionEntity;
 pub use super::internal_tank_entity::Entity as InternalTankEntity;

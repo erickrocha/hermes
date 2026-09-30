@@ -407,6 +407,7 @@ impl FromStr for WorkOrderItemStatus {
 pub enum WorkOrderOrigin {
     Manual,
     Checklist,
+    Preventive,
 }
 
 impl Display for WorkOrderOrigin {
@@ -414,6 +415,7 @@ impl Display for WorkOrderOrigin {
         match self {
             WorkOrderOrigin::Manual => write!(f, "Manual"),
             WorkOrderOrigin::Checklist => write!(f, "Checklist"),
+            WorkOrderOrigin::Preventive => write!(f, "Preventive"),
         }
     }
 }
@@ -424,6 +426,7 @@ impl FromStr for WorkOrderOrigin {
         match value.trim() {
             "Manual" => Ok(Self::Manual),
             "Checklist" => Ok(Self::Checklist),
+            "Preventive" => Ok(Self::Preventive),
             _ => Err(format!("Invalid work order origin: {}", value)),
         }
     }

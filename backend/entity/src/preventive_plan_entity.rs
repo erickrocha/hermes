@@ -25,6 +25,8 @@ pub struct Model {
     pub interval_days: Option<i32>,
     pub last_service_km: Option<f64>,
     pub last_service_date: Option<Date>,
+    pub extension_limit_km: Option<f64>,
+    pub last_work_order_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

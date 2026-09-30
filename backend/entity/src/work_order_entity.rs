@@ -31,6 +31,7 @@ pub struct Model {
     /// time (`TRM-237`) -- not the `os_id`/`os_ids[]` pair legacy carries on
     /// the plan side.
     pub maintenance_plan_id: Option<i64>,
+    pub preventive_plan_id: Option<i64>,
     pub service_type: Option<String>,
     pub description: String,
     pub responsible: Option<String>,

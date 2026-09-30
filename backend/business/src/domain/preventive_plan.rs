@@ -20,6 +20,12 @@ pub struct PreventivePlan {
     pub interval_days: Option<i32>,
     pub last_service_km: Option<f64>,
     pub last_service_date: Option<NaiveDate>,
+    /// `TRM-316`: the active extension's kilometre limit, replacing
+    /// `last_service_km + interval_km` until a real service clears it.
+    pub extension_limit_km: Option<f64>,
+    /// `TRM-309`/`TRM-330`: the work order that last serviced the plan, or
+    /// that a manual new cycle names as its origin.
+    pub last_work_order_id: Option<i64>,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -47,6 +53,8 @@ impl EntityMapper<PreventivePlan, Model, ActiveModel> for PreventivePlanEntityMa
             interval_days: Set(d.interval_days),
             last_service_km: Set(d.last_service_km),
             last_service_date: Set(d.last_service_date),
+            extension_limit_km: Set(d.extension_limit_km),
+            last_work_order_id: Set(d.last_work_order_id),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -66,6 +74,8 @@ impl EntityMapper<PreventivePlan, Model, ActiveModel> for PreventivePlanEntityMa
             interval_days: e.interval_days,
             last_service_km: e.last_service_km,
             last_service_date: e.last_service_date,
+            extension_limit_km: e.extension_limit_km,
+            last_work_order_id: e.last_work_order_id,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -93,6 +103,8 @@ impl EntityMapper<PreventivePlan, Model, ActiveModel> for PreventivePlanEntityMa
                 interval_days: e.interval_days.take().flatten(),
                 last_service_km: e.last_service_km.take().flatten(),
                 last_service_date: e.last_service_date.take().flatten(),
+                extension_limit_km: e.extension_limit_km.take().flatten(),
+                last_work_order_id: e.last_work_order_id.take().flatten(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

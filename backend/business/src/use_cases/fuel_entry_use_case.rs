@@ -61,8 +61,67 @@ impl FuelEntryUseCase {
     }
 }
 
+impl FuelEntryUseCase {
+    /// `TRM-1553`: the fuelling list plus its litre and value totals.
+    pub async fn report(
+        &self,
+        from: Option<chrono::NaiveDateTime>,
+        to: Option<chrono::NaiveDateTime>,
+        vehicle_id: Option<i64>,
+        station: Option<String>,
+    ) -> Result<(Vec<FuelEntry>, f64, i64), BusinessError> {
+        let rows = self
+            .gateway
+            .find_report(from, to, vehicle_id, station)
+            .await
+            .map_err(database_error)?;
+        let entries = FuelEntryEntityMapper::from_models(rows);
+        let (liters, cents) = totals(&entries);
+        Ok((entries, liters, cents))
+    }
+}
+
+fn totals(entries: &[FuelEntry]) -> (f64, i64) {
+    entries
+        .iter()
+        .fold((0.0, 0), |(l, c), e| (l + e.volume_liters, c + e.value_cents))
+}
+
 fn database_error(e: DbErr) -> BusinessError {
     let msg = format!("Database error: {}", e);
     log::error!("[FuelEntryUseCase] {}", msg);
     BusinessError::new(msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::enums::FuelEntryOrigin;
+
+    fn entry(liters: f64, cents: i64) -> FuelEntry {
+        FuelEntry {
+            id: None,
+            uuid: None,
+            tenant_id: Some(1),
+            vehicle_id: 1,
+            recorded_at: chrono::NaiveDateTime::default(),
+            volume_liters: liters,
+            value_cents: cents,
+            odometer_km: None,
+            station: None,
+            full_tank: false,
+            origin: FuelEntryOrigin::Manual,
+            provider_transaction_id: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn totals_sum_litres_and_value() {
+        assert_eq!(totals(&[]), (0.0, 0));
+        assert_eq!(totals(&[entry(40.5, 25000), entry(10.0, 6000)]), (50.5, 31000));
+    }
 }

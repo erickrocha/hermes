@@ -32,4 +32,5 @@ pub mod vehicle_assignment_entity;
 pub mod vehicle_expense_entity;
 pub mod fuel_entry_entity;
 pub mod preventive_plan_entity;
+pub mod preventive_plan_extension_entity;
 pub mod internal_tank_entity;

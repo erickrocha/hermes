@@ -3086,6 +3086,8 @@ fn work_order_use_case(db: &DatabaseConnection) -> WorkOrderUseCase {
             business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
             VehicleGateway::new(db.clone()),
         ),
+        business::gateway::preventive_plan_gateway::PreventivePlanGateway::new(db.clone()),
+        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db.clone()),
     )
 }
 
@@ -3100,6 +3102,7 @@ fn new_work_order(tenant_id: Option<i64>, description: &str, odometer_km: f64) -
         origin: WorkOrderOrigin::Manual,
         checklist_run_id: None,
         maintenance_plan_id: None,
+        preventive_plan_id: None,
         service_type: None,
         description: description.into(),
         responsible: None,
@@ -3129,6 +3132,7 @@ fn work_order_row(id: i64, tenant_id: i64, vehicle_id: i64) -> entity::work_orde
         origin: "Manual".into(),
         checklist_run_id: None,
         maintenance_plan_id: None,
+        preventive_plan_id: None,
         service_type: None,
         description: "Squeaking front brakes".into(),
         responsible: None,
@@ -3253,6 +3257,7 @@ fn new_work_order_item(status: WorkOrderItemStatus) -> WorkOrderItem {
         resolution_description: None,
         purchase_order_id: None,
         is_purchase_placeholder: false,
+        preventive_plan_id: None,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -3280,6 +3285,7 @@ fn work_order_item_row(
         resolution_description: None,
         purchase_order_id: None,
         is_purchase_placeholder: false,
+        preventive_plan_id: None,
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -3579,6 +3585,7 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
     let db = mock()
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "AwaitingParts")
         }]]) // the placeholder item
@@ -3586,11 +3593,13 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
         .append_exec_results([inserted(98)]) // item update
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]]) // item refetch
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]]) // all items -- only the placeholder, now resolved
@@ -3764,6 +3773,7 @@ async fn a_work_order_already_scheduled_into_an_active_plan_is_refused() {
         .append_query_results([Vec::<entity::maintenance_plan_entity::Model>::new()])
         .append_query_results([[entity::work_order_entity::Model {
             maintenance_plan_id: Some(501),
+            preventive_plan_id: None,
             ..work_order_row(97, 42, 10)
         }]])
         .append_query_results([[maintenance_plan_row(501, 42, 10, a_date(), "Scheduled")]]) // its current plan, still active
@@ -3788,6 +3798,7 @@ async fn a_valid_maintenance_plan_is_created_and_reschedules_a_work_order_from_a
         .append_query_results([Vec::<entity::maintenance_plan_entity::Model>::new()]) // no overlap
         .append_query_results([[entity::work_order_entity::Model {
             maintenance_plan_id: Some(501),
+            preventive_plan_id: None,
             ..work_order_row(97, 42, 10)
         }]]) // the named work order, currently linked to plan 501
         .append_query_results([[maintenance_plan_row(501, 42, 10, a_date(), "Concluded")]]) // 501 is now inactive
@@ -3796,6 +3807,7 @@ async fn a_valid_maintenance_plan_is_created_and_reschedules_a_work_order_from_a
         .append_exec_results([inserted(97)]) // update the work order's maintenance_plan_id
         .append_query_results([[entity::work_order_entity::Model {
             maintenance_plan_id: Some(502),
+            preventive_plan_id: None,
             ..work_order_row(97, 42, 10)
         }]]) // refetch after update
         .into_connection();
@@ -4452,11 +4464,13 @@ async fn raising_a_purchase_order_with_no_named_pendency_opens_a_synthetic_place
         .append_exec_results([inserted(98)])
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "AwaitingParts")
         }]])
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "AwaitingParts")
         }]])
@@ -4496,6 +4510,7 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
         // -- resolve_purchase_pendency(98) --
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "AwaitingParts")
         }]])
@@ -4503,11 +4518,13 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
         .append_exec_results([inserted(98)])
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]])
         .append_query_results([[entity::work_order_item_entity::Model {
             is_purchase_placeholder: true,
+            preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]])
@@ -5206,4 +5223,377 @@ async fn a_resent_transaction_with_no_actual_change_writes_nothing() {
     assert_eq!(outcome.updated, 0);
     assert_eq!(outcome.imported, 0);
     assert!(!format!("{:?}", log(db)).contains("UPDATE"), "nothing changed, so nothing is written");
+}
+
+// ------------------------------------------------------- EPIC-MT-07-S02 preventive work order
+use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::use_cases::preventive_plan_use_case::{PLAN_NOT_DUE, PreventivePlanUseCase};
+
+fn preventive_plan_use_case(db: &DatabaseConnection) -> PreventivePlanUseCase {
+    PreventivePlanUseCase::new(
+        PreventivePlanGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+        business::gateway::work_order_gateway::WorkOrderGateway::new(db.clone()),
+        business::gateway::work_order_item_gateway::WorkOrderItemGateway::new(db.clone()),
+        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db.clone()),
+    )
+}
+
+fn preventive_plan_row() -> entity::preventive_plan_entity::Model {
+    entity::preventive_plan_entity::Model {
+        id: 7,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        vehicle_id: 10,
+        plan_name: "Oil".into(),
+        control_type: "Kilometers".into(),
+        interval_km: Some(10_000.0),
+        interval_days: None,
+        last_service_km: Some(50_000.0),
+        last_service_date: None,
+        extension_limit_km: None,
+        last_work_order_id: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+fn vehicle_at_km(km: f64) -> vehicle_entity::Model {
+    vehicle_entity::Model {
+        odometer_km: Some(km),
+        ..vehicle_row(10, 42, "ABC1D23", "Active")
+    }
+}
+
+#[tokio::test]
+async fn a_plan_that_is_not_due_opens_no_work_order() {
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(51_000.0)]])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
+        .await
+        .expect_err("a plan that is not due generates nothing");
+    assert_eq!(err.message, PLAN_NOT_DUE);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn a_due_plan_with_an_open_work_order_returns_it_instead_of_a_duplicate() {
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(60_000.0)]])
+        .append_query_results([[work_order_row(97, 42, 10)]])
+        .into_connection();
+    let (work_order, created) =
+        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
+            .await
+            .expect("an existing open order is returned");
+    assert!(!created);
+    assert_eq!(work_order.id, Some(97));
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn a_due_plan_with_no_open_work_order_opens_a_preventive_one() {
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(60_000.0)]])
+        .append_query_results([Vec::<entity::work_order_entity::Model>::new()])
+        .append_query_results([[vehicle_at_km(60_000.0)]])
+        .append_exec_results([inserted(98)])
+        .append_query_results([[work_order_row(98, 42, 10)]])
+        .into_connection();
+    let (work_order, created) =
+        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
+            .await
+            .expect("a due plan opens a work order");
+    assert!(created);
+    assert_eq!(work_order.id, Some(98));
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("INSERT") && sql.contains("Preventive"), "{sql}");
+}
+
+#[tokio::test]
+async fn concluding_a_preventive_work_order_renews_its_plan_and_cancels_the_others() {
+    let preventive = |id: i64, status: &str| entity::work_order_entity::Model {
+        origin: "Preventive".into(),
+        preventive_plan_id: Some(7),
+        status: status.into(),
+        ..work_order_row(id, 42, 10)
+    };
+    let db = mock()
+        .append_query_results([[preventive(97, "Open")]]) // find the work order
+        .append_query_results([Vec::<entity::work_order_item_entity::Model>::new()]) // no items: all settled
+        .append_exec_results([inserted(97)]) // conclude
+        .append_query_results([[preventive(97, "Concluded")]])
+        .append_query_results([[vehicle_at_km(61_000.0)]]) // current odometer
+        .append_query_results([[preventive_plan_row()]]) // the plan
+        .append_exec_results([inserted(7)]) // renew the plan
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[preventive(99, "Open")]]) // another still-open order for the plan
+        .append_query_results([[preventive(99, "Open")]]) // cancel: find it
+        .append_exec_results([inserted(99)]) // cancel
+        .append_query_results([[preventive(99, "Cancelled")]])
+        .into_connection();
+    let concluded = run_with_user(Some(owner(42)), work_order_use_case(&db).conclude(97))
+        .await
+        .expect("conclude succeeds");
+    assert_eq!(concluded.status, business::domain::enums::WorkOrderStatus::Concluded);
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"), "{sql}");
+    assert!(sql.contains("Cancelled"), "{sql}");
+}
+
+#[tokio::test]
+async fn a_resolved_item_linked_to_a_plan_renews_that_plan_when_the_order_is_concluded() {
+    let order = |status: &str| entity::work_order_entity::Model {
+        status: status.into(),
+        ..work_order_row(97, 42, 10)
+    };
+    let linked_item = entity::work_order_item_entity::Model {
+        preventive_plan_id: Some(7),
+        ..work_order_item_row(5, 42, 97, "Resolved")
+    };
+    let db = mock()
+        .append_query_results([[order("Open")]])
+        .append_query_results([[linked_item]]) // the one resolved item, linked to plan 7
+        .append_exec_results([inserted(97)])
+        .append_query_results([[order("Concluded")]])
+        .append_query_results([Vec::<entity::preventive_plan_extension_entity::Model>::new()]) // not an extension item
+        .append_query_results([[vehicle_at_km(61_000.0)]])
+        .append_query_results([[preventive_plan_row()]])
+        .append_exec_results([inserted(7)])
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([Vec::<entity::work_order_entity::Model>::new()]) // nothing else open
+        .into_connection();
+    run_with_user(Some(owner(42)), work_order_use_case(&db).conclude(97))
+        .await
+        .expect("conclude succeeds");
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"), "{sql}");
+}
+
+#[tokio::test]
+async fn an_item_cannot_name_another_vehicles_preventive_plan() {
+    let other_vehicle_plan = entity::preventive_plan_entity::Model {
+        vehicle_id: 11,
+        ..preventive_plan_row()
+    };
+    let db = mock()
+        .append_query_results([[work_order_row(96, 42, 10)]])
+        .append_query_results([[other_vehicle_plan]])
+        .into_connection();
+    let item = WorkOrderItem {
+        preventive_plan_id: Some(7),
+        ..new_work_order_item(WorkOrderItemStatus::Pending)
+    };
+    let err = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+        .await
+        .expect_err("a plan of another vehicle is refused");
+    assert_eq!(err.message, business::use_cases::work_order_use_case::PLAN_NOT_ON_THIS_VEHICLE);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+fn extension_row(item_id: i64) -> entity::preventive_plan_extension_entity::Model {
+    entity::preventive_plan_extension_entity::Model {
+        id: 3,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        preventive_plan_id: 7,
+        work_order_item_id: item_id,
+        inspection_km: 58_000.0,
+        granted_km: 5_000.0,
+        resulting_limit_km: 63_000.0,
+        description: "Oil still clean".into(),
+        previous_last_service_km: Some(50_000.0),
+        previous_last_service_date: None,
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+fn linked_pending_item() -> entity::work_order_item_entity::Model {
+    entity::work_order_item_entity::Model {
+        preventive_plan_id: Some(7),
+        ..work_order_item_row(5, 42, 97, "Pending")
+    }
+}
+
+#[tokio::test]
+async fn an_extension_resolves_the_item_records_an_entry_and_leaves_the_order_partially_resolved() {
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]]) // plan (find_by_uuid)
+        .append_query_results([[vehicle_at_km(58_000.0)]]) // status of the plan
+        .append_query_results([[linked_pending_item()]]) // item by uuid
+        .append_query_results([[work_order_row(97, 42, 10)]]) // its order
+        .append_query_results([[vehicle_at_km(58_000.0)]]) // default inspection km
+        .append_exec_results([inserted(3)]) // audit entry
+        .append_query_results([[extension_row(5)]])
+        .append_exec_results([inserted(7)]) // plan limit
+        .append_query_results([[preventive_plan_row()]])
+        .append_exec_results([inserted(5)]) // item resolved
+        .append_query_results([[work_order_item_row(5, 42, 97, "Resolved")]])
+        .append_exec_results([inserted(97)]) // order partially resolved
+        .append_query_results([[work_order_row(97, 42, 10)]])
+        .into_connection();
+    let entry = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).extend(UUID.into(), UUID.into(), None, 5_000.0, "Oil still clean".into()),
+    )
+    .await
+    .expect("extension succeeds");
+    assert_eq!(entry.resulting_limit_km, 63_000.0);
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("preventive_plan_extension") && sql.contains("PartiallyResolved"), "{sql}");
+    assert!(sql.contains("Resolved") && sql.contains("63000"), "{sql}");
+}
+
+#[tokio::test]
+async fn an_extension_is_refused_for_an_item_not_linked_to_the_plan() {
+    let unlinked = entity::work_order_item_entity::Model {
+        preventive_plan_id: None,
+        ..work_order_item_row(5, 42, 97, "Pending")
+    };
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(58_000.0)]])
+        .append_query_results([[unlinked]])
+        .append_query_results([[work_order_row(97, 42, 10)]])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).extend(UUID.into(), UUID.into(), None, 5_000.0, "x".into()),
+    )
+    .await
+    .expect_err("unlinked item refused");
+    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::EXTENSION_ITEM_NOT_LINKED);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn an_extension_grant_above_the_maximum_is_refused_before_any_query() {
+    let db = mock().into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).extend(UUID.into(), UUID.into(), None, 50_001.0, "x".into()),
+    )
+    .await
+    .expect_err("over the maximum");
+    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::EXTENSION_GRANT_INVALID);
+}
+
+#[tokio::test]
+async fn concluding_an_order_whose_item_was_resolved_by_extension_does_not_renew_the_plan() {
+    let order = |status: &str| entity::work_order_entity::Model {
+        status: status.into(),
+        preventive_plan_id: Some(7),
+        ..work_order_row(97, 42, 10)
+    };
+    let extended_item = entity::work_order_item_entity::Model {
+        preventive_plan_id: Some(7),
+        ..work_order_item_row(5, 42, 97, "Resolved")
+    };
+    let db = mock()
+        .append_query_results([[order("PartiallyResolved")]])
+        .append_query_results([[extended_item]])
+        .append_exec_results([inserted(97)])
+        .append_query_results([[order("Concluded")]])
+        .append_query_results([[extension_row(5)]]) // this item resolved by extension
+        .into_connection();
+    run_with_user(Some(owner(42)), work_order_use_case(&db).conclude(97))
+        .await
+        .expect("conclude succeeds");
+    assert!(!format!("{:?}", log(db)).contains("UPDATE `preventive_plan`"));
+}
+
+fn edited_plan(last_service_km: Option<f64>) -> business::domain::preventive_plan::PreventivePlan {
+    use business::commons::entity_mapper::EntityMapper;
+    business::domain::preventive_plan::PreventivePlanEntityMapper::from_model(
+        entity::preventive_plan_entity::Model {
+            last_service_km,
+            ..preventive_plan_row()
+        },
+    )
+}
+
+#[tokio::test]
+async fn editing_a_plans_base_ends_its_active_extension_but_editing_an_interval_keeps_it() {
+    let extended = || entity::preventive_plan_entity::Model {
+        extension_limit_km: Some(65_000.0),
+        ..preventive_plan_row()
+    };
+    for (edited, expect_cleared) in [
+        (edited_plan(Some(60_000.0)), true), // base moved: new cycle
+        (business::domain::preventive_plan::PreventivePlan { interval_km: Some(8_000.0), ..edited_plan(Some(50_000.0)) }, false),
+    ] {
+        let db = mock()
+            .append_query_results([[extended()]]) // current plan
+            .append_query_results([[vehicle_at_km(58_000.0)]]) // its status
+            .append_exec_results([inserted(7)])
+            .append_query_results([[preventive_plan_row()]])
+            .into_connection();
+        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(business::domain::preventive_plan::PreventivePlan {
+            uuid: Some(UUID.into()),
+            ..edited
+        }))
+        .await
+        .expect("update succeeds");
+        let sql = format!("{:?}", log(db));
+        assert_eq!(sql.contains("65000"), !expect_cleared, "{sql}");
+    }
+}
+
+#[tokio::test]
+async fn editing_a_plan_still_requires_the_interval_its_control_type_needs() {
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(58_000.0)]])
+        .into_connection();
+    let bad = business::domain::preventive_plan::PreventivePlan {
+        uuid: Some(UUID.into()),
+        interval_km: None,
+        ..edited_plan(Some(50_000.0))
+    };
+    let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(bad))
+        .await
+        .expect_err("missing interval");
+    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::INTERVAL_REQUIRED);
+}
+
+#[tokio::test]
+async fn a_new_cycle_may_name_its_originating_order_only_if_it_is_on_the_plans_vehicle() {
+    let edited = |order_id| business::domain::preventive_plan::PreventivePlan {
+        uuid: Some(UUID.into()),
+        last_work_order_id: Some(order_id),
+        ..edited_plan(Some(60_000.0)) // base moved: new cycle
+    };
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(58_000.0)]])
+        .append_query_results([[work_order_row(97, 42, 11)]]) // another vehicle's order
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(edited(97)))
+        .await
+        .expect_err("another vehicle's order refused");
+    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::ORIGIN_ORDER_NOT_ON_VEHICLE);
+
+    let db = mock()
+        .append_query_results([[preventive_plan_row()]])
+        .append_query_results([[vehicle_at_km(58_000.0)]])
+        .append_query_results([[work_order_row(97, 42, 10)]])
+        .append_exec_results([inserted(7)])
+        .append_query_results([[entity::preventive_plan_entity::Model {
+            last_work_order_id: Some(97),
+            ..preventive_plan_row()
+        }]])
+        .into_connection();
+    let saved = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(edited(97)))
+        .await
+        .expect("a same-vehicle order is accepted");
+    assert_eq!(saved.last_work_order_id, Some(97));
 }

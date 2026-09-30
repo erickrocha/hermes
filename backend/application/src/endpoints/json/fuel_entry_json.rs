@@ -34,3 +34,13 @@ pub struct FuelSyncOutcomeJson {
     pub updated: usize,
     pub unmatched: usize,
 }
+
+/// `EPIC-FU-08-S01` (`HRMS-945`): the fuelling report -- rows plus the totals
+/// `TRM-1553` names.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FuelReportJson {
+    pub entries: Vec<FuelEntryJson>,
+    pub total_liters: f64,
+    pub total_value_cents: i64,
+}

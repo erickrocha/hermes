@@ -5,7 +5,7 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::fuel_entry_json::{FuelEntryJson, FuelSyncOutcomeJson};
+use crate::endpoints::json::fuel_entry_json::{FuelEntryJson, FuelReportJson, FuelSyncOutcomeJson};
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -222,5 +222,56 @@ pub async fn sync(
             locale,
             ErrorKey::UnexpectedError,
         )),
+    }
+}
+
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct FuelReportQuery {
+    /// Inclusive lower bound on the fuelling's timestamp.
+    pub from: Option<chrono::NaiveDateTime>,
+    /// Inclusive upper bound on the fuelling's timestamp.
+    pub to: Option<chrono::NaiveDateTime>,
+    pub vehicle_uuid: Option<String>,
+    pub station: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    tag = "FuelEntry",
+    path = "/fuel-entry/report",
+    params(FuelReportQuery),
+    responses(
+        (status = 200, description = "The caller's tenant's fuellings inside the filters, oldest first, with litre and value totals (TRM-1553). Average, distance, driver and irregular-only are not included yet (EPIC-FU-05/03). **Roles:** any authenticated role; SysAdmin sees every tenant, everyone else only their own.", body = FuelReportJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 404, description = "The named vehicle was not found, or belongs to another tenant", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn report(
+    state: State<AppState>,
+    Query(q): Query<FuelReportQuery>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+) -> HttpResponse<Json<FuelReportJson>> {
+    let vehicle_id = match q.vehicle_uuid {
+        Some(uuid) => Some(
+            find_visible(&state, &locale, &current_user, uuid)
+                .await?
+                .id
+                .unwrap_or_default(),
+        ),
+        None => None,
+    };
+    match use_case(&state).report(q.from, q.to, vehicle_id, q.station).await {
+        Ok((entries, total_liters, total_value_cents)) => {
+            let mut rows = Vec::with_capacity(entries.len());
+            for entry in entries {
+                rows.push(json(&state, entry).await);
+            }
+            Ok(Json(FuelReportJson { entries: rows, total_liters, total_value_cents }))
+        }
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
     }
 }

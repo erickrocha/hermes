@@ -88,6 +88,7 @@ fuel-sync-unavailable = The fuel-management provider is not configured for this 
 preventive-plan-forbidden = You are not allowed to manage preventive plans
 preventive-plan-not-found = Preventive plan not found
 duplicate-preventive-plan = This vehicle already has a preventive plan with this name
+preventive-plan-not-due = This preventive plan is not yet due
 duplicate-plate = A vehicle with this plate is already registered
 tracker-link-forbidden = Only the platform administrator may link a tracking device
 duplicate-tracker-device = This tracking device is already linked to a vehicle

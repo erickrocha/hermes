@@ -105,10 +105,12 @@ impl CtaSmartFuelProvider {
     /// same default the reference implementation falls back to) and
     /// `FUEL_API_TOKEN`.
     pub fn from_env() -> Result<Self, BusinessError> {
-        let base_url = env::var("FUEL_API_BASE_URL")
-            .unwrap_or_else(|_| "https://www.ctasmart.com.br:8443".to_string());
-        let token = env::var("FUEL_API_TOKEN")
-            .map_err(|_| BusinessError::new("FUEL_API_TOKEN must be set".to_string()))?;
+        // docker-compose passes an unset variable as "" -- treat that as unset.
+        let set = |name: &str| env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let base_url = set("FUEL_API_BASE_URL")
+            .unwrap_or_else(|| "https://www.ctasmart.com.br:8443".to_string());
+        let token = set("FUEL_API_TOKEN")
+            .ok_or_else(|| BusinessError::new("FUEL_API_TOKEN must be set".to_string()))?;
         Ok(Self::new(&base_url, &token))
     }
 

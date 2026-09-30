@@ -30,6 +30,7 @@ pub struct Model {
     pub resolution_description: Option<String>,
     pub purchase_order_id: Option<i64>,
     pub is_purchase_placeholder: bool,
+    pub preventive_plan_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

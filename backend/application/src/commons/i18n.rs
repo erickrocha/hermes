@@ -220,6 +220,7 @@ pub enum ErrorKey {
     PreventivePlanNotFound,
     /// `HRMS-706`: this vehicle already has a preventive plan with this name.
     DuplicatePreventivePlan,
+    PreventivePlanNotDue,
     /// HRMS-925 (D-23(c)): this plate is already registered in the caller's
     /// own tenant. Never raised for another tenant's vehicle.
     DuplicatePlate,
@@ -314,6 +315,7 @@ impl ErrorKey {
             ErrorKey::PreventivePlanForbidden => "PreventivePlanForbidden",
             ErrorKey::PreventivePlanNotFound => "PreventivePlanNotFound",
             ErrorKey::DuplicatePreventivePlan => "DuplicatePreventivePlan",
+            ErrorKey::PreventivePlanNotDue => "PreventivePlanNotDue",
             ErrorKey::DuplicatePlate => "DuplicatePlate",
             ErrorKey::TrackerLinkForbidden => "TrackerLinkForbidden",
             ErrorKey::DuplicateTrackerDevice => "DuplicateTrackerDevice",
@@ -399,6 +401,7 @@ impl ErrorKey {
             ErrorKey::PreventivePlanForbidden => "preventive-plan-forbidden",
             ErrorKey::PreventivePlanNotFound => "preventive-plan-not-found",
             ErrorKey::DuplicatePreventivePlan => "duplicate-preventive-plan",
+            ErrorKey::PreventivePlanNotDue => "preventive-plan-not-due",
             ErrorKey::DuplicatePlate => "duplicate-plate",
             ErrorKey::TrackerLinkForbidden => "tracker-link-forbidden",
             ErrorKey::DuplicateTrackerDevice => "duplicate-tracker-device",
@@ -659,6 +662,7 @@ mod tests {
             ErrorKey::PreventivePlanForbidden,
             ErrorKey::PreventivePlanNotFound,
             ErrorKey::DuplicatePreventivePlan,
+            ErrorKey::PreventivePlanNotDue,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

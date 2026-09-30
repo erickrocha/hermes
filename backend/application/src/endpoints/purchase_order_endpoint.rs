@@ -23,6 +23,7 @@ use business::commons::gateway::Gateway;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
 use business::gateway::part_gateway::PartGateway;
 use business::gateway::purchase_order_gateway::PurchaseOrderGateway;
+use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::gateway::work_order_gateway::WorkOrderGateway;
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
@@ -53,7 +54,9 @@ fn work_order_use_case(state: &AppState) -> WorkOrderUseCase {
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
-        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db)),
+        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())),
+        PreventivePlanGateway::new(db.clone()),
+        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db),
     )
 }
 

@@ -5,6 +5,9 @@ use crate::domain::enums::{KmOrigin, WorkOrderItemStatus, WorkOrderOrigin, WorkO
 use crate::domain::km_evolution::KmEvolution;
 use crate::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
 use crate::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
+use crate::domain::preventive_plan::{PreventivePlan, PreventivePlanEntityMapper};
+use crate::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use crate::gateway::preventive_plan_gateway::PreventivePlanGateway;
 use crate::gateway::vehicle_gateway::VehicleGateway;
 use crate::gateway::work_order_gateway::WorkOrderGateway;
 use crate::gateway::work_order_item_gateway::WorkOrderItemGateway;
@@ -17,6 +20,7 @@ pub const DESCRIPTION_REQUIRED: &str = "A work order needs a description";
 pub const NEGATIVE_ODOMETER: &str = "Odometer reading cannot be negative";
 pub const ITEM_DESCRIPTION_REQUIRED: &str = "A work order item needs a description";
 pub const WORK_ORDER_NOT_FOUND: &str = "Work order not found";
+pub const PLAN_NOT_ON_THIS_VEHICLE: &str = "The preventive plan does not belong to this work order's vehicle";
 pub const ITEM_NOT_FOUND: &str = "Work order item not found";
 pub const ITEM_NOT_ON_THIS_WORK_ORDER: &str = "This item does not belong to the named work order";
 
@@ -25,6 +29,8 @@ pub struct WorkOrderUseCase {
     items: WorkOrderItemGateway,
     vehicles: VehicleGateway,
     km_evolution: KmEvolutionUseCase,
+    plans: PreventivePlanGateway,
+    extensions: PreventivePlanExtensionGateway,
 }
 
 impl WorkOrderUseCase {
@@ -33,12 +39,16 @@ impl WorkOrderUseCase {
         items: WorkOrderItemGateway,
         vehicles: VehicleGateway,
         km_evolution: KmEvolutionUseCase,
+        plans: PreventivePlanGateway,
+        extensions: PreventivePlanExtensionGateway,
     ) -> Self {
         Self {
             gateway,
             items,
             vehicles,
             km_evolution,
+            plans,
+            extensions,
         }
     }
 
@@ -137,6 +147,13 @@ impl WorkOrderUseCase {
         };
         let work_order = WorkOrderEntityMapper::from_model(existing);
 
+        if let Some(plan_id) = item.preventive_plan_id {
+            let plan = self.plans.find_by_id(plan_id).await.map_err(database_error)?;
+            if !plan.is_some_and(|p| p.vehicle_id == work_order.vehicle_id) {
+                return Err(BusinessError::new(PLAN_NOT_ON_THIS_VEHICLE.to_string()));
+            }
+        }
+
         let item = WorkOrderItem {
             work_order_id,
             tenant_id: work_order.tenant_id,
@@ -225,6 +242,7 @@ impl WorkOrderUseCase {
             status: WorkOrderItemStatus::AwaitingParts,
             purchase_order_id: Some(purchase_order_id),
             is_purchase_placeholder: false,
+            preventive_plan_id: None,
             ..item
         };
         self.recomputed_after(work_order, updated_item).await
@@ -359,7 +377,87 @@ impl WorkOrderUseCase {
             })
             .await
             .map_err(database_error)?;
-        Ok(WorkOrderEntityMapper::from_active_model(entity))
+        let concluded = WorkOrderEntityMapper::from_active_model(entity);
+        if concluded.status == WorkOrderStatus::Concluded {
+            self.renew_preventive_cycles(&concluded, &items).await?;
+        }
+        Ok(concluded)
+    }
+
+    /// `TRM-309`/`TRM-310`/`TRM-329`: concluding a work order opens the next
+    /// cycle of every plan it serviced -- the order's own plan plus the plan
+    /// each *resolved* item names, so one order can close several plans
+    /// without mixing their cycles. The conclusion date and odometer (the
+    /// vehicle's current one, the order's frozen one if none) become the last
+    /// service, and every other order still open for that plan is cancelled.
+    /// Runs only on the real transition to `Concluded` (an already-terminal
+    /// order returns before reaching here), so it is never applied twice.
+    async fn renew_preventive_cycles(
+        &self,
+        work_order: &WorkOrder,
+        items: &[WorkOrderItem],
+    ) -> Result<(), BusinessError> {
+        // `TRM-311`: an item resolved by an extension is not a service, so it
+        // renews nothing -- and neither does the order's own plan link when an
+        // extension item names that plan.
+        let mut plan_ids: Vec<i64> = Vec::new();
+        let mut extended_plans: Vec<i64> = Vec::new();
+        for item in items.iter().filter(|i| i.status == WorkOrderItemStatus::Resolved) {
+            let Some(plan_id) = item.preventive_plan_id else { continue };
+            let extended = self
+                .extensions
+                .find_by_item(item.id.unwrap_or_default())
+                .await
+                .map_err(database_error)?
+                .is_some();
+            if extended {
+                extended_plans.push(plan_id);
+            } else if !plan_ids.contains(&plan_id) {
+                plan_ids.push(plan_id);
+            }
+        }
+        if let Some(id) = work_order.preventive_plan_id
+            && !plan_ids.contains(&id)
+            && !extended_plans.contains(&id)
+        {
+            plan_ids.push(id);
+        }
+        if plan_ids.is_empty() {
+            return Ok(());
+        }
+
+        let current_km = self
+            .vehicles
+            .find_by_id(work_order.vehicle_id)
+            .await
+            .map_err(database_error)?
+            .and_then(|v| v.odometer_km);
+
+        for plan_id in plan_ids {
+            let Some(plan) = self.plans.find_by_id(plan_id).await.map_err(database_error)? else {
+                continue;
+            };
+            let plan = PreventivePlan {
+                last_service_km: Some(current_km.unwrap_or(work_order.odometer_km)),
+                last_service_date: work_order.concluded_at,
+                // `TRM-309`: a real service ends any active extension; the
+                // extension entries themselves are kept.
+                extension_limit_km: None,
+                last_work_order_id: work_order.id,
+                ..PreventivePlanEntityMapper::from_model(plan)
+            };
+            self.plans.persist(plan).await.map_err(database_error)?;
+
+            let others = self
+                .gateway
+                .find_active_by_preventive_plan(plan_id)
+                .await
+                .map_err(database_error)?;
+            for other in others {
+                self.cancel(other.id).await?;
+            }
+        }
+        Ok(())
     }
 
     /// `TRM-205`: cancelling closes a work order regardless of outstanding

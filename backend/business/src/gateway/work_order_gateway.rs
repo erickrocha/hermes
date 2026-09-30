@@ -73,6 +73,19 @@ impl WorkOrderGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// `TRM-306`: a preventive plan's work orders that are still open,
+    /// partially resolved or awaiting parts -- i.e. not concluded/cancelled.
+    pub async fn find_active_by_preventive_plan(
+        &self,
+        preventive_plan_id: i64,
+    ) -> Result<Vec<work_order_entity::Model>, DbErr> {
+        tenant_select(WorkOrderQuery::find(), work_order_entity::Column::TenantId)
+            .filter(work_order_entity::Column::PreventivePlanId.eq(preventive_plan_id))
+            .filter(work_order_entity::Column::Status.is_not_in(["Concluded", "Cancelled"]))
+            .all(&self.db)
+            .await
+    }
+
     /// `EPIC-MT-03-S01`: the work orders a maintenance plan covers.
     pub async fn find_by_maintenance_plan(
         &self,

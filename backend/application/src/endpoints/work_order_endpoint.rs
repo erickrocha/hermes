@@ -27,6 +27,10 @@ use business::domain::work_order_posting::WorkOrderPosting;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
 use business::gateway::part_gateway::PartGateway;
 use business::gateway::stock_movement_gateway::StockMovementGateway;
+use business::domain::authorization::can_read_preventive_plan;
+use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::use_cases::preventive_plan_use_case::PreventivePlanUseCase;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::gateway::work_order_gateway::WorkOrderGateway;
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
@@ -51,7 +55,20 @@ fn use_case(state: &AppState) -> WorkOrderUseCase {
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
-        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db)),
+        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())),
+        PreventivePlanGateway::new(db.clone()),
+        PreventivePlanExtensionGateway::new(db),
+    )
+}
+
+fn preventive_plan_use_case(state: &AppState) -> PreventivePlanUseCase {
+    let db = state.conn.as_ref().clone();
+    PreventivePlanUseCase::new(
+        PreventivePlanGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+        WorkOrderGateway::new(db.clone()),
+        WorkOrderItemGateway::new(db.clone()),
+        PreventivePlanExtensionGateway::new(db),
     )
 }
 
@@ -96,6 +113,7 @@ fn item_json(item: WorkOrderItem) -> WorkOrderItemJson {
         resolved_at: item.resolved_at,
         resolution_description: item.resolution_description,
         is_purchase_placeholder: item.is_purchase_placeholder,
+        preventive_plan_uuid: None,
     }
 }
 
@@ -216,6 +234,7 @@ pub async fn add(
         origin: WorkOrderOrigin::Manual,
         checklist_run_id: None,
         maintenance_plan_id: None,
+        preventive_plan_id: None,
         service_type: payload.service_type,
         description: payload.description,
         responsible: payload.responsible,
@@ -342,6 +361,20 @@ pub async fn add_item(
     let status = payload.status.as_deref().unwrap_or("Pending");
     reject_unknown_work_order_item_status(status, &locale)?;
 
+    let preventive_plan_id = match payload.preventive_plan_uuid {
+        Some(plan_uuid) => {
+            let (plan, _) = preventive_plan_use_case(&state)
+                .find_by_uuid(plan_uuid)
+                .await
+                .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+            if !can_read_preventive_plan(&current_user, plan.tenant_id) {
+                return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+            }
+            plan.id
+        }
+        None => None,
+    };
+
     let item = WorkOrderItem {
         id: None,
         uuid: None,
@@ -356,6 +389,7 @@ pub async fn add_item(
         resolution_description: payload.resolution_description,
         purchase_order_id: None,
         is_purchase_placeholder: false,
+        preventive_plan_id,
         created_at: None,
         created_by: None,
         updated_at: None,

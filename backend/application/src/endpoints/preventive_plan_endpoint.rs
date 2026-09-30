@@ -6,7 +6,9 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
-use crate::endpoints::json::preventive_plan_json::PreventivePlanJson;
+use crate::endpoints::json::preventive_plan_json::{
+    PreventiveExtensionJson, PreventiveExtensionRequestJson, PreventivePlanJson, PreventiveWorkOrderJson,
+};
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
@@ -19,19 +21,36 @@ use business::domain::preventive_plan::PreventivePlan;
 use business::domain::user::User;
 use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
+use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use business::gateway::work_order_gateway::WorkOrderGateway;
+use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::preventive_plan_use_case::{
-    DUPLICATE_PLAN, INTERVAL_REQUIRED, PLAN_NAME_REQUIRED, PreventivePlanUseCase, VEHICLE_NOT_FOUND,
+    DUPLICATE_PLAN, EXTENSION_DESCRIPTION_REQUIRED, EXTENSION_GRANT_INVALID, EXTENSION_ITEM_NOT_FOUND,
+    EXTENSION_ITEM_NOT_LINKED, EXTENSION_ITEM_NOT_PENDING, INTERVAL_REQUIRED, ORIGIN_ORDER_NOT_ON_VEHICLE, PLAN_NAME_REQUIRED, PLAN_NOT_DUE, PREVENTIVE_PLAN_NOT_FOUND,
+    PreventivePlanUseCase, VEHICLE_NOT_FOUND,
 };
 use std::str::FromStr;
 
 fn use_case(state: &AppState) -> PreventivePlanUseCase {
     let db = state.conn.as_ref().clone();
-    PreventivePlanUseCase::new(PreventivePlanGateway::new(db.clone()), VehicleGateway::new(db))
+    PreventivePlanUseCase::new(
+        PreventivePlanGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+        WorkOrderGateway::new(db.clone()),
+        WorkOrderItemGateway::new(db.clone()),
+        PreventivePlanExtensionGateway::new(db),
+    )
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         DUPLICATE_PLAN => ExceptionResponse::BadRequest(locale, ErrorKey::DuplicatePreventivePlan),
+        EXTENSION_ITEM_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound),
+        ORIGIN_ORDER_NOT_ON_VEHICLE | EXTENSION_GRANT_INVALID | EXTENSION_DESCRIPTION_REQUIRED | EXTENSION_ITEM_NOT_LINKED | EXTENSION_ITEM_NOT_PENDING => {
+            ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
+        }
+        PLAN_NOT_DUE => ExceptionResponse::BadRequest(locale, ErrorKey::PreventivePlanNotDue),
+        PREVENTIVE_PLAN_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound),
         VEHICLE_NOT_FOUND | PLAN_NAME_REQUIRED | INTERVAL_REQUIRED => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
@@ -48,6 +67,16 @@ async fn json(state: &AppState, plan: PreventivePlan, status: PreventiveStatus) 
         .map(|m| bytes_para_string(m.uuid))
         .unwrap_or_default();
 
+    let last_work_order_uuid = match plan.last_work_order_id {
+        Some(id) => WorkOrderGateway::new(state.conn.as_ref().clone())
+            .find_by_id(id)
+            .await
+            .ok()
+            .flatten()
+            .map(|m| bytes_para_string(m.uuid)),
+        None => None,
+    };
+
     PreventivePlanJson {
         uuid: plan.uuid,
         tenant_id: plan.tenant_id,
@@ -58,6 +87,8 @@ async fn json(state: &AppState, plan: PreventivePlan, status: PreventiveStatus) 
         interval_days: plan.interval_days,
         last_service_km: plan.last_service_km,
         last_service_date: plan.last_service_date,
+        extension_limit_km: plan.extension_limit_km,
+        last_work_order_uuid,
         status: Some(status.to_string()),
     }
 }
@@ -105,6 +136,8 @@ pub async fn add(
         interval_days: payload.interval_days,
         last_service_km: payload.last_service_km,
         last_service_date: payload.last_service_date,
+        extension_limit_km: None,
+        last_work_order_id: None,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -186,5 +219,172 @@ pub async fn list_all(
             locale,
             ErrorKey::UnexpectedError,
         )),
+    }
+}
+
+#[utoipa::path(
+    post,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/uuid/{uuid}/work-order",
+    params(("uuid" = String, Path, description = "Preventive plan UUID")),
+    responses(
+        (status = 201, description = "A work order (origin `Preventive`) was opened for the due plan (TRM-306). **Roles:** SysAdmin, TenantOwner, Mechanic (own tenant only).", body = PreventiveWorkOrderJson),
+        (status = 200, description = "The plan already has an open work order; it is returned, nothing is created (`created` is false)", body = PreventiveWorkOrderJson),
+        (status = 400, description = "The plan is not overdue and not within its attention margin", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage preventive plans", body = ForbiddenErrorJson),
+        (status = 404, description = "Plan not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn generate_work_order(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<(StatusCode, Json<PreventiveWorkOrderJson>)> {
+    let (plan, _) = use_case(&state)
+        .find_by_uuid(uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    if !can_read_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+    }
+    if !can_create_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+    }
+
+    match use_case(&state).generate_work_order(uuid).await {
+        Ok((work_order, created)) => {
+            let status = if created { StatusCode::CREATED } else { StatusCode::OK };
+            Ok((
+                status,
+                Json(PreventiveWorkOrderJson {
+                    number: work_order.id.map(|id| format!("OS-{id}")),
+                    work_order_uuid: work_order.uuid,
+                    created,
+                }),
+            ))
+        }
+        Err(e) => Err(error(locale, &e.message)),
+    }
+}
+
+#[utoipa::path(
+    post,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/uuid/{uuid}/extension",
+    params(("uuid" = String, Path, description = "Preventive plan UUID")),
+    request_body = PreventiveExtensionRequestJson,
+    responses(
+        (status = 201, description = "The plan is extended after a technical inspection (TRM-312…320): its kilometre limit becomes the inspection odometer plus the granted kilometres, the inspected item is resolved with a narrative, its work order is left partially resolved for conferral, and an auditable entry is kept. Does not renew the cycle (TRM-311). **Roles:** SysAdmin, TenantOwner, Mechanic (own tenant only).", body = PreventiveExtensionJson),
+        (status = 400, description = "Grant not positive or above 50,000 km, blank description, an item not linked to this plan / another vehicle's order, or an item that is not pending", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage preventive plans", body = ForbiddenErrorJson),
+        (status = 404, description = "Plan or item not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn extend(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<PreventiveExtensionRequestJson>,
+) -> HttpResponse<(StatusCode, Json<PreventiveExtensionJson>)> {
+    let (plan, _) = use_case(&state)
+        .find_by_uuid(uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    if !can_read_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+    }
+    if !can_create_preventive_plan(&current_user, plan.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+    }
+
+    match use_case(&state)
+        .extend(uuid, payload.work_order_item_uuid, payload.inspection_km, payload.granted_km, payload.description)
+        .await
+    {
+        Ok(entry) => Ok((
+            StatusCode::CREATED,
+            Json(PreventiveExtensionJson {
+                uuid: entry.uuid,
+                inspection_km: entry.inspection_km,
+                granted_km: entry.granted_km,
+                resulting_limit_km: entry.resulting_limit_km,
+                description: entry.description,
+            }),
+        )),
+        Err(e) => Err(error(locale, &e.message)),
+    }
+}
+
+#[utoipa::path(
+    put,
+    tag = "PreventivePlan",
+    path = "/preventive-plan/uuid/{uuid}",
+    params(("uuid" = String, Path, description = "Preventive plan UUID")),
+    request_body = PreventivePlanJson,
+    responses(
+        (status = 200, description = "The plan's control type, intervals and base (last service km/date) are replaced (TRM-330). The name and vehicle never change. Changing the base starts a new cycle: any active extension ends, its entries are kept. **Roles:** SysAdmin, TenantOwner, Mechanic (own tenant only).", body = PreventivePlanJson),
+        (status = 400, description = "The control type lacks its matching interval", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage preventive plans", body = ForbiddenErrorJson),
+        (status = 404, description = "Plan not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<PreventivePlanJson>,
+) -> HttpResponse<Json<PreventivePlanJson>> {
+    let (current, _) = use_case(&state)
+        .find_by_uuid(uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    if !can_read_preventive_plan(&current_user, current.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+    }
+    if !can_create_preventive_plan(&current_user, current.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+    }
+
+    let last_work_order_id = match payload.last_work_order_uuid {
+        Some(order_uuid) => WorkOrderGateway::new(state.conn.as_ref().clone())
+            .find_by_uuid(order_uuid)
+            .await
+            .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?
+            .map(|m| m.id)
+            .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?
+            .into(),
+        None => None,
+    };
+    let edited = PreventivePlan {
+        uuid: Some(uuid),
+        last_work_order_id,
+        control_type: PreventiveControlType::from_str(&payload.control_type).unwrap_or_default(),
+        interval_km: payload.interval_km,
+        interval_days: payload.interval_days,
+        last_service_km: payload.last_service_km,
+        last_service_date: payload.last_service_date,
+        ..current
+    };
+    match use_case(&state).update(edited).await {
+        Ok(saved) => {
+            let (plan, status) = use_case(&state)
+                .find_by_uuid(saved.uuid.clone().unwrap_or_default())
+                .await
+                .unwrap_or((saved, PreventiveStatus::default()));
+            Ok(Json(json(&state, plan, status).await))
+        }
+        Err(e) => Err(error(locale, &e.message)),
     }
 }
