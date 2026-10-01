@@ -10,6 +10,7 @@ use crate::gateway::garage_service_gateway::GarageServiceGateway;
 use crate::gateway::garage_service_log_gateway::GarageServiceLogGateway;
 use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
 use crate::gateway::vehicle_gateway::VehicleGateway;
+use chrono::NaiveDateTime;
 use sea_orm::DbErr;
 
 pub const VEHICLE_NOT_FOUND: &str = "Vehicle not found";
@@ -51,6 +52,47 @@ impl GarageAttendanceUseCase {
         manual_priority: Option<i32>,
         origin: GarageAttendanceOrigin,
     ) -> Result<(GarageAttendance, Vec<GarageService>), BusinessError> {
+        self.open_carrying(tenant_id, vehicle_id, manual_priority, origin, &[]).await
+    }
+
+    /// `EPIC-GA-06-S01` (`HRMS-968`, `TRM-414`/`416`/`417`): the triage a physical
+    /// arrival opens by itself. `run` is the departure and arrival that just closed
+    /// (`None` for a first arrival). Nothing happens -- and nothing fails -- when the
+    /// vehicle already has a triage or the catalogue is empty (`TRM-414`).
+    pub async fn open_on_arrival(
+        &self,
+        tenant_id: Option<i64>,
+        vehicle_id: i64,
+        run: Option<(NaiveDateTime, NaiveDateTime)>,
+        min_trip_absence_minutes: i32,
+    ) -> Result<Option<(GarageAttendance, Vec<GarageService>)>, BusinessError> {
+        if self.attendances.find_active_by_vehicle(vehicle_id).await.map_err(database_error)?.is_some() {
+            return Ok(None);
+        }
+        let from_trip = run.is_some_and(|(departed, arrived)| arrived - departed >= chrono::Duration::minutes(min_trip_absence_minutes as i64));
+        let previous = match self.attendances.find_latest_by_vehicle(vehicle_id).await.map_err(database_error)? {
+            Some(a) => GarageServiceEntityMapper::from_models(
+                self.services.find_by_attendance(a.id).await.map_err(database_error)?,
+            ),
+            None => vec![],
+        };
+        let carried: Vec<GarageService> =
+            previous.into_iter().filter(|s| carries_forward(s, from_trip, run.map(|(d, _)| d))).collect();
+        match self.open_carrying(tenant_id, vehicle_id, None, GarageAttendanceOrigin::ArrivalAtBase, &carried).await {
+            Ok(opened) => Ok(Some(opened)),
+            Err(e) if e.message == NO_SERVICES || e.message == ALREADY_ACTIVE => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn open_carrying(
+        &self,
+        tenant_id: Option<i64>,
+        vehicle_id: i64,
+        manual_priority: Option<i32>,
+        origin: GarageAttendanceOrigin,
+        carried: &[GarageService],
+    ) -> Result<(GarageAttendance, Vec<GarageService>), BusinessError> {
         let vehicle = self.vehicles.find_by_id(vehicle_id).await.map_err(database_error)?;
         if !vehicle.is_some_and(|v| v.tenant_id == tenant_id) {
             return Err(BusinessError::new(VEHICLE_NOT_FOUND.to_string()));
@@ -89,6 +131,7 @@ impl GarageAttendanceUseCase {
 
         let mut services = Vec::with_capacity(catalogue.len());
         for model in catalogue {
+            let before = carried.iter().find(|c| c.service_model_id == model.id);
             let saved = self
                 .services
                 .persist(GarageService {
@@ -98,10 +141,10 @@ impl GarageAttendanceUseCase {
                     attendance_id: attendance.id.unwrap_or_default(),
                     service_model_id: model.id,
                     name_key: model.name_key,
-                    state: GarageServiceState::Pending,
-                    performed_at: None,
-                    marked_at: None,
-                    forced_pending_at: None,
+                    state: before.map_or(GarageServiceState::Pending, |c| c.state),
+                    performed_at: before.and_then(|c| c.performed_at),
+                    marked_at: before.and_then(|c| c.marked_at),
+                    forced_pending_at: before.and_then(|c| c.forced_pending_at),
                     created_at: None,
                     created_by: None,
                     updated_at: None,
@@ -237,6 +280,22 @@ impl GarageAttendanceUseCase {
 }
 
 /// A race past the pre-check is still "already active", not a server fault.
+/// `TRM-416`/`417`: whether a previous triage's service record is carried into the
+/// new one. A vehicle that has not moved keeps its finished work; one that came back
+/// from a trip starts clean (the return consumed what was recorded), and so does a
+/// not-needed / not-done mark the vehicle's departure already consumed (`TRM-455`).
+pub fn carries_forward(service: &GarageService, returned_from_trip: bool, departed_at: Option<NaiveDateTime>) -> bool {
+    if returned_from_trip {
+        return false;
+    }
+    match service.state {
+        GarageServiceState::NotNeeded | GarageServiceState::NotDone => {
+            !matches!((service.marked_at, departed_at), (Some(marked), Some(departed)) if marked < departed)
+        }
+        _ => true,
+    }
+}
+
 fn unique_or_database_error(e: DbErr) -> BusinessError {
     if e.to_string().contains("uq_garage_attendance_active_vehicle") {
         return BusinessError::new(ALREADY_ACTIVE.to_string());
@@ -248,4 +307,32 @@ fn database_error(e: DbErr) -> BusinessError {
     let msg = format!("Database error: {}", e);
     log::error!("[GarageAttendanceUseCase] {}", msg);
     BusinessError::new(msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn at(h: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(2026, 9, 30).unwrap().and_hms_opt(h, 0, 0).unwrap()
+    }
+
+    fn service(state: GarageServiceState, marked_at: Option<NaiveDateTime>) -> GarageService {
+        GarageService {
+            id: None, uuid: None, tenant_id: None, attendance_id: 1, service_model_id: 1, name_key: "x".into(), state,
+            performed_at: None, marked_at, forced_pending_at: None, created_at: None, created_by: None, updated_at: None, updated_by: None,
+        }
+    }
+
+    #[test]
+    fn a_vehicle_that_has_not_moved_keeps_its_work_and_one_back_from_a_trip_starts_clean() {
+        let done = service(GarageServiceState::Performed, None);
+        assert!(carries_forward(&done, false, Some(at(8))), "a short absence carries (TRM-416)");
+        assert!(!carries_forward(&done, true, Some(at(8))), "a return from a trip does not (TRM-417)");
+        let not_needed = service(GarageServiceState::NotNeeded, Some(at(7)));
+        assert!(!carries_forward(&not_needed, false, Some(at(8))), "a mark before the departure was consumed by it");
+        assert!(carries_forward(&service(GarageServiceState::NotNeeded, Some(at(9))), false, Some(at(8))));
+        assert!(carries_forward(&service(GarageServiceState::Pending, None), false, None));
+    }
 }

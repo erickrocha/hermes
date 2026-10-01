@@ -236,13 +236,20 @@ pub async fn sync(
     );
 
     match use_case.sync(Some(tenant_id)).await {
-        Ok(outcome) => Ok(Json(FuelSyncOutcomeJson {
+        Ok(outcome) => {
+            // `TRM-1520`: new full tanks mark the fuelling service of open triages. The
+            // sync is already acknowledged and stands whatever happens here.
+            if let Err(e) = crate::endpoints::garage_attendance_endpoint::fuelling_mark_use_case(&state).apply_all_active().await {
+                log::error!("[FuelSync] the automatic fuelling mark failed: {}", e.message);
+            }
+            Ok(Json(FuelSyncOutcomeJson {
             fetched: outcome.fetched,
             imported: outcome.imported,
             updated: outcome.updated,
             reconciled: outcome.reconciled,
             unmatched: outcome.unmatched,
-        })),
+            }))
+        }
         Err(_) => Err(ExceptionResponse::InternalServerError(
             locale,
             ErrorKey::UnexpectedError,

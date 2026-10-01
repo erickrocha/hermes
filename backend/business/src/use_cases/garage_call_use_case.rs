@@ -95,6 +95,15 @@ impl GarageCallUseCase {
         Ok(call_in_force(&call, arrival).then_some(call))
     }
 
+    /// Whether the vehicle is away from base by its physical stamps alone (`TRM-484`).
+    pub async fn is_away(&self, vehicle_id: i64) -> Result<bool, BusinessError> {
+        Ok(match (self.last_arrival(vehicle_id).await?, self.last_departure(vehicle_id).await?) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(arrival), Some(departure)) => departure > arrival,
+        })
+    }
+
     async fn last_arrival(&self, vehicle_id: i64) -> Result<Option<NaiveDateTime>, BusinessError> {
         Ok(self
             .events

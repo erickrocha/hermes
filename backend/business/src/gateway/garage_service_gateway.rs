@@ -74,4 +74,17 @@ impl GarageServiceGateway {
             .all(&self.db)
             .await
     }
+
+    /// The records of these triages that were ever performed, newest first.
+    pub async fn find_performed_by_attendances(
+        &self,
+        attendance_ids: Vec<i64>,
+    ) -> Result<Vec<garage_service_entity::Model>, DbErr> {
+        tenant_select(GarageServiceQuery::find(), garage_service_entity::Column::TenantId)
+            .filter(garage_service_entity::Column::AttendanceId.is_in(attendance_ids))
+            .filter(garage_service_entity::Column::PerformedAt.is_not_null())
+            .order_by_desc(garage_service_entity::Column::PerformedAt)
+            .all(&self.db)
+            .await
+    }
 }

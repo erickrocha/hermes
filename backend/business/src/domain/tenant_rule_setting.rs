@@ -58,6 +58,22 @@ pub struct RuleSettings {
     pub garage_alert_low_percent: f64,
     /// `TRM-474`: a vehicle going to travel is alerted below this tank level
     pub garage_alert_trip_percent: f64,
+    /// `TRM-498`: an extra trip animates on the monitor this many minutes before departing
+    pub garage_monitor_urgent_minutes: i32,
+    /// `TRM-499`: a trip alerts on the monitor this many minutes before departing
+    pub garage_monitor_trip_window_minutes: i32,
+    /// `TRM-499`: a recurring line alerts on the monitor this many minutes before departing
+    pub garage_monitor_line_window_minutes: i32,
+    /// `TRM-495`: the monitor shows this many vehicle cards
+    pub garage_monitor_card_limit: i32,
+    /// `TRM-496`: the monitor shows this many triage rows in the services matrix
+    pub garage_monitor_matrix_rows: i32,
+    /// `TRM-496`: ... and this many service columns
+    pub garage_monitor_matrix_columns: i32,
+    /// `TRM-1523`: a fuelling older than this many hours never marks the fuelling service automatically
+    pub garage_fuelling_freshness_hours: i32,
+    /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
+    pub garage_utc_offset_minutes: i32,
 }
 
 impl Default for RuleSettings {
@@ -88,6 +104,14 @@ impl Default for RuleSettings {
             garage_trip_fuel_exempt_percent: 95.0,
             garage_alert_low_percent: 40.0,
             garage_alert_trip_percent: 95.0,
+            garage_monitor_urgent_minutes: 90,
+            garage_monitor_trip_window_minutes: 120,
+            garage_monitor_line_window_minutes: 30,
+            garage_monitor_card_limit: 6,
+            garage_monitor_matrix_rows: 10,
+            garage_monitor_matrix_columns: 8,
+            garage_fuelling_freshness_hours: 24,
+            garage_utc_offset_minutes: -180,
         }
     }
 }
@@ -120,6 +144,14 @@ impl From<&Model> for RuleSettings {
             garage_trip_fuel_exempt_percent: m.garage_trip_fuel_exempt_percent,
             garage_alert_low_percent: m.garage_alert_low_percent,
             garage_alert_trip_percent: m.garage_alert_trip_percent,
+            garage_monitor_urgent_minutes: m.garage_monitor_urgent_minutes,
+            garage_monitor_trip_window_minutes: m.garage_monitor_trip_window_minutes,
+            garage_monitor_line_window_minutes: m.garage_monitor_line_window_minutes,
+            garage_monitor_card_limit: m.garage_monitor_card_limit,
+            garage_monitor_matrix_rows: m.garage_monitor_matrix_rows,
+            garage_monitor_matrix_columns: m.garage_monitor_matrix_columns,
+            garage_fuelling_freshness_hours: m.garage_fuelling_freshness_hours,
+            garage_utc_offset_minutes: m.garage_utc_offset_minutes,
         }
     }
 }
@@ -155,6 +187,22 @@ pub struct TenantRuleSetting {
     pub garage_trip_fuel_exempt_percent: f64,
     pub garage_alert_low_percent: f64,
     pub garage_alert_trip_percent: f64,
+    /// `TRM-498`: an extra trip animates on the monitor this many minutes before departing
+    pub garage_monitor_urgent_minutes: i32,
+    /// `TRM-499`: a trip alerts on the monitor this many minutes before departing
+    pub garage_monitor_trip_window_minutes: i32,
+    /// `TRM-499`: a recurring line alerts on the monitor this many minutes before departing
+    pub garage_monitor_line_window_minutes: i32,
+    /// `TRM-495`: the monitor shows this many vehicle cards
+    pub garage_monitor_card_limit: i32,
+    /// `TRM-496`: the monitor shows this many triage rows in the services matrix
+    pub garage_monitor_matrix_rows: i32,
+    /// `TRM-496`: ... and this many service columns
+    pub garage_monitor_matrix_columns: i32,
+    /// `TRM-1523`: a fuelling older than this many hours never marks the fuelling service automatically
+    pub garage_fuelling_freshness_hours: i32,
+    /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
+    pub garage_utc_offset_minutes: i32,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -192,6 +240,14 @@ impl TenantRuleSetting {
             garage_trip_fuel_exempt_percent: s.garage_trip_fuel_exempt_percent,
             garage_alert_low_percent: s.garage_alert_low_percent,
             garage_alert_trip_percent: s.garage_alert_trip_percent,
+            garage_monitor_urgent_minutes: s.garage_monitor_urgent_minutes,
+            garage_monitor_trip_window_minutes: s.garage_monitor_trip_window_minutes,
+            garage_monitor_line_window_minutes: s.garage_monitor_line_window_minutes,
+            garage_monitor_card_limit: s.garage_monitor_card_limit,
+            garage_monitor_matrix_rows: s.garage_monitor_matrix_rows,
+            garage_monitor_matrix_columns: s.garage_monitor_matrix_columns,
+            garage_fuelling_freshness_hours: s.garage_fuelling_freshness_hours,
+            garage_utc_offset_minutes: s.garage_utc_offset_minutes,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -226,6 +282,14 @@ impl TenantRuleSetting {
             garage_trip_fuel_exempt_percent: self.garage_trip_fuel_exempt_percent,
             garage_alert_low_percent: self.garage_alert_low_percent,
             garage_alert_trip_percent: self.garage_alert_trip_percent,
+            garage_monitor_urgent_minutes: self.garage_monitor_urgent_minutes,
+            garage_monitor_trip_window_minutes: self.garage_monitor_trip_window_minutes,
+            garage_monitor_line_window_minutes: self.garage_monitor_line_window_minutes,
+            garage_monitor_card_limit: self.garage_monitor_card_limit,
+            garage_monitor_matrix_rows: self.garage_monitor_matrix_rows,
+            garage_monitor_matrix_columns: self.garage_monitor_matrix_columns,
+            garage_fuelling_freshness_hours: self.garage_fuelling_freshness_hours,
+            garage_utc_offset_minutes: self.garage_utc_offset_minutes,
         }
     }
 }
@@ -269,6 +333,14 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_trip_fuel_exempt_percent: Set(d.garage_trip_fuel_exempt_percent),
             garage_alert_low_percent: Set(d.garage_alert_low_percent),
             garage_alert_trip_percent: Set(d.garage_alert_trip_percent),
+            garage_monitor_urgent_minutes: Set(d.garage_monitor_urgent_minutes),
+            garage_monitor_trip_window_minutes: Set(d.garage_monitor_trip_window_minutes),
+            garage_monitor_line_window_minutes: Set(d.garage_monitor_line_window_minutes),
+            garage_monitor_card_limit: Set(d.garage_monitor_card_limit),
+            garage_monitor_matrix_rows: Set(d.garage_monitor_matrix_rows),
+            garage_monitor_matrix_columns: Set(d.garage_monitor_matrix_columns),
+            garage_fuelling_freshness_hours: Set(d.garage_fuelling_freshness_hours),
+            garage_utc_offset_minutes: Set(d.garage_utc_offset_minutes),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -306,6 +378,14 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_trip_fuel_exempt_percent: e.garage_trip_fuel_exempt_percent,
             garage_alert_low_percent: e.garage_alert_low_percent,
             garage_alert_trip_percent: e.garage_alert_trip_percent,
+            garage_monitor_urgent_minutes: e.garage_monitor_urgent_minutes,
+            garage_monitor_trip_window_minutes: e.garage_monitor_trip_window_minutes,
+            garage_monitor_line_window_minutes: e.garage_monitor_line_window_minutes,
+            garage_monitor_card_limit: e.garage_monitor_card_limit,
+            garage_monitor_matrix_rows: e.garage_monitor_matrix_rows,
+            garage_monitor_matrix_columns: e.garage_monitor_matrix_columns,
+            garage_fuelling_freshness_hours: e.garage_fuelling_freshness_hours,
+            garage_utc_offset_minutes: e.garage_utc_offset_minutes,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -347,6 +427,14 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
                 garage_trip_fuel_exempt_percent: e.garage_trip_fuel_exempt_percent.take().unwrap_or_default(),
                 garage_alert_low_percent: e.garage_alert_low_percent.take().unwrap_or_default(),
                 garage_alert_trip_percent: e.garage_alert_trip_percent.take().unwrap_or_default(),
+                garage_monitor_urgent_minutes: e.garage_monitor_urgent_minutes.take().unwrap_or_default(),
+                garage_monitor_trip_window_minutes: e.garage_monitor_trip_window_minutes.take().unwrap_or_default(),
+                garage_monitor_line_window_minutes: e.garage_monitor_line_window_minutes.take().unwrap_or_default(),
+                garage_monitor_card_limit: e.garage_monitor_card_limit.take().unwrap_or_default(),
+                garage_monitor_matrix_rows: e.garage_monitor_matrix_rows.take().unwrap_or_default(),
+                garage_monitor_matrix_columns: e.garage_monitor_matrix_columns.take().unwrap_or_default(),
+                garage_fuelling_freshness_hours: e.garage_fuelling_freshness_hours.take().unwrap_or_default(),
+                garage_utc_offset_minutes: e.garage_utc_offset_minutes.take().unwrap_or_default(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

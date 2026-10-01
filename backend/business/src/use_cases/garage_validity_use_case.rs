@@ -126,6 +126,19 @@ impl GarageValidityUseCase {
         Ok(Evaluation { services: effective, required, names, tank, rules })
     }
 
+    pub async fn rules_for(&self, tenant_id: Option<i64>) -> Result<RuleSettings, BusinessError> {
+        self.rules.settings_for(tenant_id).await.map_err(database_error)
+    }
+
+    /// The vehicle's tank reading whether or not any service is tank-governed
+    /// (the monitor's cards show every vehicle's tank, `TRM-495`).
+    pub async fn tank_fact(&self, vehicle_id: i64) -> TankFact {
+        match self.gauge.gauge(vehicle_id).await {
+            Ok(TankGauge::Reading { percent, .. }) => TankFact::Percent(percent),
+            _ => TankFact::NoUsableReading,
+        }
+    }
+
     async fn presence(&self, vehicle_id: i64) -> Result<PresenceFacts, BusinessError> {
         let at = |m: Option<entity::vehicle_presence_event_entity::Model>| m.map(|m| m.occurred_at.naive_utc());
         let last_arrival_at = at(self.events.find_latest_of_kind(vehicle_id, "Arrival").await.map_err(database_error)?);

@@ -33,6 +33,8 @@ pub mod vehicle_expense_use_case;
 pub mod fuel_entry_use_case;
 pub mod fuel_gauge_use_case;
 pub mod garage_attendance_use_case;
+pub mod garage_fuelling_mark_use_case;
+pub mod garage_rollover_use_case;
 pub mod garage_call_use_case;
 pub mod garage_queue_use_case;
 pub mod effective_schedule;

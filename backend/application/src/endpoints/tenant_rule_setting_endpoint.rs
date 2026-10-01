@@ -47,6 +47,14 @@ fn json(tenant_id: Option<i64>, uuid: Option<String>, s: RuleSettings) -> Tenant
         garage_trip_fuel_exempt_percent: s.garage_trip_fuel_exempt_percent,
         garage_alert_low_percent: s.garage_alert_low_percent,
         garage_alert_trip_percent: s.garage_alert_trip_percent,
+        garage_monitor_urgent_minutes: s.garage_monitor_urgent_minutes,
+        garage_monitor_trip_window_minutes: s.garage_monitor_trip_window_minutes,
+        garage_monitor_line_window_minutes: s.garage_monitor_line_window_minutes,
+        garage_monitor_card_limit: s.garage_monitor_card_limit,
+        garage_monitor_matrix_rows: s.garage_monitor_matrix_rows,
+        garage_monitor_matrix_columns: s.garage_monitor_matrix_columns,
+        garage_fuelling_freshness_hours: s.garage_fuelling_freshness_hours,
+        garage_utc_offset_minutes: s.garage_utc_offset_minutes,
     }
 }
 
@@ -100,6 +108,14 @@ pub async fn configure(
         garage_trip_fuel_exempt_percent: p.garage_trip_fuel_exempt_percent,
         garage_alert_low_percent: p.garage_alert_low_percent,
         garage_alert_trip_percent: p.garage_alert_trip_percent,
+        garage_monitor_urgent_minutes: p.garage_monitor_urgent_minutes,
+        garage_monitor_trip_window_minutes: p.garage_monitor_trip_window_minutes,
+        garage_monitor_line_window_minutes: p.garage_monitor_line_window_minutes,
+        garage_monitor_card_limit: p.garage_monitor_card_limit,
+        garage_monitor_matrix_rows: p.garage_monitor_matrix_rows,
+        garage_monitor_matrix_columns: p.garage_monitor_matrix_columns,
+        garage_fuelling_freshness_hours: p.garage_fuelling_freshness_hours,
+        garage_utc_offset_minutes: p.garage_utc_offset_minutes,
     };
     match use_case(&state).configure(TenantRuleSetting::new(tenant_id, settings)).await {
         Ok(saved) => Ok(Json(json(saved.tenant_id, saved.uuid.clone(), saved.settings()))),

@@ -133,6 +133,20 @@ impl FuelEntryGateway {
             .await
     }
 
+    /// `TRM-1520`: the vehicle's latest **provider-reported** full tank that still
+    /// stands (not deleted, not absorbed by a unification).
+    pub async fn find_latest_provider_full_tank(&self, vehicle_id: i64) -> Result<Option<fuel_entry_entity::Model>, DbErr> {
+        tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::VehicleId.eq(vehicle_id))
+            .filter(fuel_entry_entity::Column::FullTank.eq(true))
+            .filter(fuel_entry_entity::Column::Origin.eq("CtaSync"))
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
+            .order_by_desc(fuel_entry_entity::Column::RecordedAt)
+            .order_by_desc(fuel_entry_entity::Column::Id)
+            .one(&self.db)
+            .await
+    }
+
     /// `TRM-511`/`512`: identifies an already-imported transaction so the
     /// sync can correct it in place rather than re-import it as a duplicate.
     pub async fn find_by_provider_transaction_id(

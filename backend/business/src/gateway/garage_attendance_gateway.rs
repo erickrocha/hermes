@@ -6,7 +6,7 @@ use entity::prelude::GarageAttendanceEntity as GarageAttendanceQuery;
 use entity::garage_attendance_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder,
 };
 
 /// `HRMS-958` (`D-09`): every read and delete goes through
@@ -79,6 +79,28 @@ impl GarageAttendanceGateway {
         tenant_select(GarageAttendanceQuery::find(), garage_attendance_entity::Column::TenantId)
             .filter(garage_attendance_entity::Column::ActiveMarker.is_not_null())
             .all(&self.db)
+            .await
+    }
+
+    /// Every triage id the vehicle ever had, open or closed -- the history the
+    /// monitor's "last performed" reads (`TRM-496`).
+    pub async fn find_ids_by_vehicle(&self, vehicle_id: i64) -> Result<Vec<i64>, DbErr> {
+        Ok(tenant_select(GarageAttendanceQuery::find(), garage_attendance_entity::Column::TenantId)
+            .filter(garage_attendance_entity::Column::VehicleId.eq(vehicle_id))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|a| a.id)
+            .collect())
+    }
+
+    /// The vehicle's most recent triage, open or closed -- the one a new triage
+    /// carries its services forward from (`TRM-416`).
+    pub async fn find_latest_by_vehicle(&self, vehicle_id: i64) -> Result<Option<garage_attendance_entity::Model>, DbErr> {
+        tenant_select(GarageAttendanceQuery::find(), garage_attendance_entity::Column::TenantId)
+            .filter(garage_attendance_entity::Column::VehicleId.eq(vehicle_id))
+            .order_by_desc(garage_attendance_entity::Column::Id)
+            .one(&self.db)
             .await
     }
 }

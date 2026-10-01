@@ -196,6 +196,10 @@ impl Modify for SecurityAddon {
         endpoints::garage_attendance_endpoint::mark_service,
         endpoints::garage_attendance_endpoint::checkout,
         endpoints::garage_attendance_endpoint::queue,
+        endpoints::garage_attendance_endpoint::monitor,
+        endpoints::garage_attendance_endpoint::call_list,
+        endpoints::garage_attendance_endpoint::monitor_cards,
+        endpoints::garage_attendance_endpoint::monitor_matrix,
         endpoints::garage_call_endpoint::call,
         endpoints::garage_call_endpoint::cancel,
         endpoints::garage_call_endpoint::get_active,
@@ -283,6 +287,14 @@ impl Modify for SecurityAddon {
             endpoints::json::garage_attendance_json::GarageServiceJson,
             endpoints::json::garage_attendance_json::GarageServiceMarkJson,
             endpoints::json::garage_attendance_json::GarageQueueEntryJson,
+            endpoints::json::garage_attendance_json::GarageMonitorEntryJson,
+            endpoints::json::garage_attendance_json::GarageMonitorCardJson,
+            endpoints::json::garage_attendance_json::GarageCallListEntryJson,
+            endpoints::json::garage_attendance_json::GarageMonitorCardsJson,
+            endpoints::json::garage_attendance_json::GarageMatrixJson,
+            endpoints::json::garage_attendance_json::GarageMatrixColumnJson,
+            endpoints::json::garage_attendance_json::GarageMatrixRowJson,
+            endpoints::json::garage_attendance_json::GarageMatrixCellJson,
             endpoints::json::garage_attendance_json::GarageCallRequestJson,
             endpoints::json::garage_attendance_json::GarageCallJson,
             endpoints::json::schedule_json::EffectiveScheduleJson,
@@ -372,6 +384,9 @@ async fn start() -> anyhow::Result<()> {
     let state = AppState {
         conn: Arc::new(connection),
     };
+
+    // EPIC-GA-06-S03: the garage's day boundary runs in the background.
+    crate::infrastructure::garage_jobs::spawn_rollover(state.conn.as_ref().clone());
 
     log::info!("Starting server...");
 

@@ -5,7 +5,7 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
 };
 use crate::endpoints::json::garage_attendance_json::{
-    GarageAttendanceJson, GarageAttendanceOpenJson, GarageQueueEntryJson, GarageServiceJson, GarageServiceMarkJson,
+    GarageAttendanceJson, GarageAttendanceOpenJson, GarageCallListEntryJson, GarageMatrixCellJson, GarageMatrixColumnJson, GarageMatrixJson, GarageMatrixRowJson, GarageMonitorCardJson, GarageMonitorCardsJson, GarageMonitorEntryJson, GarageQueueEntryJson, GarageServiceJson, GarageServiceMarkJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -40,6 +40,22 @@ fn use_case(state: &AppState) -> GarageAttendanceUseCase {
         GarageServiceLogGateway::new(db.clone()),
         GarageServiceModelGateway::new(db.clone()),
         VehicleGateway::new(db),
+    )
+}
+
+/// `EPIC-GA-06-S02`: the automatic fuelling mark, for the endpoints that bring a
+/// fuelling or a triage into being.
+pub fn fuelling_mark_use_case(state: &AppState) -> business::use_cases::garage_fuelling_mark_use_case::GarageFuellingMarkUseCase {
+    use business::gateway::*;
+    let db = state.conn.as_ref().clone();
+    business::use_cases::garage_fuelling_mark_use_case::GarageFuellingMarkUseCase::new(
+        GarageAttendanceGateway::new(db.clone()),
+        GarageServiceGateway::new(db.clone()),
+        GarageServiceLogGateway::new(db.clone()),
+        GarageServiceModelGateway::new(db.clone()),
+        fuel_entry_gateway::FuelEntryGateway::new(db.clone()),
+        vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
+        tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
     )
 }
 
@@ -328,38 +344,194 @@ pub async fn queue(
     Extension(locale): Extension<Locale>,
     Extension(_current_user): Extension<User>,
 ) -> HttpResponse<Json<Vec<GarageQueueEntryJson>>> {
+    match queue_use_case(&state).queue().await {
+        Ok(entries) => Ok(Json(entries.iter().map(queue_json).collect())),
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+fn queue_use_case(state: &AppState) -> business::use_cases::garage_queue_use_case::GarageQueueUseCase {
     use business::gateway::*;
     use business::use_cases::garage_call_use_case::GarageCallUseCase;
-    use business::use_cases::garage_queue_use_case::GarageQueueUseCase;
     let db = state.conn.as_ref().clone();
-    let queue = GarageQueueUseCase::new(
+    business::use_cases::garage_queue_use_case::GarageQueueUseCase::new(
         GarageAttendanceGateway::new(db.clone()),
         GarageServiceGateway::new(db.clone()),
-        crate::endpoints::schedule_endpoint::schedule_use_case(&state),
+        crate::endpoints::schedule_endpoint::schedule_use_case(state),
         VehicleGateway::new(db.clone()),
-        validity_use_case(&state),
+        validity_use_case(state),
         GarageCallUseCase::new(
             garage_call_gateway::GarageCallGateway::new(db.clone()),
             vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
-            VehicleGateway::new(db),
+            VehicleGateway::new(db.clone()),
         ),
-    );
-    match queue.queue().await {
+        GarageServiceModelGateway::new(db),
+    )
+}
+
+fn queue_json(e: &business::use_cases::garage_queue_use_case::QueueEntry) -> GarageQueueEntryJson {
+    GarageQueueEntryJson {
+        attendance_uuid: e.attendance.uuid.clone(),
+        vehicle_uuid: e.vehicle_uuid.clone(),
+        prefix: e.prefix.clone(),
+        manual_priority: e.attendance.manual_priority,
+        next_departure: e.next_departure,
+        required_pending: e.required_pending.clone(),
+        fill_tank_alert: e.fill_tank_alert,
+        called_by_manager: e.called_by_manager,
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/monitor",
+    responses(
+        (status = 200, description = "The wall monitor's queue (TRM-497): the yard's vehicles with imminent work outstanding first, vehicles with nothing left to do last to free the display, then manual priority, next departure and prefix. Each entry carries the departure's readiness (TRM-499: `Alert` when a required service is pending inside the window of a trip (default 120 min) or a line (30 min); `Preparing` when anything is outstanding; `Ready` otherwise; absent with no departure) and `urgent` (TRM-498: an extra trip inside its window (90 min) with a required service pending -- never a line). The windows are per-tenant settings. Read-only: it writes nothing (TRM-493). **Roles:** any authenticated role; own tenant only.", body = Vec<GarageMonitorEntryJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn monitor(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(_current_user): Extension<User>,
+) -> HttpResponse<Json<Vec<GarageMonitorEntryJson>>> {
+    use business::use_cases::garage_readiness::{departure_readiness, urgent_animation};
+    let now = chrono::Utc::now().naive_utc();
+    match queue_use_case(&state).monitor().await {
         Ok(entries) => Ok(Json(
             entries
-                .into_iter()
-                .map(|e| GarageQueueEntryJson {
-                    attendance_uuid: e.attendance.uuid,
-                    vehicle_uuid: e.vehicle_uuid,
-                    prefix: e.prefix,
-                    manual_priority: e.attendance.manual_priority,
-                    next_departure: e.next_departure,
-                    required_pending: e.required_pending,
-                    fill_tank_alert: e.fill_tank_alert,
-                    called_by_manager: e.called_by_manager,
+                .iter()
+                .map(|e| {
+                    let pending = !e.required_pending.is_empty();
+                    GarageMonitorEntryJson {
+                        entry: queue_json(e),
+                        readiness: e.next_departure.map(|at| {
+                            format!("{:?}", departure_readiness(at, e.next_is_trip, now, pending, e.outstanding, &e.rules))
+                        }),
+                        urgent: e.next_departure.is_some_and(|at| urgent_animation(at, e.next_is_trip, now, pending, &e.rules)),
+                    }
                 })
                 .collect(),
         )),
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/monitor/cards",
+    responses(
+        (status = 200, description = "The wall monitor's vehicle cards (TRM-495/1512): vehicles in the garage, need-to-refuel first (the same fill-the-tank alert as every other surface) and then the lowest tank; a vehicle with no trustworthy reading after those with one. Capped at the tenant's card limit (default 6) with `notShown` saying how many were left out. Read-only. The maintenance situation and the last garage-cycle distance the legacy card also carried are not yet included. **Roles:** any authenticated role; own tenant only.", body = GarageMonitorCardsJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn monitor_cards(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(_current_user): Extension<User>,
+) -> HttpResponse<Json<GarageMonitorCardsJson>> {
+    match queue_use_case(&state).cards().await {
+        Ok((cards, not_shown)) => Ok(Json(GarageMonitorCardsJson {
+            cards: cards
+                .into_iter()
+                .map(|c| GarageMonitorCardJson {
+                    vehicle_uuid: c.vehicle_uuid,
+                    prefix: c.prefix,
+                    tank_percent: c.tank_percent,
+                    needs_refuel: c.needs_refuel,
+                })
+                .collect(),
+            not_shown,
+        })),
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/call-list",
+    responses(
+        (status = 200, description = "The call-to-base list (TRM-485/487/1504): vehicles away from base that have a manual call in force (listed even with no trip scheduled and every service in order), a further departure still ahead (a started one is ignored), or a tank that calls on its own (the alert cuts, never a second computation). Manual calls first, then the next departure, then prefix. Read-only: it never changes a vehicle's tag -- only the tracker confirms arrival. Known gap: a resolved fuelling service does not yet suppress a tank call (TRM-477/1508). **Roles:** any authenticated role; own tenant only.", body = Vec<GarageCallListEntryJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn call_list(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(_current_user): Extension<User>,
+) -> HttpResponse<Json<Vec<GarageCallListEntryJson>>> {
+    match queue_use_case(&state).call_list().await {
+        Ok(entries) => Ok(Json(
+            entries
+                .into_iter()
+                .map(|e| GarageCallListEntryJson {
+                    vehicle_uuid: e.vehicle_uuid,
+                    prefix: e.prefix,
+                    next_departure: e.next_departure,
+                    called_by_manager: e.reasons.manual,
+                    has_departure_ahead: e.reasons.departure,
+                    tank_calls: e.reasons.tank,
+                })
+                .collect(),
+        )),
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/monitor/matrix",
+    responses(
+        (status = 200, description = "The wall monitor's services matrix (TRM-496): active triages (rows, in the monitor's order) against the catalogue's active services (columns, external before internal). Each cell carries the service's effective state, the stamp of its stored state (performance, marking or forcing instant) and, for a pending cell, the last time that service was performed on that vehicle. A cell is absent where the triage has no record of the service. Capped at the tenant's matrix size (default 10 rows x 8 columns) with the counts left out. Read-only. **Roles:** any authenticated role; own tenant only.", body = GarageMatrixJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn monitor_matrix(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(_current_user): Extension<User>,
+) -> HttpResponse<Json<GarageMatrixJson>> {
+    match queue_use_case(&state).matrix().await {
+        Ok(m) => Ok(Json(GarageMatrixJson {
+            columns: m
+                .columns
+                .into_iter()
+                .map(|c| GarageMatrixColumnJson { service_model_uuid: c.uuid, name: c.name, internal: c.internal })
+                .collect(),
+            rows: m
+                .rows
+                .into_iter()
+                .map(|r| GarageMatrixRowJson {
+                    vehicle_uuid: r.vehicle_uuid,
+                    prefix: r.prefix,
+                    cells: r
+                        .cells
+                        .into_iter()
+                        .map(|c| {
+                            c.map(|c| GarageMatrixCellJson {
+                                effective_state: c.effective_state.to_string(),
+                                stamp: c.stamp,
+                                last_performed_at: c.last_performed_at,
+                            })
+                        })
+                        .collect(),
+                })
+                .collect(),
+            rows_not_shown: m.rows_not_shown,
+            columns_not_shown: m.columns_not_shown,
+        })),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
     }
 }

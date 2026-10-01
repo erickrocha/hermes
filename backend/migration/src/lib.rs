@@ -68,6 +68,11 @@ mod m20260930_000013_create_vehicle_presence_event;
 mod m20260930_000014_add_garage_validity_settings;
 mod m20260930_000015_create_garage_call_and_alert_settings;
 mod m20260930_000016_add_transport_demand_kind;
+mod m20260930_000017_add_garage_monitor_settings;
+mod m20260930_000018_add_garage_monitor_card_limit;
+mod m20260930_000019_add_garage_monitor_matrix_size;
+mod m20260930_000020_add_garage_fuelling_freshness;
+mod m20260930_000021_add_garage_utc_offset;
 
 pub struct Migrator;
 
@@ -141,6 +146,11 @@ impl MigratorTrait for Migrator {
             Box::new(m20260930_000014_add_garage_validity_settings::Migration),
             Box::new(m20260930_000015_create_garage_call_and_alert_settings::Migration),
             Box::new(m20260930_000016_add_transport_demand_kind::Migration),
+            Box::new(m20260930_000017_add_garage_monitor_settings::Migration),
+            Box::new(m20260930_000018_add_garage_monitor_card_limit::Migration),
+            Box::new(m20260930_000019_add_garage_monitor_matrix_size::Migration),
+            Box::new(m20260930_000020_add_garage_fuelling_freshness::Migration),
+            Box::new(m20260930_000021_add_garage_utc_offset::Migration),
         ]
     }
 }

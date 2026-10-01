@@ -77,6 +77,14 @@ pub fn is_sensible(s: &RuleSettings) -> bool {
         && s.garage_alert_low_percent > 0.0
         && s.garage_alert_low_percent < s.garage_alert_trip_percent
         && s.garage_alert_trip_percent <= 100.0
+        && s.garage_monitor_urgent_minutes > 0
+        && s.garage_monitor_trip_window_minutes > 0
+        && s.garage_monitor_line_window_minutes > 0
+        && s.garage_monitor_card_limit > 0
+        && s.garage_monitor_matrix_rows > 0
+        && s.garage_monitor_matrix_columns > 0
+        && s.garage_fuelling_freshness_hours > 0
+        && s.garage_utc_offset_minutes.abs() <= 14 * 60
 }
 
 fn database_error(e: DbErr) -> BusinessError {

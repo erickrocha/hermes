@@ -60,4 +60,20 @@ pub struct TenantRuleSettingJson {
     pub garage_alert_low_percent: f64,
     /// Default 95. `TRM-474`: a vehicle going to travel is alerted below this tank level
     pub garage_alert_trip_percent: f64,
+    /// `TRM-498`: an extra trip animates on the monitor this many minutes before departing
+    pub garage_monitor_urgent_minutes: i32,
+    /// `TRM-499`: a trip alerts on the monitor this many minutes before departing
+    pub garage_monitor_trip_window_minutes: i32,
+    /// `TRM-499`: a recurring line alerts on the monitor this many minutes before departing
+    pub garage_monitor_line_window_minutes: i32,
+    /// `TRM-495`: the monitor shows this many vehicle cards
+    pub garage_monitor_card_limit: i32,
+    /// `TRM-496`: the monitor shows this many triage rows in the services matrix
+    pub garage_monitor_matrix_rows: i32,
+    /// `TRM-496`: ... and this many service columns
+    pub garage_monitor_matrix_columns: i32,
+    /// `TRM-1523`: a fuelling older than this many hours never marks the fuelling service automatically
+    pub garage_fuelling_freshness_hours: i32,
+    /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
+    pub garage_utc_offset_minutes: i32,
 }

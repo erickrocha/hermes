@@ -86,6 +86,96 @@ pub struct GarageQueueEntryJson {
     pub called_by_manager: bool,
 }
 
+/// `EPIC-GA-07-S01` (`HRMS-964`): a queue entry as the wall monitor shows it.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMonitorEntryJson {
+    #[serde(flatten)]
+    pub entry: GarageQueueEntryJson,
+    /// `TRM-499`: `Alert`, `Preparing` or `Ready`; absent when no departure is scheduled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<String>,
+    /// `TRM-498`: the urgent animation -- an extra trip inside its window with a required service pending.
+    pub urgent: bool,
+}
+
+/// `EPIC-GA-07-S02` (`HRMS-965`): a vehicle card on the wall monitor.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMonitorCardJson {
+    pub vehicle_uuid: String,
+    pub prefix: String,
+    /// The estimated tank level; absent when no reading can be trusted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tank_percent: Option<f64>,
+    pub needs_refuel: bool,
+}
+
+/// The cards shown and how many vehicles were left out (`TRM-495`).
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMonitorCardsJson {
+    pub cards: Vec<GarageMonitorCardJson>,
+    pub not_shown: usize,
+}
+
+/// `EPIC-GA-07-S03` (`HRMS-966`): an away vehicle on the call-to-base list.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageCallListEntryJson {
+    pub vehicle_uuid: String,
+    pub prefix: String,
+    /// The next departure still ahead (a started one is ignored, `TRM-487`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_departure: Option<NaiveDateTime>,
+    /// `TRM-485`: the manager called it.
+    pub called_by_manager: bool,
+    /// `TRM-487`: a further departure is ahead.
+    pub has_departure_ahead: bool,
+    /// `TRM-1504`: the tank alone calls it.
+    pub tank_calls: bool,
+}
+
+/// `EPIC-GA-07-S04` (`HRMS-967`, `TRM-496`): the wall monitor's services matrix.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMatrixJson {
+    pub columns: Vec<GarageMatrixColumnJson>,
+    pub rows: Vec<GarageMatrixRowJson>,
+    pub rows_not_shown: usize,
+    pub columns_not_shown: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMatrixColumnJson {
+    pub service_model_uuid: String,
+    pub name: String,
+    /// External services are listed before internal ones.
+    pub internal: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMatrixRowJson {
+    pub vehicle_uuid: String,
+    pub prefix: String,
+    /// One per column; `null` where the triage has no record of that service.
+    pub cells: Vec<Option<GarageMatrixCellJson>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMatrixCellJson {
+    pub effective_state: String,
+    /// The stamp of the stored state: performance, marking or forcing instant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stamp: Option<NaiveDateTime>,
+    /// For a pending cell: the last time this service was performed on the vehicle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_performed_at: Option<NaiveDateTime>,
+}
+
 /// `EPIC-GA-05-S02` (`HRMS-963`, `TRM-483`): a vehicle to call to, or cancel a call for.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
