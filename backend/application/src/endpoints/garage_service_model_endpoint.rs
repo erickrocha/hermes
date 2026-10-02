@@ -14,11 +14,15 @@ use business::domain::enums::GarageServiceGroup;
 use business::domain::garage_service_model::GarageServiceModel;
 use business::domain::user::User;
 use business::gateway::garage_service_model_gateway::GarageServiceModelGateway;
+use business::gateway::vehicle_gateway::VehicleGateway;
 use business::use_cases::garage_service_model_use_case::{DUPLICATE_NAME, GarageServiceModelUseCase};
 use std::str::FromStr;
 
 fn use_case(state: &AppState) -> GarageServiceModelUseCase {
-    GarageServiceModelUseCase::new(GarageServiceModelGateway::new(state.conn.as_ref().clone()))
+    GarageServiceModelUseCase::new(
+        GarageServiceModelGateway::new(state.conn.as_ref().clone()),
+        VehicleGateway::new(state.conn.as_ref().clone()),
+    )
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
@@ -38,6 +42,7 @@ fn json(m: GarageServiceModel) -> GarageServiceModelJson {
         service_group: m.service_group.to_string(),
         required_for_departure: m.required_for_departure,
         governed_by_tank: m.governed_by_tank,
+        applicability: m.applicability,
     }
 }
 
@@ -61,6 +66,7 @@ fn domain(
         service_group,
         required_for_departure: payload.required_for_departure,
         governed_by_tank: payload.governed_by_tank,
+        applicability: payload.applicability,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -74,8 +80,8 @@ fn domain(
     path = "/garage-service",
     request_body = GarageServiceModelJson,
     responses(
-        (status = 201, description = "The garage service is added to the tenant's catalogue (TRM-430). The group must be `External` or `Internal` (TRM-431); `requiredForDeparture` is an explicit attribute (TRM-470). **Roles:** SysAdmin (unbound; names the owning tenant); TenantOwner (own tenant only).", body = GarageServiceModelJson),
-        (status = 400, description = "Blank name, or a group other than External/Internal", body = BadRequestErrorJson),
+        (status = 201, description = "The garage service is added to the tenant's catalogue (TRM-430). The group must be `External` or `Internal` (TRM-431); `requiredForDeparture` is an explicit attribute (TRM-470). `applicability` may be `all`, `vehicleTypes`, or `vehicles` (TRM-432). **Roles:** SysAdmin (unbound; names the owning tenant); TenantOwner (own tenant only).", body = GarageServiceModelJson),
+        (status = 400, description = "Blank name, invalid applicability values, or a group other than External/Internal", body = BadRequestErrorJson),
         (status = 409, description = "`DuplicateGarageService`: the tenant already has a service with this normalised name (TRM-433)", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller's role may not manage the garage catalogue", body = ForbiddenErrorJson),
@@ -107,8 +113,8 @@ pub async fn add(
     params(("uuid" = String, Path, description = "Garage service UUID")),
     request_body = GarageServiceModelJson,
     responses(
-        (status = 200, description = "The service's name, order, active flag, group and required flag are replaced. **Roles:** SysAdmin, TenantOwner (own tenant only).", body = GarageServiceModelJson),
-        (status = 400, description = "Blank name, or a group other than External/Internal", body = BadRequestErrorJson),
+        (status = 200, description = "The service's name, order, active flag, group, required flag and applicability are replaced. **Roles:** SysAdmin, TenantOwner (own tenant only).", body = GarageServiceModelJson),
+        (status = 400, description = "Blank name, invalid applicability values, or a group other than External/Internal", body = BadRequestErrorJson),
         (status = 409, description = "`DuplicateGarageService`: another service already has the new normalised name", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller's role may not manage the garage catalogue", body = ForbiddenErrorJson),

@@ -19,6 +19,7 @@ pub struct Model {
     pub required_for_departure: bool,
     /// `TRM-462`: governed by the tank level, not by elapsed time (an explicit attribute).
     pub governed_by_tank: bool,
+    pub applicability: String,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

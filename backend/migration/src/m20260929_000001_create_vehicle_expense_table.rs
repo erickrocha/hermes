@@ -27,7 +27,7 @@ impl MigrationTrait for Migration {
                             .from(VehicleExpense::Table, VehicleExpense::TenantId)
                             .to(Tenant::Table, Tenant::Id),
                     )
-                    .col(big_integer(VehicleExpense::VehicleId).not_null())
+                    .col(integer(VehicleExpense::VehicleId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_vehicle_expense_vehicle")

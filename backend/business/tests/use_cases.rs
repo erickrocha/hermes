@@ -6120,13 +6120,16 @@ fn a_tenants_reconciliation_tolerance_decides_what_counts_as_the_same_fuelling()
 
 // ------------------------------------------------------- EPIC-GA-01-S01 garage service catalogue
 use business::domain::enums::GarageServiceGroup;
-use business::domain::garage_service_model::GarageServiceModel;
+use business::domain::garage_service_model::{GarageServiceApplicability, GarageServiceModel};
 use business::use_cases::garage_service_model_use_case::{
-    DUPLICATE_NAME, GarageServiceModelUseCase, NAME_REQUIRED as GARAGE_NAME_REQUIRED,
+    DUPLICATE_NAME, GarageServiceModelUseCase, INVALID_APPLICABILITY, NAME_REQUIRED as GARAGE_NAME_REQUIRED,
 };
 
 fn garage_catalogue(db: &DatabaseConnection) -> GarageServiceModelUseCase {
-    GarageServiceModelUseCase::new(business::gateway::garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()))
+    GarageServiceModelUseCase::new(
+        business::gateway::garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
+        business::gateway::vehicle_gateway::VehicleGateway::new(db.clone()),
+    )
 }
 
 fn garage_service(name: &str) -> GarageServiceModel {
@@ -6141,6 +6144,7 @@ fn garage_service(name: &str) -> GarageServiceModel {
         service_group: GarageServiceGroup::External,
         required_for_departure: true,
         governed_by_tank: false,
+        applicability: GarageServiceApplicability::All,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -6160,6 +6164,7 @@ fn garage_service_row(id: i64, name: &str, key: &str) -> entity::garage_service_
         service_group: "External".into(),
         required_for_departure: true,
         governed_by_tank: false,
+        applicability: "{\"scope\":\"all\"}".into(),
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -6201,6 +6206,63 @@ async fn a_new_service_is_stored_under_its_normalised_key_and_renaming_to_its_ow
         .into_connection();
     let edited = GarageServiceModel { uuid: Some(UUID.into()), ..garage_service("Higienização wc") };
     run_with_user(Some(owner(42)), garage_catalogue(&db).update(edited)).await.expect("renamed to its own key");
+}
+
+#[tokio::test]
+async fn a_service_applicability_is_persisted_and_returned() {
+    let applicability = GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into(), "onibus".into()]);
+    let mut persisted = garage_service_row(1, "Higienização WC", "higienizacao wc");
+    persisted.applicability = serde_json::to_string(&GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()]))
+        .expect("serializable applicability");
+    let db = mock()
+        .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
+        .append_exec_results([inserted(1)])
+        .append_query_results([[persisted]])
+        .into_connection();
+    let service = GarageServiceModel {
+        applicability,
+        ..garage_service("Higienização WC")
+    };
+
+    let created = run_with_user(Some(owner(42)), garage_catalogue(&db).create(service))
+        .await
+        .expect("service created");
+    assert_eq!(created.applicability, GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()]));
+    assert!(format!("{:?}", log(db)).contains("vehicleTypes"));
+}
+
+#[tokio::test]
+async fn a_service_cannot_target_a_vehicle_owned_by_another_tenant() {
+    let db = mock()
+        .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
+        .append_query_results([[vehicle_row(10, 43, "XYZ123", "Active")]])
+        .into_connection();
+    let service = GarageServiceModel {
+        applicability: GarageServiceApplicability::Vehicles(vec![UUID.into()]),
+        ..garage_service("Lavagem externa")
+    };
+
+    let error = run_with_user(Some(owner(42)), garage_catalogue(&db).create(service))
+        .await
+        .expect_err("cross-tenant vehicle must not enter a service scope");
+    assert_eq!(error.message, INVALID_APPLICABILITY);
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn an_empty_applicability_list_is_refused() {
+    let db = mock()
+        .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
+        .into_connection();
+    let service = GarageServiceModel {
+        applicability: GarageServiceApplicability::VehicleTypes(vec![]),
+        ..garage_service("Lavagem externa")
+    };
+
+    let error = run_with_user(Some(owner(42)), garage_catalogue(&db).create(service))
+        .await
+        .expect_err("empty applicability must not silently mean all vehicles");
+    assert_eq!(error.message, INVALID_APPLICABILITY);
 }
 
 // ------------------------------------------------------- EPIC-GA-02 triage and service marking

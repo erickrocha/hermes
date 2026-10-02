@@ -11,9 +11,25 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `reference_data_acceptance.py` (+ `reference_data_ui.mjs`) | Reference data (`EPIC-RD-01…03` + QA-added `PD-027-S01…S06`, scenarios `RD-0xx`) |
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
 | `fleet_operations_acceptance.py` | Fleet operations (`EPIC-FO-01` `FO-001…011`, `EPIC-FO-02` `FO-020…028`) — API + DB + two cargo targets; FO-02 runs a stub PinME server and a scratch API on port 8095 against the dev DB |
+| `garage_monitor_acceptance.py` | Garage monitor (`EPIC-GA-07`, scenarios `GA-070…074`) — API + dev DB; isolated `qa-ga-` fixtures |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 | `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
 | `brand_contrast_audit.py` | Brand palette audit + customer review sheet (`EPIC-XF-10-S09`) — **not a scenario suite**, an advisory report |
+
+## Garage monitor (`garage_monitor_acceptance.py`, scenarios `GA-070…074`)
+
+Covers `EPIC-GA-07` (`HRMS-964…967`) through the running API and dev MariaDB. Requirements and
+results are in `02-system_requirements/hermes/garage_acceptance_tests.md` and
+`garage_test_execution_log.md`.
+
+```sh
+HERMES_API=http://127.0.0.1:8080 python3 acceptance/garage_monitor_acceptance.py
+```
+
+The suite creates and deletes only `qa-ga-` fixtures. It needs the migrated development database,
+the API, Docker/MariaDB CLI access and the local `backend/.env` (read-only) to activate its fixture
+owner. It verifies monitor readiness/urgency, card ordering and truncation, manual call listing,
+resolved-fuelling suppression above the critical floor, and matrix state/empty-cell behavior.
 
 ## Prerequisites
 

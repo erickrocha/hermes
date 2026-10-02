@@ -23,14 +23,14 @@ impl MigrationTrait for Migration {
                             .from(WorkOrderPosting::Table, WorkOrderPosting::TenantId)
                             .to(Tenant::Table, Tenant::Id),
                     )
-                    .col(big_integer(WorkOrderPosting::WorkOrderId).not_null())
+                    .col(integer(WorkOrderPosting::WorkOrderId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_work_order_posting_work_order")
                             .from(WorkOrderPosting::Table, WorkOrderPosting::WorkOrderId)
                             .to(WorkOrder::Table, WorkOrder::Id),
                     )
-                    .col(big_integer_null(WorkOrderPosting::WorkOrderItemId))
+                    .col(integer_null(WorkOrderPosting::WorkOrderItemId))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_work_order_posting_work_order_item")

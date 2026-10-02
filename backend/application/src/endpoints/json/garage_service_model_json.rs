@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
+use business::domain::garage_service_model::GarageServiceApplicability;
 use utoipa::ToSchema;
 
 /// `EPIC-GA-01-S01` (`HRMS-956`, `TRM-430`/`431`/`470`): a garage service of the
 /// tenant's catalogue. `serviceGroup` is `External` or `Internal`, stated
 /// explicitly. `requiredForDeparture` is an attribute of the entry, never
-/// derived from its name. `active` defaults to true.
+/// derived from its name. `active` defaults to true. `applicability` defaults
+/// to all vehicles and may target free-text vehicle types or explicit UUIDs.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GarageServiceModelJson {
@@ -23,6 +25,8 @@ pub struct GarageServiceModelJson {
     /// `TRM-462`: the service is governed by the tank level, not by elapsed time.
     #[serde(default)]
     pub governed_by_tank: bool,
+    #[serde(default)]
+    pub applicability: GarageServiceApplicability,
 }
 
 fn yes() -> bool {

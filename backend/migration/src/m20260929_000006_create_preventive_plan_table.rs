@@ -23,7 +23,7 @@ impl MigrationTrait for Migration {
                             .from(PreventivePlan::Table, PreventivePlan::TenantId)
                             .to(Tenant::Table, Tenant::Id),
                     )
-                    .col(big_integer(PreventivePlan::VehicleId).not_null())
+                    .col(integer(PreventivePlan::VehicleId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_preventive_plan_vehicle")

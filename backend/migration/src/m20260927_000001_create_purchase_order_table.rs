@@ -34,14 +34,14 @@ impl MigrationTrait for Migration {
                     .col(string_len_null(PurchaseOrder::SuggestedSupplier, 255))
                     .col(string_len_null(PurchaseOrder::Observation, 500))
                     .col(string_len(PurchaseOrder::Status, 20).not_null())
-                    .col(big_integer_null(PurchaseOrder::WorkOrderId))
+                    .col(integer_null(PurchaseOrder::WorkOrderId))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_purchase_order_work_order")
                             .from(PurchaseOrder::Table, PurchaseOrder::WorkOrderId)
                             .to(WorkOrder::Table, WorkOrder::Id),
                     )
-                    .col(big_integer_null(PurchaseOrder::VehicleId))
+                    .col(integer_null(PurchaseOrder::VehicleId))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_purchase_order_vehicle")

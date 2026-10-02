@@ -2,22 +2,27 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::normalize_name;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::garage_service_model::{GarageServiceModel, GarageServiceModelEntityMapper};
+use crate::domain::garage_service_model::{GarageServiceApplicability, GarageServiceModel, GarageServiceModelEntityMapper};
 use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
+use crate::gateway::vehicle_gateway::VehicleGateway;
 use sea_orm::DbErr;
+use std::collections::HashSet;
+use uuid::Uuid;
 
 pub const NAME_REQUIRED: &str = "A garage service needs a name";
 pub const DUPLICATE_NAME: &str = "This tenant already has a garage service with this name";
 pub const SERVICE_NOT_FOUND: &str = "Garage service not found";
+pub const INVALID_APPLICABILITY: &str = "Garage service applicability must contain valid values from this tenant";
 
 /// `EPIC-GA-01-S01` (`HRMS-956`): the tenant's catalogue of garage services.
 pub struct GarageServiceModelUseCase {
     gateway: GarageServiceModelGateway,
+    vehicles: VehicleGateway,
 }
 
 impl GarageServiceModelUseCase {
-    pub fn new(gateway: GarageServiceModelGateway) -> Self {
-        Self { gateway }
+    pub fn new(gateway: GarageServiceModelGateway, vehicles: VehicleGateway) -> Self {
+        Self { gateway, vehicles }
     }
 
     pub async fn create(&self, model: GarageServiceModel) -> Result<GarageServiceModel, BusinessError> {
@@ -45,7 +50,60 @@ impl GarageServiceModelUseCase {
         if existing.is_some_and(|e| Some(e.id) != editing) {
             return Err(BusinessError::new(DUPLICATE_NAME.to_string()));
         }
-        Ok(GarageServiceModel { name, name_key, ..model })
+        let applicability = self.validate_applicability(model.applicability, model.tenant_id).await?;
+        Ok(GarageServiceModel { name, name_key, applicability, ..model })
+    }
+
+    async fn validate_applicability(
+        &self,
+        applicability: GarageServiceApplicability,
+        tenant_id: Option<i64>,
+    ) -> Result<GarageServiceApplicability, BusinessError> {
+        match applicability {
+            GarageServiceApplicability::All => Ok(GarageServiceApplicability::All),
+            GarageServiceApplicability::VehicleTypes(types) => {
+                let mut seen = HashSet::new();
+                let mut normalized_types = Vec::new();
+                for vehicle_type in types {
+                    let vehicle_type = vehicle_type.trim().to_string();
+                    let key = normalize_name(&vehicle_type);
+                    if key.is_empty() {
+                        return Err(BusinessError::new(INVALID_APPLICABILITY.to_string()));
+                    }
+                    if seen.insert(key) {
+                        normalized_types.push(vehicle_type);
+                    }
+                }
+                if normalized_types.is_empty() {
+                    return Err(BusinessError::new(INVALID_APPLICABILITY.to_string()));
+                }
+                Ok(GarageServiceApplicability::VehicleTypes(normalized_types))
+            }
+            GarageServiceApplicability::Vehicles(vehicles) => {
+                let Some(tenant_id) = tenant_id else {
+                    return Err(BusinessError::new(INVALID_APPLICABILITY.to_string()));
+                };
+                let mut seen = HashSet::new();
+                let mut vehicle_uuids = Vec::new();
+                for vehicle_uuid in vehicles {
+                    let parsed = Uuid::parse_str(&vehicle_uuid)
+                        .map_err(|_| BusinessError::new(INVALID_APPLICABILITY.to_string()))?;
+                    let vehicle_uuid = parsed.to_string();
+                    if !seen.insert(vehicle_uuid.clone()) {
+                        continue;
+                    }
+                    let vehicle = self.vehicles.find_by_uuid(vehicle_uuid.clone()).await.map_err(database_error)?;
+                    if !vehicle.is_some_and(|vehicle| vehicle.tenant_id == Some(tenant_id)) {
+                        return Err(BusinessError::new(INVALID_APPLICABILITY.to_string()));
+                    }
+                    vehicle_uuids.push(vehicle_uuid);
+                }
+                if vehicle_uuids.is_empty() {
+                    return Err(BusinessError::new(INVALID_APPLICABILITY.to_string()));
+                }
+                Ok(GarageServiceApplicability::Vehicles(vehicle_uuids))
+            }
+        }
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<GarageServiceModel, BusinessError> {

@@ -1,9 +1,11 @@
 use crate::commons::entity_mapper::EntityMapper;
+use crate::commons::functions::bytes_para_string;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::{GarageAttendanceOrigin, GarageAttendanceStatus, GarageServiceState};
 use crate::domain::garage_attendance::{GarageAttendance, GarageAttendanceEntityMapper};
 use crate::domain::garage_service::{GarageService, GarageServiceEntityMapper};
+use crate::domain::garage_service_model::GarageServiceModelEntityMapper;
 use crate::domain::garage_service_log::GarageServiceLog;
 use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
 use crate::gateway::garage_service_gateway::GarageServiceGateway;
@@ -94,13 +96,19 @@ impl GarageAttendanceUseCase {
         carried: &[GarageService],
     ) -> Result<(GarageAttendance, Vec<GarageService>), BusinessError> {
         let vehicle = self.vehicles.find_by_id(vehicle_id).await.map_err(database_error)?;
-        if !vehicle.is_some_and(|v| v.tenant_id == tenant_id) {
+        let Some(vehicle) = vehicle.filter(|v| v.tenant_id == tenant_id) else {
             return Err(BusinessError::new(VEHICLE_NOT_FOUND.to_string()));
-        }
+        };
         if self.attendances.find_active_by_vehicle(vehicle_id).await.map_err(database_error)?.is_some() {
             return Err(BusinessError::new(ALREADY_ACTIVE.to_string()));
         }
-        let catalogue = self.models.find_active().await.map_err(database_error)?;
+        let vehicle_uuid = bytes_para_string(vehicle.uuid);
+        let vehicle_type = vehicle.vehicle_type;
+        let catalogue = applicable_catalogue(
+            GarageServiceModelEntityMapper::from_models(self.models.find_active().await.map_err(database_error)?),
+            vehicle_type.as_deref(),
+            &vehicle_uuid,
+        );
         if catalogue.is_empty() {
             return Err(BusinessError::new(NO_SERVICES.to_string()));
         }
@@ -131,7 +139,10 @@ impl GarageAttendanceUseCase {
 
         let mut services = Vec::with_capacity(catalogue.len());
         for model in catalogue {
-            let before = carried.iter().find(|c| c.service_model_id == model.id);
+            let Some(model_id) = model.id else {
+                continue;
+            };
+            let before = carried.iter().find(|c| c.service_model_id == model_id);
             let saved = self
                 .services
                 .persist(GarageService {
@@ -139,7 +150,7 @@ impl GarageAttendanceUseCase {
                     uuid: None,
                     tenant_id,
                     attendance_id: attendance.id.unwrap_or_default(),
-                    service_model_id: model.id,
+                    service_model_id: model_id,
                     name_key: model.name_key,
                     state: before.map_or(GarageServiceState::Pending, |c| c.state),
                     performed_at: before.and_then(|c| c.performed_at),
@@ -303,6 +314,17 @@ fn unique_or_database_error(e: DbErr) -> BusinessError {
     database_error(e)
 }
 
+fn applicable_catalogue(
+    catalogue: Vec<crate::domain::garage_service_model::GarageServiceModel>,
+    vehicle_type: Option<&str>,
+    vehicle_uuid: &str,
+) -> Vec<crate::domain::garage_service_model::GarageServiceModel> {
+    catalogue
+        .into_iter()
+        .filter(|model| model.applicability.applies_to(vehicle_type, vehicle_uuid))
+        .collect()
+}
+
 fn database_error(e: DbErr) -> BusinessError {
     let msg = format!("Database error: {}", e);
     log::error!("[GarageAttendanceUseCase] {}", msg);
@@ -313,6 +335,7 @@ fn database_error(e: DbErr) -> BusinessError {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+    use crate::domain::garage_service_model::GarageServiceApplicability;
 
     fn at(h: u32) -> NaiveDateTime {
         NaiveDate::from_ymd_opt(2026, 9, 30).unwrap().and_hms_opt(h, 0, 0).unwrap()
@@ -323,6 +346,41 @@ mod tests {
             id: None, uuid: None, tenant_id: None, attendance_id: 1, service_model_id: 1, name_key: "x".into(), state,
             performed_at: None, marked_at, forced_pending_at: None, created_at: None, created_by: None, updated_at: None, updated_by: None,
         }
+    }
+
+    fn catalogue_service(
+        id: i64,
+        applicability: GarageServiceApplicability,
+    ) -> crate::domain::garage_service_model::GarageServiceModel {
+        crate::domain::garage_service_model::GarageServiceModel {
+            id: Some(id),
+            uuid: None,
+            tenant_id: Some(42),
+            name: format!("service-{id}"),
+            name_key: format!("service-{id}"),
+            display_order: id as i32,
+            active: true,
+            service_group: crate::domain::enums::GarageServiceGroup::External,
+            required_for_departure: false,
+            governed_by_tank: false,
+            applicability,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn a_triage_catalogue_contains_only_services_applicable_to_its_vehicle() {
+        let catalogue = vec![
+            catalogue_service(1, GarageServiceApplicability::All),
+            catalogue_service(2, GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()])),
+            catalogue_service(3, GarageServiceApplicability::VehicleTypes(vec!["Van".into()])),
+            catalogue_service(4, GarageServiceApplicability::Vehicles(vec!["vehicle-uuid".into()])),
+        ];
+        let applicable = applicable_catalogue(catalogue, Some("onibus"), "vehicle-uuid");
+        assert_eq!(applicable.iter().map(|model| model.id).collect::<Vec<_>>(), [Some(1), Some(2), Some(4)]);
     }
 
     #[test]

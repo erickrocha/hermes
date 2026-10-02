@@ -22,7 +22,7 @@ impl MigrationTrait for Migration {
                             .from(FuelEntry::Table, FuelEntry::TenantId)
                             .to(Tenant::Table, Tenant::Id),
                     )
-                    .col(big_integer(FuelEntry::VehicleId).not_null())
+                    .col(integer(FuelEntry::VehicleId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_fuel_entry_vehicle")

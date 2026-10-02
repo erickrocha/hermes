@@ -16,7 +16,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(PurchaseOrder::Table)
-                    .add_column(big_integer_null(PurchaseOrder::WorkOrderItemId))
+                    .add_column(integer_null(PurchaseOrder::WorkOrderItemId))
                     .to_owned(),
             )
             .await?;
@@ -34,7 +34,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(WorkOrderItem::Table)
-                    .add_column(big_integer_null(WorkOrderItem::PurchaseOrderId))
+                    .add_column(integer_null(WorkOrderItem::PurchaseOrderId))
                     .to_owned(),
             )
             .await?;

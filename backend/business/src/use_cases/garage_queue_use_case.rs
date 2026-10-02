@@ -3,7 +3,7 @@ use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::garage_attendance::{GarageAttendance, GarageAttendanceEntityMapper};
 use crate::domain::enums::GarageServiceState;
-use crate::domain::garage_service::GarageServiceEntityMapper;
+use crate::domain::garage_service::{GarageService, GarageServiceEntityMapper};
 use crate::domain::tenant_rule_setting::RuleSettings;
 use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
 use crate::gateway::garage_service_gateway::GarageServiceGateway;
@@ -16,6 +16,7 @@ use crate::use_cases::garage_validity::TankFact;
 use crate::use_cases::garage_validity_use_case::GarageValidityUseCase;
 use chrono::NaiveDateTime;
 use sea_orm::DbErr;
+use std::collections::HashSet;
 
 /// One vehicle in the yard's queue.
 #[derive(Debug, Clone)]
@@ -173,6 +174,15 @@ impl GarageQueueUseCase {
         let now = chrono::Utc::now().naive_utc();
         let today = now.date();
         let departures_of = self.schedule.departures_by_vehicle(today, horizon_end(today)).await?;
+        let tank_service_model_ids: HashSet<i64> = self
+            .models
+            .find_all()
+            .await
+            .map_err(database_error)?
+            .into_iter()
+            .filter(|model| model.governed_by_tank)
+            .map(|model| model.id)
+            .collect();
         let mut entries = Vec::new();
         for vehicle in self.vehicles.find_all().await.map_err(database_error)? {
             let id = vehicle.id;
@@ -184,12 +194,21 @@ impl GarageQueueUseCase {
             let rules = self.validity.rules_for(vehicle.tenant_id).await?;
             let tank = self.validity.tank_fact(id).await;
             let alert = fill_tank_alert(tank, ahead.as_ref().is_some_and(|d| d.is_trip), &rules);
-            // ponytail: the last triage's fuelling service is not consulted, so a resolved
-            // fuelling does not yet suppress a tank call above the floor (`TRM-477`/`1508`).
+            let fuelling_resolved = if alert {
+                latest_triage_has_resolved_tank_service(
+                    &self.attendances,
+                    &self.services,
+                    id,
+                    &tank_service_model_ids,
+                )
+                .await?
+            } else {
+                false
+            };
             let reasons = CallReasons {
                 manual: self.calls.active(id).await?.is_some(),
                 departure: ahead.is_some(),
-                tank: tank_calls_vehicle(alert, false, tank, &rules),
+                tank: tank_calls_vehicle(alert, fuelling_resolved, tank, &rules),
             };
             if reasons.any() {
                 entries.push(CallEntry {
@@ -306,6 +325,139 @@ impl GarageQueueUseCase {
         let order = order_queue(&keys, today);
         let mut slots: Vec<Option<QueueEntry>> = entries.into_iter().map(Some).collect();
         Ok(order.into_iter().filter_map(|i| slots[i].take()).collect())
+    }
+}
+
+fn has_resolved_tank_service(services: &[GarageService], tank_model_ids: &HashSet<i64>) -> bool {
+    services.iter().any(|service| {
+        tank_model_ids.contains(&service.service_model_id) && service.state != GarageServiceState::Pending
+    })
+}
+
+async fn latest_triage_has_resolved_tank_service(
+    attendances: &GarageAttendanceGateway,
+    services: &GarageServiceGateway,
+    vehicle_id: i64,
+    tank_model_ids: &HashSet<i64>,
+) -> Result<bool, BusinessError> {
+    let Some(attendance) = attendances
+        .find_latest_by_vehicle(vehicle_id)
+        .await
+        .map_err(database_error)?
+    else {
+        return Ok(false);
+    };
+    let records = GarageServiceEntityMapper::from_models(
+        services.find_by_attendance(attendance.id).await.map_err(database_error)?,
+    );
+    Ok(has_resolved_tank_service(&records, tank_model_ids))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn service(service_model_id: i64, state: GarageServiceState) -> GarageService {
+        GarageService {
+            id: None,
+            uuid: None,
+            tenant_id: Some(42),
+            attendance_id: 1,
+            service_model_id,
+            name_key: "service".into(),
+            state,
+            performed_at: None,
+            marked_at: None,
+            forced_pending_at: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn only_a_resolved_tank_governed_service_suppresses_the_tank_call() {
+        let tank_models = HashSet::from([7]);
+        assert!(!has_resolved_tank_service(&[service(7, GarageServiceState::Pending)], &tank_models));
+        assert!(!has_resolved_tank_service(&[service(8, GarageServiceState::Performed)], &tank_models));
+        assert!(has_resolved_tank_service(&[service(7, GarageServiceState::Performed)], &tank_models));
+    }
+}
+
+#[cfg(all(test, feature = "mock"))]
+mod gateway_tests {
+    use super::*;
+    use chrono::{NaiveDate, TimeZone, Utc};
+    use entity::audit::{AuditUser, run_with_user};
+    use sea_orm::{DatabaseBackend, MockDatabase};
+
+    fn at() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap()
+    }
+
+    fn attendance() -> entity::garage_attendance_entity::Model {
+        entity::garage_attendance_entity::Model {
+            id: 8,
+            uuid: vec![8; 16],
+            tenant_id: Some(42),
+            vehicle_id: 11,
+            attendance_date: NaiveDate::from_ymd_opt(2026, 10, 2).unwrap(),
+            checked_in_at: at(),
+            status: "Finished".into(),
+            manual_priority: None,
+            released_at: Some(at()),
+            origin: "Manual".into(),
+            active_marker: None,
+            created_at: at(),
+            created_by: None,
+            updated_at: at(),
+            updated_by: None,
+        }
+    }
+
+    fn service() -> entity::garage_service_entity::Model {
+        entity::garage_service_entity::Model {
+            id: 10,
+            uuid: vec![10; 16],
+            tenant_id: Some(42),
+            attendance_id: 8,
+            service_model_id: 7,
+            name_key: "abastecimento".into(),
+            state: "Performed".into(),
+            performed_at: Some(at()),
+            marked_at: None,
+            forced_pending_at: None,
+            created_at: at(),
+            created_by: None,
+            updated_at: at(),
+            updated_by: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn resolved_fuel_service_is_read_from_the_vehicle_latest_triage() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([[attendance()]])
+            .append_query_results([[service()]])
+            .into_connection();
+        let attendances = GarageAttendanceGateway::new(db.clone());
+        let services = GarageServiceGateway::new(db);
+        let user = AuditUser {
+            id: 2,
+            email: "owner@example.com".into(),
+            tenant_id: Some(42),
+            enforce_tenant: true,
+        };
+
+        let resolved = run_with_user(
+            Some(user),
+            latest_triage_has_resolved_tank_service(&attendances, &services, 11, &HashSet::from([7])),
+        )
+        .await
+        .expect("latest triage was read");
+
+        assert!(resolved);
     }
 }
 

@@ -39,6 +39,8 @@ mod m20260926_000003_link_work_order_and_checklist_answer;
 mod m20260926_000004_create_maintenance_plan_table;
 mod m20260926_000005_create_service_catalogue_tables;
 mod m20260926_000006_create_part_table;
+mod m20260926_000006_1_widen_part_id_for_foreign_keys;
+mod m20260926_000006z_widen_part_id_before_stock_ledger;
 mod m20260926_000007_create_stock_movement_table;
 mod m20260927_000001_create_purchase_order_table;
 mod m20260927_000002_link_purchase_order_and_work_order_item;
@@ -73,6 +75,7 @@ mod m20260930_000018_add_garage_monitor_card_limit;
 mod m20260930_000019_add_garage_monitor_matrix_size;
 mod m20260930_000020_add_garage_fuelling_freshness;
 mod m20260930_000021_add_garage_utc_offset;
+mod m20261002_000001_add_garage_service_applicability;
 
 pub struct Migrator;
 
@@ -117,6 +120,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260926_000004_create_maintenance_plan_table::Migration),
             Box::new(m20260926_000005_create_service_catalogue_tables::Migration),
             Box::new(m20260926_000006_create_part_table::Migration),
+            Box::new(m20260926_000006_1_widen_part_id_for_foreign_keys::Migration),
+            Box::new(m20260926_000006z_widen_part_id_before_stock_ledger::Migration),
             Box::new(m20260926_000007_create_stock_movement_table::Migration),
             Box::new(m20260927_000001_create_purchase_order_table::Migration),
             Box::new(m20260927_000002_link_purchase_order_and_work_order_item::Migration),
@@ -151,6 +156,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260930_000019_add_garage_monitor_matrix_size::Migration),
             Box::new(m20260930_000020_add_garage_fuelling_freshness::Migration),
             Box::new(m20260930_000021_add_garage_utc_offset::Migration),
+            Box::new(m20261002_000001_add_garage_service_applicability::Migration),
         ]
     }
 }
