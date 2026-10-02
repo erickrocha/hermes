@@ -1,3 +1,7 @@
 node_modules
 dist
 .env.local
+*.tsbuildinfo
+
+# Local overrides of .env.example -- never committed.
+.env

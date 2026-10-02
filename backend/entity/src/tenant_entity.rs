@@ -19,7 +19,7 @@ pub struct Model {
     pub administrative_area: Option<String>,
     pub postal_code: Option<String>,
     pub country_code: Option<String>,
-    pub payment_grace_days: i32,
+    pub business_plan_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,
@@ -28,13 +28,17 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::tenant_plan_entity::Entity")]
-    TenantPlan,
+    #[sea_orm(
+        belongs_to = "super::business_plan_entity::Entity",
+        from = "Column::BusinessPlanId",
+        to = "super::business_plan_entity::Column::Id"
+    )]
+    BusinessPlan,
 }
 
-impl Related<super::tenant_plan_entity::Entity> for Entity {
+impl Related<super::business_plan_entity::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::TenantPlan.def()
+        Relation::BusinessPlan.def()
     }
 }
 

@@ -14,7 +14,7 @@ impl MigrationTrait for Migration {
                     .col(pk_auto(Tenant::Id).integer())
                     .col(binary_len_uniq(Tenant::Uuid, 16))
                     .col(string_len(Tenant::BusinessName, 500).not_null())
-                    .col(string_len(Tenant::CompanyName, 500).null())
+                    .col(string_len(Tenant::SocialName, 500).null())
                     .col(string_len(Tenant::TaxId, 100).not_null())
                     .col(string_len(Tenant::Email, 500).null())
                     .col(string_len(Tenant::Phone, 50).null())
@@ -48,7 +48,7 @@ pub enum Tenant {
     Id,
     Uuid,
     BusinessName,
-    CompanyName,
+    SocialName,
     TaxId,
     Email,
     Phone,

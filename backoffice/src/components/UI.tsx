@@ -11,12 +11,12 @@ export function Breadcrumbs() {
   const { t } = useTranslation(); const { pathname } = useLocation()
   const routes = [
     { pattern: '/tenants/new', parent: '/tenants', parentLabel: 'tenants', label: 'newTenant' },
-    { pattern: '/tenants/:id/edit', parent: '/tenants', parentLabel: 'tenants', label: 'editTenant' },
-    { pattern: '/tenants/:id/subscription', parent: '/tenants', parentLabel: 'tenants', label: 'subscription' },
+    { pattern: '/tenants/:uuid/edit', parent: '/tenants', parentLabel: 'tenants', label: 'editTenant' },
+    { pattern: '/tenants/:uuid/subscription', parent: '/tenants', parentLabel: 'tenants', label: 'subscription' },
     { pattern: '/plans/new', parent: '/plans', parentLabel: 'plans', label: 'newPlan' },
-    { pattern: '/plans/:id/edit', parent: '/plans', parentLabel: 'plans', label: 'editPlan' },
+    { pattern: '/plans/:uuid/edit', parent: '/plans', parentLabel: 'plans', label: 'editPlan' },
     { pattern: '/users/new', parent: '/users', parentLabel: 'users', label: 'newUser' },
-    { pattern: '/users/:id/edit', parent: '/users', parentLabel: 'users', label: 'editUser' },
+    { pattern: '/users/:uuid/edit', parent: '/users', parentLabel: 'users', label: 'editUser' },
   ].find((route) => matchPath(route.pattern, pathname))
   const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings' }
   const current = routes?.label || lists[pathname]

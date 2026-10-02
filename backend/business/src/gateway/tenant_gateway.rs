@@ -1,11 +1,29 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::Gateway;
+use crate::commons::gateway::{Gateway, fetch_page};
+use crate::domain::business_error::BusinessError;
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use entity::prelude::TenantEntity as TenantQuery;
 use entity::tenant_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder,
+};
+
+#[async_trait]
+pub trait TenantStore: Send + Sync {
+    async fn save(&self, tenant: Tenant) -> Result<Tenant, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<Tenant>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Tenant>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Tenant>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<Tenant>, BusinessError>;
+}
 
 pub struct TenantGateway {
     db: DbConn,
@@ -18,6 +36,53 @@ impl TenantGateway {
 }
 
 #[async_trait]
+impl TenantStore for TenantGateway {
+    async fn save(&self, tenant: Tenant) -> Result<Tenant, BusinessError> {
+        let active = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::persist(self, tenant)
+            .await
+            .map_err(database_error)?;
+        Ok(TenantEntityMapper::from_active_model(active))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<Tenant>, BusinessError> {
+        let model = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_by_id(self, id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(TenantEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Tenant>, BusinessError> {
+        let model = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_by_uuid(self, uuid)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(TenantEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Tenant>, u64), BusinessError> {
+        let (models, total) = self.find_page(page, page_size, search).await.map_err(database_error)?;
+        Ok((TenantEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<Tenant>, BusinessError> {
+        let models = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_all(self)
+            .await
+            .map_err(database_error)?;
+        Ok(TenantEntityMapper::from_models(models))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Database error: {error}");
+    log::error!("[TenantGateway] {message}");
+    BusinessError::new(message)
+}
+
+#[async_trait]
 impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for TenantGateway {
     async fn persist(&self, entity: Tenant) -> Result<tenant_entity::ActiveModel, DbErr> {
         let active_model = TenantEntityMapper::build_active_model(entity);
@@ -25,9 +90,7 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
-        TenantQuery::delete_by_id(id)
-            .exec(&self.db)
-            .await
+        TenantQuery::delete_by_id(id).exec(&self.db).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<tenant_entity::Model>, DbErr> {
@@ -49,3 +112,24 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
     }
 }
 
+impl TenantGateway {
+    /// PD-028.
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<tenant_entity::Model>, u64), DbErr> {
+        let mut query = TenantQuery::find().order_by_desc(tenant_entity::Column::Id);
+        if let Some(term) = search {
+            query = query.filter(
+                Condition::any()
+                    .add(tenant_entity::Column::BusinessName.contains(term))
+                    .add(tenant_entity::Column::CompanyName.contains(term))
+                    .add(tenant_entity::Column::TaxId.contains(term))
+                    .add(tenant_entity::Column::Email.contains(term)),
+            );
+        }
+        fetch_page(query, &self.db, page, page_size).await
+    }
+}

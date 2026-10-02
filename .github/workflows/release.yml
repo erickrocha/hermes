@@ -1,0 +1,128 @@
+name: release
+
+# EPIC-XF-10-S04 (HRMS-041): "build and publish the production images from a
+# known commit, and make deployment a deliberate, auditable action rather than
+# a consequence of merging."
+#
+# Two halves, deliberately separated:
+#
+#   * `build-and-push` runs on a version tag. Merging to develop publishes
+#     nothing; tagging does. The tag is the "known commit".
+#   * `deploy` is `workflow_dispatch` only — a human chooses a tag and an
+#     environment and presses a button, and GitHub records who and when.
+#     Nothing here deploys on push, ever.
+#
+# The images are immutable and tagged with the git tag and the commit SHA;
+# `latest` is never published, because rollback is "redeploy the previous tag"
+# and a moving tag would make that meaningless (see infra/prod/deploy.sh).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing image tag to deploy (e.g. v0.1.0). Use the previous tag to roll back."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Do not publish an image from a commit that does not pass its own tests.
+  # backend-ci.yml runs on pushes to branches; a tag push is not covered by
+  # it, so the checks are re-run here against the exact tagged commit.
+  # ---------------------------------------------------------------------
+  verify:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Test (all crates)
+        run: cargo test --workspace
+      - name: Test (database-free mock suites)
+        run: cargo test -p business --features mock
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-and-push:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: api
+            context: backend
+            image: hermes-api
+          - name: console
+            context: backoffice
+            image: hermes-console
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # The git tag and the commit SHA. No `latest` — see the header.
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          provenance: true
+
+  # ---------------------------------------------------------------------
+  # HRMS-041's "deliberate, auditable action".
+  #
+  # Guarded by a GitHub Environment called `production`: configure it with a
+  # required reviewer so a deploy needs an approval, and hold the SSH
+  # credentials there rather than as repository secrets. The job does not
+  # build anything — it deploys an image that already exists, which is what
+  # makes a rollback to an older tag a supported operation rather than a
+  # rebuild of old source.
+  # ---------------------------------------------------------------------
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy ${{ inputs.image_tag }} to the production host
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script_stop: true
+          # deploy.sh owns the ordering (backup, migrate, start, smoke) and
+          # fails the job if smoke verification fails.
+          script: |
+            set -euo pipefail
+            cd ${{ secrets.PRODUCTION_PATH }}/infra/prod
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${{ inputs.image_tag }}|" .env
+            ./deploy.sh

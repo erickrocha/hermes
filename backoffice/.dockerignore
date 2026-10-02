@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+.env
+.env.*
+!.env.example
+
+.git/
+.gitignore
+
+# Test and build metadata that must not influence the production bundle.
+*.tsbuildinfo
+coverage/
