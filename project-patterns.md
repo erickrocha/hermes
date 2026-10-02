@@ -30,6 +30,7 @@
 - **Error Handling:** Using `.unwrap()` in production code is strictly prohibited. Always propagate errors using `Result` and the `?` operator.
 - **Dependencies:** Do not add new crates to `Cargo.toml` without explicit permission.
 - **Tests:** All tests should be placed in test folder. One file per struct, for example shipping.rs shipping_test.rs. coupon_use_case.rs should have a test file named coupon_use_case_test.rs
+- **Clippy:** Always run `cargo clippy` for Rust changes, covering the affected workspace and relevant targets/features. Apply Clippy recommendations whenever they preserve correctness and project conventions; document why any warning is intentionally retained.
 
 
 ## Project Architecture

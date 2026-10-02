@@ -3999,7 +3999,7 @@ use business::use_cases::part_use_case::{
     NAME_REQUIRED as PART_NAME_REQUIRED, NEGATIVE_MINIMUM_STOCK, PartUseCase, UNIT_REQUIRED,
 };
 
-fn part_use_case(db: &DatabaseConnection) -> PartUseCase {
+fn part_use_case(db: &DatabaseConnection) -> PartUseCase<PartGateway> {
     PartUseCase::new(PartGateway::new(db.clone()))
 }
 

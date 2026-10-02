@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::part::{Part, PartEntityMapper};
 use entity::part_entity;
 use entity::prelude::PartEntity as PartQuery;
@@ -9,6 +10,13 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait PartStore: Send + Sync {
+    async fn save(&self, part: Part) -> Result<Part, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Part>, BusinessError>;
+    async fn list_page(&self, page: u64, page_size: u64) -> Result<(Vec<Part>, u64), BusinessError>;
+}
 
 /// `HRMS-800` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -24,6 +32,44 @@ impl PartGateway {
     pub fn db(&self) -> &DbConn {
         &self.db
     }
+}
+
+#[async_trait]
+impl PartStore for PartGateway {
+    async fn save(&self, part: Part) -> Result<Part, BusinessError> {
+        let entity = <Self as Gateway<
+            Part,
+            part_entity::Model,
+            part_entity::ActiveModel,
+        >>::persist(self, part)
+        .await
+        .map_err(database_error)?;
+        Ok(PartEntityMapper::from_active_model(entity))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Part>, BusinessError> {
+        let model = <Self as Gateway<
+            Part,
+            part_entity::Model,
+            part_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(PartEntityMapper::from_model))
+    }
+
+    async fn list_page(&self, page: u64, page_size: u64) -> Result<(Vec<Part>, u64), BusinessError> {
+        let (models, total) = PartGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((PartEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Part database error: {error}");
+    log::error!("[PartGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

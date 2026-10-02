@@ -8,18 +8,13 @@ use sea_orm::{NotSet, Set};
 use std::str::FromStr;
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "scope", content = "values", rename_all = "camelCase")]
 pub enum GarageServiceApplicability {
+    #[default]
     All,
     VehicleTypes(Vec<String>),
     Vehicles(Vec<String>),
-}
-
-impl Default for GarageServiceApplicability {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl GarageServiceApplicability {

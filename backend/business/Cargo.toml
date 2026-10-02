@@ -60,3 +60,7 @@ required-features = ["mock"]
 [[test]]
 name = "priced_service_use_case_test"
 required-features = ["mock"]
+
+[[test]]
+name = "part_use_case_test"
+required-features = ["mock"]

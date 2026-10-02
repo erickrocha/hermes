@@ -1,41 +1,39 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::part::{Part, PartEntityMapper};
-use crate::gateway::part_gateway::PartGateway;
-use sea_orm::DbErr;
+use crate::domain::part::Part;
+use crate::gateway::part_gateway::PartStore;
 
 pub const NAME_REQUIRED: &str = "A part needs a name";
 pub const UNIT_REQUIRED: &str = "A part needs a unit";
 pub const NEGATIVE_MINIMUM_STOCK: &str = "A part's minimum stock cannot be negative";
 pub const PART_NOT_FOUND: &str = "Part not found";
 
-pub struct PartUseCase {
-    gateway: PartGateway,
+pub struct PartUseCase<G: PartStore> {
+    gateway: G,
 }
 
-impl PartUseCase {
-    pub fn new(gateway: PartGateway) -> Self {
+impl<G: PartStore> PartUseCase<G> {
+    pub fn new(gateway: G) -> Self {
         Self { gateway }
     }
 
     pub async fn create(&self, part: Part) -> Result<Part, BusinessError> {
         let part = validated(part)?;
-        let entity = self.gateway.persist(part).await.map_err(database_error)?;
-        Ok(PartEntityMapper::from_active_model(entity))
+        self.gateway.save(part).await
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<Part, BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(PartEntityMapper::from_model(model)),
+        match self.gateway.get_by_uuid(uuid).await? {
+            Some(part) => Ok(part),
             None => Err(BusinessError::new(PART_NOT_FOUND.to_string())),
         }
     }
 
-    pub async fn find_page(&self, page: u64, page_size: u64) -> Result<(Vec<Part>, u64), BusinessError> {
-        let (rows, total) = self.gateway.find_page(page, page_size).await.map_err(database_error)?;
-        Ok((PartEntityMapper::from_models(rows), total))
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<Part>, u64), BusinessError> {
+        self.gateway.list_page(page, page_size).await
     }
 }
 
@@ -52,10 +50,4 @@ fn validated(part: Part) -> Result<Part, BusinessError> {
         return Err(BusinessError::new(NEGATIVE_MINIMUM_STOCK.to_string()));
     }
     Ok(Part { name, unit, ..part })
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[PartUseCase] {}", msg);
-    BusinessError::new(msg)
 }

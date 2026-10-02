@@ -23,7 +23,7 @@ use business::use_cases::stock_movement_use_case::{
     StockMovementUseCase, VALUE_REQUIRED,
 };
 
-fn use_case(state: &AppState) -> PartUseCase {
+fn use_case(state: &AppState) -> PartUseCase<PartGateway> {
     PartUseCase::new(PartGateway::new(state.conn.as_ref().clone()))
 }
 

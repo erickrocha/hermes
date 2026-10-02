@@ -44,7 +44,7 @@ fn use_case(state: &AppState) -> PurchaseOrderUseCase {
     )
 }
 
-fn part_use_case(state: &AppState) -> PartUseCase {
+fn part_use_case(state: &AppState) -> PartUseCase<PartGateway> {
     PartUseCase::new(PartGateway::new(state.conn.as_ref().clone()))
 }
 
