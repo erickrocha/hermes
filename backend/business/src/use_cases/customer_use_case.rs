@@ -1,15 +1,13 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::customer::{Customer, CustomerEntityMapper};
-use crate::gateway::customer_gateway::CustomerGateway;
+use crate::domain::customer::Customer;
+use crate::gateway::customer_gateway::CustomerStore;
 
-pub struct CustomerUseCase {
-    gateway: CustomerGateway,
+pub struct CustomerUseCase<G: CustomerStore> {
+    gateway: G,
 }
 
-impl CustomerUseCase {
-    pub fn new(gateway: CustomerGateway) -> Self {
+impl<G: CustomerStore> CustomerUseCase<G> {
+    pub fn new(gateway: G) -> Self {
         Self { gateway }
     }
 
@@ -19,12 +17,7 @@ impl CustomerUseCase {
             customer.name
         );
         let customer = Self::validated(customer)?;
-        let entity = self.gateway.persist(customer).await.map_err(|e| {
-            let msg = format!("Failed to persist customer: {}", e);
-            log::error!("[CustomerUseCase::create] {}", msg);
-            BusinessError::new(msg)
-        })?;
-        Ok(CustomerEntityMapper::from_active_model(entity))
+        self.gateway.save(customer).await
     }
 
     pub async fn update(&self, id: i64, customer: Customer) -> Result<Customer, BusinessError> {
@@ -47,12 +40,7 @@ impl CustomerUseCase {
             updated_by: customer.updated_by,
         };
 
-        let entity = self.gateway.persist(updated).await.map_err(|e| {
-            let msg = format!("Failed to update customer: {}", e);
-            log::error!("[CustomerUseCase::update] {}", msg);
-            BusinessError::new(msg)
-        })?;
-        Ok(CustomerEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await
     }
 
     /// A customer without a name or a status is not a usable record.
@@ -77,15 +65,10 @@ impl CustomerUseCase {
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Customer, BusinessError> {
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[CustomerUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
-        match entity {
-            Some(model) => Ok(CustomerEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Customer not found".to_string())),
-        }
+        self.gateway
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| BusinessError::new("Customer not found".to_string()))
     }
 
     /// `HRMS-204`/`AD-010`: the UUID is a customer's public identifier, same
@@ -93,15 +76,10 @@ impl CustomerUseCase {
     /// simply absent (`tenant_select`), which lets the endpoint answer 404
     /// rather than 403 (`PD-034`).
     pub async fn find_by_uuid(&self, uuid: String) -> Result<Customer, BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[CustomerUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
-        match entity {
-            Some(model) => Ok(CustomerEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Customer not found".to_string())),
-        }
+        self.gateway
+            .get_by_uuid(uuid)
+            .await?
+            .ok_or_else(|| BusinessError::new("Customer not found".to_string()))
     }
 
     pub async fn find_page(
@@ -110,15 +88,6 @@ impl CustomerUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<Customer>, u64), BusinessError> {
-        let (entities, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CustomerUseCase::find_page] {}", msg);
-                BusinessError::new(msg)
-            })?;
-        Ok((CustomerEntityMapper::from_models(entities), total))
+        self.gateway.list_page(page, page_size, search).await
     }
 }

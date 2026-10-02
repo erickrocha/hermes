@@ -1,14 +1,11 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::{PurchaseOrderStatus, WorkOrderItemStatus};
-use crate::domain::purchase_order::{PurchaseOrder, PurchaseOrderEntityMapper};
+use crate::domain::purchase_order::PurchaseOrder;
 use crate::domain::work_order_item::WorkOrderItem;
-use crate::gateway::part_gateway::PartGateway;
-use crate::gateway::purchase_order_gateway::PurchaseOrderGateway;
+use crate::gateway::purchase_order_gateway::PurchaseOrderStore;
 use crate::use_cases::work_order_use_case::WorkOrderUseCase;
 use chrono::NaiveDate;
-use sea_orm::DbErr;
+use sea_orm::prelude::async_trait::async_trait;
 
 pub const PART_NOT_FOUND: &str = "Part not found";
 pub const PURCHASE_ORDER_NOT_FOUND: &str = "Purchase order not found";
@@ -19,22 +16,45 @@ pub const QUANTITY_MUST_BE_POSITIVE: &str = "A purchase order quantity must be p
 pub const DUPLICATE_ACTIVE_PURCHASE_ORDER: &str =
     "This work order already has an active purchase order for this part";
 /// `TRM-641`: the state machine only moves Requested -> Ordered -> Purchased.
-pub const WRONG_STATUS_FOR_TRANSITION: &str = "This purchase order is not in the right status for that transition";
+pub const WRONG_STATUS_FOR_TRANSITION: &str =
+    "This purchase order is not in the right status for that transition";
 /// `TRM-644`: a pendency is always a pendency *of* a work order.
-pub const PENDENCY_REQUIRES_WORK_ORDER: &str = "A pendency may only be named together with its own work order";
+pub const PENDENCY_REQUIRES_WORK_ORDER: &str =
+    "A pendency may only be named together with its own work order";
+
+#[async_trait]
+pub trait PurchaseOrderWorkOrderService: Send + Sync {
+    async fn add_item(
+        &self,
+        work_order_id: i64,
+        item: WorkOrderItem,
+    ) -> Result<(crate::domain::work_order::WorkOrder, WorkOrderItem), BusinessError>;
+    async fn mark_item_awaiting_parts(
+        &self,
+        work_order_id: i64,
+        item_id: i64,
+        purchase_order_id: i64,
+    ) -> Result<crate::domain::work_order::WorkOrder, BusinessError>;
+    async fn resolve_purchase_pendency(
+        &self,
+        item_id: i64,
+    ) -> Result<crate::domain::work_order::WorkOrder, BusinessError>;
+}
 
 pub struct PurchaseOrderUseCase {
-    gateway: PurchaseOrderGateway,
-    parts: PartGateway,
-    work_orders: WorkOrderUseCase,
+    gateway: Box<dyn PurchaseOrderStore>,
+    work_orders: Box<dyn PurchaseOrderWorkOrderService>,
 }
 
 impl PurchaseOrderUseCase {
-    pub fn new(gateway: PurchaseOrderGateway, parts: PartGateway, work_orders: WorkOrderUseCase) -> Self {
+    pub fn new<S, W>(gateway: S, work_orders: W) -> Self
+    where
+        S: PurchaseOrderStore + 'static,
+        W: PurchaseOrderWorkOrderService + 'static,
+    {
         Self {
-            gateway,
-            parts,
-            work_orders,
+            gateway: Box::new(gateway),
+            work_orders: Box::new(work_orders),
         }
     }
 
@@ -45,7 +65,10 @@ impl PurchaseOrderUseCase {
     /// that represents the purchase itself (`TRM-645`). Either way the work
     /// order's own status is recomputed to `AwaitingParts` (`TRM-646`) by
     /// the same `WorkOrderUseCase` machinery `add_item` already uses.
-    pub async fn create(&self, purchase_order: PurchaseOrder) -> Result<PurchaseOrder, BusinessError> {
+    pub async fn create(
+        &self,
+        purchase_order: PurchaseOrder,
+    ) -> Result<PurchaseOrder, BusinessError> {
         if purchase_order.quantity <= 0.0 {
             return Err(BusinessError::new(QUANTITY_MUST_BE_POSITIVE.to_string()));
         }
@@ -53,38 +76,40 @@ impl PurchaseOrderUseCase {
             return Err(BusinessError::new(PENDENCY_REQUIRES_WORK_ORDER.to_string()));
         }
         let part = self
-            .parts
-            .find_by_id(purchase_order.part_id)
-            .await
-            .map_err(database_error)?
+            .gateway
+            .find_part(purchase_order.part_id)
+            .await?
             .ok_or_else(|| BusinessError::new(PART_NOT_FOUND.to_string()))?;
         if let Some(work_order_id) = purchase_order.work_order_id {
             let existing = self
                 .gateway
                 .find_active_by_part_and_work_order(purchase_order.part_id, work_order_id)
-                .await
-                .map_err(database_error)?;
+                .await?;
             if !existing.is_empty() {
-                return Err(BusinessError::new(DUPLICATE_ACTIVE_PURCHASE_ORDER.to_string()));
+                return Err(BusinessError::new(
+                    DUPLICATE_ACTIVE_PURCHASE_ORDER.to_string(),
+                ));
             }
         }
 
         let named_item_id = purchase_order.work_order_item_id;
-        let entity = self
+        let mut saved = self
             .gateway
-            .persist(PurchaseOrder {
+            .save(PurchaseOrder {
                 work_order_item_id: None,
                 ..purchase_order
             })
-            .await
-            .map_err(database_error)?;
-        let mut saved = PurchaseOrderEntityMapper::from_active_model(entity);
+            .await?;
 
         if let Some(work_order_id) = saved.work_order_id {
             let item_id = match named_item_id {
                 Some(item_id) => {
                     self.work_orders
-                        .mark_item_awaiting_parts(work_order_id, item_id, saved.id.unwrap_or_default())
+                        .mark_item_awaiting_parts(
+                            work_order_id,
+                            item_id,
+                            saved.id.unwrap_or_default(),
+                        )
                         .await?;
                     item_id
                 }
@@ -109,29 +134,29 @@ impl PurchaseOrderUseCase {
                         updated_at: None,
                         updated_by: None,
                     };
-                    let (_, saved_item) = self.work_orders.add_item(work_order_id, placeholder).await?;
+                    let (_, saved_item) = self
+                        .work_orders
+                        .add_item(work_order_id, placeholder)
+                        .await?;
                     saved_item.id.unwrap_or_default()
                 }
             };
 
-            let entity = self
+            saved = self
                 .gateway
-                .persist(PurchaseOrder {
+                .save(PurchaseOrder {
                     work_order_item_id: Some(item_id),
                     ..saved
                 })
-                .await
-                .map_err(database_error)?;
-            saved = PurchaseOrderEntityMapper::from_active_model(entity);
+                .await?;
         }
 
         Ok(saved)
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<PurchaseOrder, BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(PurchaseOrderEntityMapper::from_model(model)),
+        match self.gateway.find_by_uuid(uuid).await? {
+            Some(order) => Ok(order),
             None => Err(BusinessError::new(PURCHASE_ORDER_NOT_FOUND.to_string())),
         }
     }
@@ -141,8 +166,7 @@ impl PurchaseOrderUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<PurchaseOrder>, u64), BusinessError> {
-        let (rows, total) = self.gateway.find_page(page, page_size).await.map_err(database_error)?;
-        Ok((PurchaseOrderEntityMapper::from_models(rows), total))
+        self.gateway.find_page(page, page_size).await
     }
 
     /// `TRM-641`/`651`: `Requested` -> `Ordered`, capturing when it was
@@ -163,8 +187,7 @@ impl PurchaseOrderUseCase {
             expected_delivery_date,
             ..purchase_order
         };
-        let entity = self.gateway.persist(updated).await.map_err(database_error)?;
-        Ok(PurchaseOrderEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await
     }
 
     /// `TRM-641`: `Ordered` -> `Purchased`. `TRM-647`/`648`/`649`: on
@@ -179,8 +202,7 @@ impl PurchaseOrderUseCase {
             status: PurchaseOrderStatus::Purchased,
             ..purchase_order
         };
-        let entity = self.gateway.persist(updated).await.map_err(database_error)?;
-        let saved = PurchaseOrderEntityMapper::from_active_model(entity);
+        let saved = self.gateway.save(updated).await?;
 
         if let Some(item_id) = saved.work_order_item_id {
             self.work_orders.resolve_purchase_pendency(item_id).await?;
@@ -204,23 +226,43 @@ impl PurchaseOrderUseCase {
             status: PurchaseOrderStatus::Cancelled,
             ..purchase_order
         };
-        let entity = self.gateway.persist(updated).await.map_err(database_error)?;
-        Ok(PurchaseOrderEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await
     }
 
     async fn loaded(&self, id: i64) -> Result<PurchaseOrder, BusinessError> {
-        let model = self
+        let order = self
             .gateway
             .find_by_id(id)
-            .await
-            .map_err(database_error)?
+            .await?
             .ok_or_else(|| BusinessError::new(PURCHASE_ORDER_NOT_FOUND.to_string()))?;
-        Ok(PurchaseOrderEntityMapper::from_model(model))
+        Ok(order)
     }
 }
 
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[PurchaseOrderUseCase] {}", msg);
-    BusinessError::new(msg)
+#[async_trait]
+impl PurchaseOrderWorkOrderService for WorkOrderUseCase {
+    async fn add_item(
+        &self,
+        work_order_id: i64,
+        item: WorkOrderItem,
+    ) -> Result<(crate::domain::work_order::WorkOrder, WorkOrderItem), BusinessError> {
+        WorkOrderUseCase::add_item(self, work_order_id, item).await
+    }
+
+    async fn mark_item_awaiting_parts(
+        &self,
+        work_order_id: i64,
+        item_id: i64,
+        purchase_order_id: i64,
+    ) -> Result<crate::domain::work_order::WorkOrder, BusinessError> {
+        WorkOrderUseCase::mark_item_awaiting_parts(self, work_order_id, item_id, purchase_order_id)
+            .await
+    }
+
+    async fn resolve_purchase_pendency(
+        &self,
+        item_id: i64,
+    ) -> Result<crate::domain::work_order::WorkOrder, BusinessError> {
+        WorkOrderUseCase::resolve_purchase_pendency(self, item_id).await
+    }
 }

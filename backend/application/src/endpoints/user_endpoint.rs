@@ -165,9 +165,11 @@ pub async fn reissue_invite(
         ));
     }
 
-    let (refreshed, invite) = AccountInviteUseCase::reissue(state.conn.as_ref(), existing)
-        .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let (refreshed, invite) =
+        AccountInviteUseCase::new(UserGateway::new(state.conn.as_ref().clone()))
+            .reissue(existing)
+            .await
+            .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
     send_invite(&refreshed, invite);
 
@@ -425,9 +427,9 @@ pub async fn change_password(
 ) -> HttpResponse<StatusCode> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
-    let user_id = current_user.id.ok_or_else(|| {
-        ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials)
-    })?;
+    let user_id = current_user
+        .id
+        .ok_or_else(|| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
 
     match use_case
         .change_password(user_id, payload.current_password, payload.new_password)

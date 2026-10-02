@@ -1,14 +1,74 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::vehicle::{Vehicle, VehicleEntityMapper};
 use entity::prelude::VehicleEntity as VehicleQuery;
 use entity::vehicle_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
-    QueryFilter, QueryOrder,
+    QueryFilter, QueryOrder, SqlErr,
 };
+
+pub enum VehicleStoreError {
+    DuplicatePlate,
+    DuplicateTrackerDevice,
+    Storage(BusinessError),
+}
+
+#[async_trait]
+pub trait VehicleStore: Send + Sync {
+    async fn save(&self, vehicle: Vehicle) -> Result<Vehicle, VehicleStoreError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Vehicle>, BusinessError>;
+    async fn find_by_plate(
+        &self,
+        plate: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError>;
+    async fn find_by_tracker_device(
+        &self,
+        device_id: i64,
+    ) -> Result<Option<Vehicle>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Vehicle>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<Vehicle>, BusinessError>;
+}
+
+#[async_trait]
+pub trait VehicleLookupStore: Send + Sync {
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError>;
+}
+
+#[async_trait]
+pub trait VehicleUuidLookupStore: Send + Sync {
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Vehicle>, BusinessError>;
+}
+
+#[async_trait]
+pub trait FuelSyncVehicleStore: Send + Sync {
+    async fn find_by_prefix(
+        &self,
+        prefix: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError>;
+    async fn find_by_plate(
+        &self,
+        plate: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError>;
+}
+
+#[async_trait]
+pub trait VehicleOdometerStore: Send + Sync {
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError>;
+    async fn save(&self, vehicle: Vehicle) -> Result<Vehicle, BusinessError>;
+}
 
 /// EPIC-FO-01-S02 (HRMS-921, D-09): every read and delete here goes through
 /// `tenant_select`/`tenant_delete`. The write side is stamped by the entity's
@@ -28,6 +88,191 @@ impl VehicleGateway {
 
     pub fn db(&self) -> &DbConn {
         &self.db
+    }
+}
+
+#[async_trait]
+impl VehicleStore for VehicleGateway {
+    async fn save(&self, vehicle: Vehicle) -> Result<Vehicle, VehicleStoreError> {
+        let active_model = VehicleEntityMapper::build_active_model(vehicle);
+        let saved = active_model.save(&self.db).await.map_err(|error| {
+            match error.sql_err() {
+                Some(SqlErr::UniqueConstraintViolation(message))
+                    if message.contains("uq_vehicle_tracker_device") =>
+                {
+                    VehicleStoreError::DuplicateTrackerDevice
+                }
+                Some(SqlErr::UniqueConstraintViolation(_)) => VehicleStoreError::DuplicatePlate,
+                _ => VehicleStoreError::Storage(database_error(error)),
+            }
+        })?;
+        Ok(VehicleEntityMapper::from_active_model(saved))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError> {
+        let model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Vehicle>, BusinessError> {
+        let model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn find_by_plate(
+        &self,
+        plate: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError> {
+        let model = VehicleGateway::find_by_plate(self, plate, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn find_by_tracker_device(
+        &self,
+        device_id: i64,
+    ) -> Result<Option<Vehicle>, BusinessError> {
+        let model = VehicleGateway::find_by_tracker_device(self, device_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Vehicle>, u64), BusinessError> {
+        let (models, total) = VehicleGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((VehicleEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<Vehicle>, BusinessError> {
+        let models = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_all(self)
+        .await
+        .map_err(database_error)?;
+        Ok(VehicleEntityMapper::from_models(models))
+    }
+}
+
+#[async_trait]
+impl FuelSyncVehicleStore for VehicleGateway {
+    async fn find_by_prefix(
+        &self,
+        prefix: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError> {
+        let model = VehicleGateway::find_by_prefix(self, prefix, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn find_by_plate(
+        &self,
+        plate: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<Vehicle>, BusinessError> {
+        let model = VehicleGateway::find_by_plate(self, plate, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Vehicle database error: {error}");
+    log::error!("[VehicleGateway] {message}");
+    BusinessError::new(message)
+}
+
+#[async_trait]
+impl VehicleOdometerStore for VehicleGateway {
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError> {
+        let model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(|error| {
+            let message = format!("Vehicle database error: {error}");
+            log::error!("[VehicleGateway] {message}");
+            BusinessError::new(message)
+        })?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+
+    async fn save(&self, vehicle: Vehicle) -> Result<Vehicle, BusinessError> {
+        let active_model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::persist(self, vehicle)
+        .await
+        .map_err(|error| {
+            let message = format!("Vehicle database error: {error}");
+            log::error!("[VehicleGateway] {message}");
+            BusinessError::new(message)
+        })?;
+        Ok(VehicleEntityMapper::from_active_model(active_model))
+    }
+}
+
+#[async_trait]
+impl VehicleLookupStore for VehicleGateway {
+    async fn get_by_id(&self, id: i64) -> Result<Option<Vehicle>, BusinessError> {
+        let model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(|error| {
+            let message = format!("Vehicle database error: {error}");
+            log::error!("[VehicleGateway] {message}");
+            BusinessError::new(message)
+        })?;
+        Ok(model.map(VehicleEntityMapper::from_model))
+    }
+}
+
+#[async_trait]
+impl VehicleUuidLookupStore for VehicleGateway {
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Vehicle>, BusinessError> {
+        let model = <Self as Gateway<
+            Vehicle,
+            vehicle_entity::Model,
+            vehicle_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(|error| {
+            let message = format!("Vehicle database error: {error}");
+            log::error!("[VehicleGateway] {message}");
+            BusinessError::new(message)
+        })?;
+        Ok(model.map(VehicleEntityMapper::from_model))
     }
 }
 

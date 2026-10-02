@@ -1,9 +1,6 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::vehicle::{Vehicle, VehicleEntityMapper};
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use sea_orm::{DbErr, SqlErr};
+use crate::domain::vehicle::Vehicle;
+use crate::gateway::vehicle_gateway::{VehicleStore, VehicleStoreError};
 
 /// EPIC-FO-01-S06 (HRMS-925): the rejection a caller can act on. Matched by
 /// `vehicle_endpoint` to answer 409 instead of a generic 400, the same way
@@ -15,31 +12,15 @@ pub const DUPLICATE_PLATE: &str = "A vehicle with this plate is already register
 /// discloses nothing to a tenant.
 pub const DUPLICATE_TRACKER_DEVICE: &str = "This tracking device is already linked to a vehicle";
 
-/// DEF-FO-02: two concurrent writes can both pass the pre-checks; the unique
-/// index stops the second, and that is still a duplicate, not a malformed
-/// request. The index name says which rule was broken (the UUID is generated,
-/// so it never collides).
-fn duplicate_error(error: &DbErr) -> Option<BusinessError> {
-    match error.sql_err() {
-        Some(SqlErr::UniqueConstraintViolation(message)) => {
-            let rule = if message.contains("uq_vehicle_tracker_device") {
-                DUPLICATE_TRACKER_DEVICE
-            } else {
-                DUPLICATE_PLATE
-            };
-            Some(BusinessError::new(rule.to_string()))
-        }
-        _ => None,
-    }
-}
-
 pub struct VehicleUseCase {
-    gateway: VehicleGateway,
+    gateway: Box<dyn VehicleStore>,
 }
 
 impl VehicleUseCase {
-    pub fn new(gateway: VehicleGateway) -> Self {
-        Self { gateway }
+    pub fn new<G: VehicleStore + 'static>(gateway: G) -> Self {
+        Self {
+            gateway: Box::new(gateway),
+        }
     }
 
     /// EPIC-FO-01-S06 (HRMS-925, D-23(c)): plates are compared in one
@@ -65,18 +46,10 @@ impl VehicleUseCase {
         };
         self.reject_duplicate_plate(&vehicle.plate, owning_tenant, None)
             .await?;
-        self.reject_linked_device(vehicle.tracker_device_id, None).await?;
+        self.reject_linked_device(vehicle.tracker_device_id, None)
+            .await?;
 
-        let entity = self.gateway.persist(vehicle).await.map_err(|e| {
-            if let Some(duplicate) = duplicate_error(&e) {
-                return duplicate;
-            }
-            let msg = format!("Failed to persist vehicle: {}", e);
-            log::error!("[VehicleUseCase::create] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(VehicleEntityMapper::from_active_model(entity))
+        self.gateway.save(vehicle).await.map_err(store_error)
     }
 
     pub async fn update(&self, id: i64, vehicle: Vehicle) -> Result<Vehicle, BusinessError> {
@@ -86,7 +59,8 @@ impl VehicleUseCase {
         let vehicle = Self::validated(vehicle)?;
         self.reject_duplicate_plate(&vehicle.plate, existing.tenant_id, Some(id))
             .await?;
-        self.reject_linked_device(vehicle.tracker_device_id, Some(id)).await?;
+        self.reject_linked_device(vehicle.tracker_device_id, Some(id))
+            .await?;
 
         let updated = Vehicle {
             id: Some(id),
@@ -118,16 +92,7 @@ impl VehicleUseCase {
             updated_by: vehicle.updated_by,
         };
 
-        let entity = self.gateway.persist(updated).await.map_err(|e| {
-            if let Some(duplicate) = duplicate_error(&e) {
-                return duplicate;
-            }
-            let msg = format!("Failed to update vehicle: {}", e);
-            log::error!("[VehicleUseCase::update] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(VehicleEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await.map_err(store_error)
     }
 
     /// HRMS-920: a vehicle without a plate or a model is not a fleet record.
@@ -147,12 +112,18 @@ impl VehicleUseCase {
             log::error!("[VehicleUseCase::validated] {}", msg);
             return Err(BusinessError::new(msg));
         }
-        if vehicle.tank_capacity_liters.is_some_and(|c| c.is_nan() || c <= 0.0) {
+        if vehicle
+            .tank_capacity_liters
+            .is_some_and(|c| c.is_nan() || c <= 0.0)
+        {
             let msg = "Vehicle tank capacity must be positive".to_string();
             log::error!("[VehicleUseCase::validated] {}", msg);
             return Err(BusinessError::new(msg));
         }
-        if vehicle.reference_km_per_liter.is_some_and(|c| c.is_nan() || c <= 0.0) {
+        if vehicle
+            .reference_km_per_liter
+            .is_some_and(|c| c.is_nan() || c <= 0.0)
+        {
             let msg = "Vehicle reference consumption must be positive".to_string();
             log::error!("[VehicleUseCase::validated] {}", msg);
             return Err(BusinessError::new(msg));
@@ -172,18 +143,10 @@ impl VehicleUseCase {
         tenant_id: Option<i64>,
         editing: Option<i64>,
     ) -> Result<(), BusinessError> {
-        let existing = self
-            .gateway
-            .find_by_plate(plate, tenant_id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[VehicleUseCase::reject_duplicate_plate] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let existing = self.gateway.find_by_plate(plate, tenant_id).await?;
 
         match existing {
-            Some(model) if Some(model.id) != editing => {
+            Some(vehicle) if vehicle.id != editing => {
                 log::error!(
                     "[VehicleUseCase::reject_duplicate_plate] Plate already registered: {}",
                     plate
@@ -206,13 +169,9 @@ impl VehicleUseCase {
         let Some(device_id) = device_id else {
             return Ok(());
         };
-        let existing = self
-            .gateway
-            .find_by_tracker_device(device_id)
-            .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
+        let existing = self.gateway.find_by_tracker_device(device_id).await?;
         match existing {
-            Some(model) if Some(model.id) != editing => {
+            Some(vehicle) if vehicle.id != editing => {
                 Err(BusinessError::new(DUPLICATE_TRACKER_DEVICE.to_string()))
             }
             _ => Ok(()),
@@ -222,14 +181,8 @@ impl VehicleUseCase {
     pub async fn find_by_id(&self, id: i64) -> Result<Vehicle, BusinessError> {
         log::info!("[VehicleUseCase::find_by_id] Executing for id: {}", id);
 
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[VehicleUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(model) => Ok(VehicleEntityMapper::from_model(model)),
+        match self.gateway.get_by_id(id).await? {
+            Some(vehicle) => Ok(vehicle),
             None => {
                 log::error!(
                     "[VehicleUseCase::find_by_id] Vehicle not found with id: {}",
@@ -250,14 +203,8 @@ impl VehicleUseCase {
             uuid
         );
 
-        let entity = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[VehicleUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(model) => Ok(VehicleEntityMapper::from_model(model)),
+        match self.gateway.get_by_uuid(uuid.clone()).await? {
+            Some(vehicle) => Ok(vehicle),
             None => {
                 log::error!(
                     "[VehicleUseCase::find_by_uuid] Vehicle not found with uuid: {}",
@@ -276,27 +223,22 @@ impl VehicleUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<Vehicle>, u64), BusinessError> {
-        let (entities, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[VehicleUseCase::find_page] {}", msg);
-                BusinessError::new(msg)
-            })?;
-        Ok((VehicleEntityMapper::from_models(entities), total))
+        self.gateway.list_page(page, page_size, search).await
     }
 
     pub async fn find_all(&self) -> Result<Vec<Vehicle>, BusinessError> {
         log::info!("[VehicleUseCase::find_all] Executing find_all vehicles");
 
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[VehicleUseCase::find_all] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        self.gateway.list_all().await
+    }
+}
 
-        Ok(VehicleEntityMapper::from_models(entities))
+fn store_error(error: VehicleStoreError) -> BusinessError {
+    match error {
+        VehicleStoreError::DuplicatePlate => BusinessError::new(DUPLICATE_PLATE.to_string()),
+        VehicleStoreError::DuplicateTrackerDevice => {
+            BusinessError::new(DUPLICATE_TRACKER_DEVICE.to_string())
+        }
+        VehicleStoreError::Storage(error) => error,
     }
 }

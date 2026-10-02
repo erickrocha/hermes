@@ -1,20 +1,11 @@
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::{DemandKind, ScheduleExceptionType};
-use crate::gateway::customer_day_off_gateway::CustomerDayOffGateway;
-use crate::gateway::daily_schedule_gateway::DailyScheduleGateway;
-use crate::gateway::extra_trip_gateway::ExtraTripGateway;
-use crate::gateway::holiday_gateway::HolidayGateway;
-use crate::gateway::schedule_exception_gateway::ScheduleExceptionGateway;
-use crate::gateway::transport_demand_allocation_gateway::TransportDemandAllocationGateway;
-use crate::gateway::transport_demand_gateway::TransportDemandGateway;
+use crate::gateway::effective_schedule_gateway::EffectiveScheduleStore;
 use crate::use_cases::effective_schedule::{
-    AllocationIn, DailyEntryIn, DayInputs, DemandIn, ExceptionIn, ItemKind, TripIn, effective_schedule, Day,
+    AllocationIn, DailyEntryIn, Day, DayInputs, DemandIn, ExceptionIn, ItemKind, TripIn,
+    effective_schedule,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use sea_orm::DbErr;
 use std::collections::HashSet;
-use std::str::FromStr;
 
 /// A vehicle's departure on a day of the horizon -- a real trip (`TRM-474`: only a
 /// trip is "going to travel") or a line or charter.
@@ -27,27 +18,14 @@ pub struct Departure {
 /// `EPIC-SC-04-S01` (`HRMS-610`): loads what a day depends on and asks the pure
 /// rule. Nothing is stored (`TRM-001`).
 pub struct EffectiveScheduleUseCase {
-    demands: TransportDemandGateway,
-    allocations: TransportDemandAllocationGateway,
-    daily: DailyScheduleGateway,
-    exceptions: ScheduleExceptionGateway,
-    holidays: HolidayGateway,
-    day_offs: CustomerDayOffGateway,
-    trips: ExtraTripGateway,
+    store: Box<dyn EffectiveScheduleStore>,
 }
 
 impl EffectiveScheduleUseCase {
-    #[allow(clippy::too_many_arguments)] // one gateway per fact the day reads
-    pub fn new(
-        demands: TransportDemandGateway,
-        allocations: TransportDemandAllocationGateway,
-        daily: DailyScheduleGateway,
-        exceptions: ScheduleExceptionGateway,
-        holidays: HolidayGateway,
-        day_offs: CustomerDayOffGateway,
-        trips: ExtraTripGateway,
-    ) -> Self {
-        Self { demands, allocations, daily, exceptions, holidays, day_offs, trips }
+    pub fn new<S: EffectiveScheduleStore + 'static>(store: S) -> Self {
+        Self {
+            store: Box::new(store),
+        }
     }
 
     /// `TRM-001`: the effective schedule of one date for the caller's tenant.
@@ -62,15 +40,16 @@ impl EffectiveScheduleUseCase {
         from: NaiveDate,
         to: NaiveDate,
     ) -> Result<std::collections::HashMap<i64, Vec<Departure>>, BusinessError> {
-        let mut by_vehicle: std::collections::HashMap<i64, Vec<Departure>> = std::collections::HashMap::new();
+        let mut by_vehicle: std::collections::HashMap<i64, Vec<Departure>> =
+            std::collections::HashMap::new();
         let mut date = from;
         while date <= to {
             for item in self.day(date).await?.items {
                 if let (Some(vehicle_id), Some(at)) = (item.vehicle_id, item.start) {
-                    by_vehicle
-                        .entry(vehicle_id)
-                        .or_default()
-                        .push(Departure { at, is_trip: matches!(item.kind, ItemKind::ExtraTrip | ItemKind::OneOffTrip) });
+                    by_vehicle.entry(vehicle_id).or_default().push(Departure {
+                        at,
+                        is_trip: matches!(item.kind, ItemKind::ExtraTrip | ItemKind::OneOffTrip),
+                    });
                 }
             }
             date += chrono::Duration::days(1);
@@ -83,14 +62,13 @@ impl EffectiveScheduleUseCase {
 
     async fn inputs(&self, date: NaiveDate) -> Result<DayInputs, BusinessError> {
         let demands = self
-            .demands
-            .find_all()
-            .await
-            .map_err(database_error)?
+            .store
+            .demands()
+            .await?
             .into_iter()
             .map(|d| DemandIn {
-                id: d.id,
-                kind: d.demand_kind.as_deref().and_then(|k| DemandKind::from_str(k).ok()),
+                id: d.id.unwrap_or_default(),
+                kind: d.demand_kind,
                 customer_id: d.customer_id,
                 name: d.line_name,
                 shift_start: d.shift_start,
@@ -103,10 +81,9 @@ impl EffectiveScheduleUseCase {
             })
             .collect();
         let allocations = self
-            .allocations
-            .find_all()
-            .await
-            .map_err(database_error)?
+            .store
+            .allocations()
+            .await?
             .into_iter()
             .map(|a| AllocationIn {
                 demand_id: a.demand_id,
@@ -119,10 +96,9 @@ impl EffectiveScheduleUseCase {
             })
             .collect();
         let daily_entries = self
-            .daily
-            .find_by_date(date)
-            .await
-            .map_err(database_error)?
+            .store
+            .daily_entries(date)
+            .await?
             .into_iter()
             .map(|e| DailyEntryIn {
                 demand_id: e.demand_id,
@@ -133,44 +109,48 @@ impl EffectiveScheduleUseCase {
             })
             .collect();
         let exceptions = self
-            .exceptions
-            .find_by_date(date)
-            .await
-            .map_err(database_error)?
+            .store
+            .exceptions(date)
+            .await?
             .into_iter()
-            .filter_map(|e| {
-                Some(ExceptionIn {
-                    demand_id: e.demand_id,
-                    kind: ScheduleExceptionType::from_str(&e.exception_type).ok()?,
-                    new_driver_id: e.new_driver_id,
-                    new_vehicle_id: e.new_vehicle_id,
-                })
+            .map(|e| ExceptionIn {
+                demand_id: e.demand_id,
+                kind: e.exception_type,
+                new_driver_id: e.new_driver_id,
+                new_vehicle_id: e.new_vehicle_id,
             })
             .collect();
         let trips = self
-            .trips
-            .find_on_date(date)
-            .await
-            .map_err(database_error)?
+            .store
+            .trips(date)
+            .await?
             .into_iter()
             .map(|t| TripIn {
-                id: t.id,
+                id: t.id.unwrap_or_default(),
                 customer_id: t.customer_id,
                 driver_id: t.driver_id,
                 vehicle_id: t.vehicle_id,
                 start: t.trip_date.and_time(t.start_time.unwrap_or(NaiveTime::MIN)),
-                end: t.return_date.map(|d| d.and_time(t.return_time.unwrap_or(NaiveTime::MIN))),
+                end: t
+                    .return_date
+                    .map(|d| d.and_time(t.return_time.unwrap_or(NaiveTime::MIN))),
             })
             .collect();
-        let is_holiday = !self.holidays.find_by_date(date).await.map_err(database_error)?.is_empty();
-        let day_off_customers: HashSet<i64> =
-            self.day_offs.find_by_date(date).await.map_err(database_error)?.into_iter().map(|d| d.customer_id).collect();
-        Ok(DayInputs { demands, allocations, daily_entries, exceptions, trips, is_holiday, day_off_customers })
+        let is_holiday = self.store.is_holiday(date).await?;
+        let day_off_customers: HashSet<i64> = self
+            .store
+            .day_off_customers(date)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(DayInputs {
+            demands,
+            allocations,
+            daily_entries,
+            exceptions,
+            trips,
+            is_holiday,
+            day_off_customers,
+        })
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[EffectiveScheduleUseCase] {}", msg);
-    BusinessError::new(msg)
 }

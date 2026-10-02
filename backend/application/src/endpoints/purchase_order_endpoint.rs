@@ -11,35 +11,39 @@ use crate::endpoints::vehicle_endpoint::find_visible as find_visible_vehicle;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
+use business::commons::functions::bytes_para_string;
+use business::commons::gateway::Gateway;
 use business::domain::authorization::{
-    can_administer_purchase_order, can_create_purchase_order, can_read_part, can_read_purchase_order,
-    can_read_work_order,
+    can_administer_purchase_order, can_create_purchase_order, can_read_part,
+    can_read_purchase_order, can_read_work_order,
 };
 use business::domain::part::Part;
 use business::domain::purchase_order::PurchaseOrder;
 use business::domain::user::User;
-use business::commons::functions::bytes_para_string;
-use business::commons::gateway::Gateway;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
 use business::gateway::part_gateway::PartGateway;
-use business::gateway::purchase_order_gateway::PurchaseOrderGateway;
 use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::gateway::purchase_order_gateway::{
+    PurchaseOrderDatabaseGateway, PurchaseOrderGateway,
+};
 use business::gateway::vehicle_gateway::VehicleGateway;
-use business::gateway::work_order_gateway::WorkOrderGateway;
+use business::gateway::work_order_gateway::{WorkOrderGateway, WorkOrderWorkflowDatabaseGateway};
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::km_evolution_use_case::KmEvolutionUseCase;
 use business::use_cases::part_use_case::PartUseCase;
 use business::use_cases::purchase_order_use_case::{
-    DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND, PurchaseOrderUseCase, QUANTITY_MUST_BE_POSITIVE,
-    WRONG_STATUS_FOR_TRANSITION,
+    DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND, PurchaseOrderUseCase,
+    QUANTITY_MUST_BE_POSITIVE, WRONG_STATUS_FOR_TRANSITION,
 };
 use business::use_cases::work_order_use_case::WorkOrderUseCase;
 
 fn use_case(state: &AppState) -> PurchaseOrderUseCase {
     let db = state.conn.as_ref().clone();
     PurchaseOrderUseCase::new(
-        PurchaseOrderGateway::new(db.clone()),
-        PartGateway::new(db.clone()),
+        PurchaseOrderDatabaseGateway::new(
+            PurchaseOrderGateway::new(db.clone()),
+            PartGateway::new(db),
+        ),
         work_order_use_case(state),
     )
 }
@@ -51,19 +55,28 @@ fn part_use_case(state: &AppState) -> PartUseCase<PartGateway> {
 fn work_order_use_case(state: &AppState) -> WorkOrderUseCase {
     let db = state.conn.as_ref().clone();
     WorkOrderUseCase::new(
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
-        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())),
-        PreventivePlanGateway::new(db.clone()),
-        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db),
+        WorkOrderWorkflowDatabaseGateway::new(
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+            PreventivePlanGateway::new(db.clone()),
+            business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(
+                db.clone(),
+            ),
+        ),
+        KmEvolutionUseCase::new(
+            KmEvolutionGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+        ),
     )
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         PART_NOT_FOUND => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
-        QUANTITY_MUST_BE_POSITIVE | DUPLICATE_ACTIVE_PURCHASE_ORDER | WRONG_STATUS_FOR_TRANSITION => {
+        QUANTITY_MUST_BE_POSITIVE
+        | DUPLICATE_ACTIVE_PURCHASE_ORDER
+        | WRONG_STATUS_FOR_TRANSITION => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
@@ -81,7 +94,10 @@ async fn resolve_part(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound))?;
     if !can_read_part(current_user, part.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::PartNotFound,
+        ));
     }
     Ok(part)
 }
@@ -100,7 +116,10 @@ async fn resolve_work_order_id(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
     Ok(work_order.id)
 }
@@ -230,7 +249,8 @@ pub async fn add(
         resolve_work_order_id(&state, &locale, &current_user, payload.work_order_uuid).await?;
     let work_order_item_id =
         resolve_work_order_item_id(&state, &locale, payload.work_order_item_uuid).await?;
-    let vehicle_id = resolve_vehicle_id(&state, &locale, &current_user, payload.vehicle_uuid).await?;
+    let vehicle_id =
+        resolve_vehicle_id(&state, &locale, &current_user, payload.vehicle_uuid).await?;
 
     let purchase_order = PurchaseOrder {
         id: None,
@@ -277,12 +297,14 @@ pub async fn get_by_uuid(
     Extension(current_user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<PurchaseOrderJson>> {
-    let purchase_order = use_case(&state)
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PurchaseOrderNotFound))?;
+    let purchase_order = use_case(&state).find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::PurchaseOrderNotFound)
+    })?;
     if !can_read_purchase_order(&current_user, purchase_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PurchaseOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PurchaseOrderNotFound,
+        ));
     }
     Ok(Json(json(&state, purchase_order).await))
 }
@@ -329,10 +351,9 @@ async fn administered_purchase_order(
     current_user: &User,
     uuid: String,
 ) -> Result<i64, ExceptionResponse> {
-    let purchase_order = use_case(state)
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PurchaseOrderNotFound))?;
+    let purchase_order = use_case(state).find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::PurchaseOrderNotFound)
+    })?;
     if !can_read_purchase_order(current_user, purchase_order.tenant_id) {
         return Err(ExceptionResponse::NotFound(
             locale.clone(),

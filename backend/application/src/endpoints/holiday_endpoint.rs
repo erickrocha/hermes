@@ -16,7 +16,7 @@ use business::domain::user::User;
 use business::gateway::holiday_gateway::HolidayGateway;
 use business::use_cases::holiday_use_case::{DUPLICATE_HOLIDAY, HolidayUseCase};
 
-fn use_case(state: &AppState) -> HolidayUseCase {
+fn use_case(state: &AppState) -> HolidayUseCase<HolidayGateway> {
     HolidayUseCase::new(HolidayGateway::new(state.conn.as_ref().clone()))
 }
 

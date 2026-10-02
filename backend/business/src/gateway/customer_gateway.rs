@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::customer::{Customer, CustomerEntityMapper};
 use entity::customer_entity;
 use entity::prelude::CustomerEntity as CustomerQuery;
@@ -9,6 +10,19 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
     QueryFilter, QueryOrder,
 };
+
+#[async_trait]
+pub trait CustomerStore: Send + Sync {
+    async fn save(&self, customer: Customer) -> Result<Customer, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<Customer>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Customer>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Customer>, u64), BusinessError>;
+}
 
 /// `HRMS-600` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete` -- `VehicleGateway` is the reference
@@ -22,6 +36,60 @@ impl CustomerGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl CustomerStore for CustomerGateway {
+    async fn save(&self, customer: Customer) -> Result<Customer, BusinessError> {
+        let entity = <Self as Gateway<
+            Customer,
+            customer_entity::Model,
+            customer_entity::ActiveModel,
+        >>::persist(self, customer)
+        .await
+        .map_err(database_error)?;
+        Ok(CustomerEntityMapper::from_active_model(entity))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<Customer>, BusinessError> {
+        let model = <Self as Gateway<
+            Customer,
+            customer_entity::Model,
+            customer_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(CustomerEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Customer>, BusinessError> {
+        let model = <Self as Gateway<
+            Customer,
+            customer_entity::Model,
+            customer_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(CustomerEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Customer>, u64), BusinessError> {
+        let (models, total) = CustomerGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((CustomerEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Customer database error: {error}");
+    log::error!("[CustomerGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

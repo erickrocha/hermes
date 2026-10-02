@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::{Extension, Form, Json};
 use business::domain::access_token::AccessToken;
 use business::gateway::tenant_gateway::TenantGateway;
+use business::gateway::user_gateway::UserGateway;
 use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
@@ -42,9 +43,9 @@ pub async fn sign_in(
     Extension(locale): Extension<Locale>,
     Form(login_request): Form<LoginRequest>,
 ) -> HttpResponse<Json<AccessTokenJson>> {
-    let access_token =
-        AuthenticationUseCase::execute(&state.conn, login_request.email, login_request.password)
-            .await;
+    let access_token = AuthenticationUseCase::new(UserGateway::new(state.conn.as_ref().clone()))
+        .execute(login_request.email, login_request.password)
+        .await;
     match access_token {
         Ok(token) => Ok(Json(AccessTokenMapper::json(
             with_tenant_uuid(&state, token).await,
@@ -75,7 +76,8 @@ pub async fn accept_invite(
     Extension(locale): Extension<Locale>,
     Json(payload): Json<AcceptInviteJson>,
 ) -> Result<StatusCode, ExceptionResponse> {
-    match AccountInviteUseCase::accept(state.conn.as_ref(), &payload.token, &payload.new_password)
+    match AccountInviteUseCase::new(UserGateway::new(state.conn.as_ref().clone()))
+        .accept(&payload.token, &payload.new_password)
         .await
     {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
@@ -100,8 +102,9 @@ pub async fn refresh_token(
     Extension(locale): Extension<Locale>,
     Json(request): Json<RefreshTokenRequest>,
 ) -> HttpResponse<Json<AccessTokenJson>> {
-    let access_token =
-        AuthenticationUseCase::refresh_token(&state.conn, request.refresh_token).await;
+    let access_token = AuthenticationUseCase::new(UserGateway::new(state.conn.as_ref().clone()))
+        .refresh_token(request.refresh_token)
+        .await;
     match access_token {
         Ok(token) => Ok(Json(AccessTokenMapper::json(
             with_tenant_uuid(&state, token).await,

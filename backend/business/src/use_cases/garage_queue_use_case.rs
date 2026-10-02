@@ -1,21 +1,19 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::garage_attendance::{GarageAttendance, GarageAttendanceEntityMapper};
+use crate::domain::enums::GarageServiceGroup;
 use crate::domain::enums::GarageServiceState;
-use crate::domain::garage_service::{GarageService, GarageServiceEntityMapper};
+use crate::domain::garage_attendance::GarageAttendance;
+use crate::domain::garage_service::GarageService;
 use crate::domain::tenant_rule_setting::RuleSettings;
-use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
-use crate::gateway::garage_service_gateway::GarageServiceGateway;
-use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
+use crate::gateway::garage_queue_gateway::GarageQueueStore;
 use crate::use_cases::effective_schedule_use_case::EffectiveScheduleUseCase;
 use crate::use_cases::garage_call_use_case::GarageCallUseCase;
-use crate::use_cases::garage_readiness::{CallReasons, CardKey, MonitorKey, QueueKey, fill_tank_alert, tank_calls_vehicle, horizon_end, order_calls, order_cards, order_columns, order_monitor, order_queue, required_pending};
+use crate::use_cases::garage_readiness::{
+    CallReasons, CardKey, MonitorKey, QueueKey, fill_tank_alert, horizon_end, order_calls,
+    order_cards, order_columns, order_monitor, order_queue, required_pending, tank_calls_vehicle,
+};
 use crate::use_cases::garage_validity::TankFact;
 use crate::use_cases::garage_validity_use_case::GarageValidityUseCase;
 use chrono::NaiveDateTime;
-use sea_orm::DbErr;
 use std::collections::HashSet;
 
 /// One vehicle in the yard's queue.
@@ -93,26 +91,25 @@ pub struct Card {
 /// `EPIC-GA-05-S01`/`S03`/`S04` (`HRMS-962`): the yard's queue -- every active
 /// triage with what is left to do, in the one order every surface shows (`TRM-482`).
 pub struct GarageQueueUseCase {
-    attendances: GarageAttendanceGateway,
-    services: GarageServiceGateway,
+    store: Box<dyn GarageQueueStore>,
     schedule: EffectiveScheduleUseCase,
-    vehicles: VehicleGateway,
     validity: GarageValidityUseCase,
     calls: GarageCallUseCase,
-    models: GarageServiceModelGateway,
 }
 
 impl GarageQueueUseCase {
-    pub fn new(
-        attendances: GarageAttendanceGateway,
-        services: GarageServiceGateway,
+    pub fn new<S: GarageQueueStore + 'static>(
+        store: S,
         schedule: EffectiveScheduleUseCase,
-        vehicles: VehicleGateway,
         validity: GarageValidityUseCase,
         calls: GarageCallUseCase,
-        models: GarageServiceModelGateway,
     ) -> Self {
-        Self { attendances, services, schedule, vehicles, validity, calls, models }
+        Self {
+            store: Box::new(store),
+            schedule,
+            validity,
+            calls,
+        }
     }
 
     /// `EPIC-GA-07-S01` (`HRMS-964`, `TRM-497`): the same facts, in the monitor's
@@ -120,7 +117,9 @@ impl GarageQueueUseCase {
     pub async fn monitor(&self) -> Result<Vec<QueueEntry>, BusinessError> {
         let now = chrono::Utc::now().naive_utc();
         let entries = self.queue().await?;
-        let Some(rules) = entries.first().map(|e| e.rules) else { return Ok(entries) };
+        let Some(rules) = entries.first().map(|e| e.rules) else {
+            return Ok(entries);
+        };
         let keys: Vec<MonitorKey> = entries
             .iter()
             .map(|e| MonitorKey {
@@ -131,7 +130,10 @@ impl GarageQueueUseCase {
             })
             .collect();
         let mut slots: Vec<Option<QueueEntry>> = entries.into_iter().map(Some).collect();
-        Ok(order_monitor(&keys, now, &rules).into_iter().filter_map(|i| slots[i].take()).collect())
+        Ok(order_monitor(&keys, now, &rules)
+            .into_iter()
+            .filter_map(|i| slots[i].take())
+            .collect())
     }
 
     /// `EPIC-GA-07-S02` (`HRMS-965`, `TRM-495`/`1512`): the vehicles in the garage as
@@ -159,12 +161,22 @@ impl GarageQueueUseCase {
         }
         let keys: Vec<CardKey> = cards
             .iter()
-            .map(|c| CardKey { needs_refuel: c.needs_refuel, tank_percent: c.tank_percent, prefix: c.prefix.clone() })
+            .map(|c| CardKey {
+                needs_refuel: c.needs_refuel,
+                tank_percent: c.tank_percent,
+                prefix: c.prefix.clone(),
+            })
             .collect();
         let mut slots: Vec<Option<Card>> = cards.into_iter().map(Some).collect();
-        let ordered: Vec<Card> = order_cards(&keys).into_iter().filter_map(|i| slots[i].take()).collect();
+        let ordered: Vec<Card> = order_cards(&keys)
+            .into_iter()
+            .filter_map(|i| slots[i].take())
+            .collect();
         let hidden = ordered.len().saturating_sub(limit.max(0) as usize);
-        Ok((ordered.into_iter().take(limit.max(0) as usize).collect(), hidden))
+        Ok((
+            ordered.into_iter().take(limit.max(0) as usize).collect(),
+            hidden,
+        ))
     }
 
     /// `EPIC-GA-07-S03` (`HRMS-966`, `TRM-485`/`487`/`1504`): the away vehicles that
@@ -173,31 +185,36 @@ impl GarageQueueUseCase {
     pub async fn call_list(&self) -> Result<Vec<CallEntry>, BusinessError> {
         let now = chrono::Utc::now().naive_utc();
         let today = now.date();
-        let departures_of = self.schedule.departures_by_vehicle(today, horizon_end(today)).await?;
+        let departures_of = self
+            .schedule
+            .departures_by_vehicle(today, horizon_end(today))
+            .await?;
         let tank_service_model_ids: HashSet<i64> = self
-            .models
-            .find_all()
-            .await
-            .map_err(database_error)?
+            .store
+            .all_service_models()
+            .await?
             .into_iter()
             .filter(|model| model.governed_by_tank)
-            .map(|model| model.id)
+            .filter_map(|model| model.id)
             .collect();
         let mut entries = Vec::new();
-        for vehicle in self.vehicles.find_all().await.map_err(database_error)? {
-            let id = vehicle.id;
+        for vehicle in self.store.all_vehicles().await? {
+            let Some(id) = vehicle.id else { continue };
             if !self.calls.is_away(id).await? {
                 continue;
             }
             let departures = departures_of.get(&id).cloned().unwrap_or_default();
-            let ahead = departures.iter().filter(|d| d.at > now).min_by_key(|d| d.at).cloned();
+            let ahead = departures
+                .iter()
+                .filter(|d| d.at > now)
+                .min_by_key(|d| d.at)
+                .cloned();
             let rules = self.validity.rules_for(vehicle.tenant_id).await?;
             let tank = self.validity.tank_fact(id).await;
             let alert = fill_tank_alert(tank, ahead.as_ref().is_some_and(|d| d.is_trip), &rules);
             let fuelling_resolved = if alert {
                 latest_triage_has_resolved_tank_service(
-                    &self.attendances,
-                    &self.services,
+                    self.store.as_ref(),
                     id,
                     &tank_service_model_ids,
                 )
@@ -212,16 +229,22 @@ impl GarageQueueUseCase {
             };
             if reasons.any() {
                 entries.push(CallEntry {
-                    vehicle_uuid: crate::commons::functions::bytes_para_string(vehicle.uuid),
+                    vehicle_uuid: vehicle.uuid.unwrap_or_default(),
                     prefix: vehicle.prefix.unwrap_or(vehicle.plate),
                     reasons,
                     next_departure: ahead.map(|d| d.at),
                 });
             }
         }
-        let keys: Vec<_> = entries.iter().map(|e| (e.reasons, e.next_departure, e.prefix.clone())).collect();
+        let keys: Vec<_> = entries
+            .iter()
+            .map(|e| (e.reasons, e.next_departure, e.prefix.clone()))
+            .collect();
         let mut slots: Vec<Option<CallEntry>> = entries.into_iter().map(Some).collect();
-        Ok(order_calls(&keys).into_iter().filter_map(|i| slots[i].take()).collect())
+        Ok(order_calls(&keys)
+            .into_iter()
+            .filter_map(|i| slots[i].take())
+            .collect())
     }
 
     /// `EPIC-GA-07-S04` (`HRMS-967`, `TRM-496`): active triages against the catalogue's
@@ -230,27 +253,51 @@ impl GarageQueueUseCase {
     pub async fn matrix(&self) -> Result<Matrix, BusinessError> {
         let entries = self.monitor().await?;
         let rules = entries.first().map(|e| e.rules).unwrap_or_default();
-        let mut models = self.models.find_active().await.map_err(database_error)?;
-        let order = order_columns(&models.iter().map(|m| (m.service_group == "Internal", m.display_order)).collect::<Vec<_>>());
+        let mut models = self.store.active_service_models().await?;
+        let order = order_columns(
+            &models
+                .iter()
+                .map(|model| {
+                    (
+                        model.service_group == GarageServiceGroup::Internal,
+                        model.display_order,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         let mut slots: Vec<Option<_>> = models.drain(..).map(Some).collect();
         let models: Vec<_> = order.into_iter().filter_map(|i| slots[i].take()).collect();
         let total_columns = models.len();
-        let shown_columns = models.len().min(rules.garage_monitor_matrix_columns.max(0) as usize);
+        let shown_columns = models
+            .len()
+            .min(rules.garage_monitor_matrix_columns.max(0) as usize);
         let models = &models[..shown_columns];
-        let shown_rows = entries.len().min(rules.garage_monitor_matrix_rows.max(0) as usize);
+        let shown_rows = entries
+            .len()
+            .min(rules.garage_monitor_matrix_rows.max(0) as usize);
         let mut rows = Vec::with_capacity(shown_rows);
         for entry in &entries[..shown_rows] {
             let attendance = &entry.attendance;
-            let records = GarageServiceEntityMapper::from_models(
-                self.services.find_by_attendance(attendance.id.unwrap_or_default()).await.map_err(database_error)?,
-            );
+            let records = self
+                .store
+                .services(attendance.id.unwrap_or_default())
+                .await?;
             let evaluation = self.validity.evaluate_full(attendance, &records).await?;
-            let history = self.attendances.find_ids_by_vehicle(attendance.vehicle_id).await.map_err(database_error)?;
-            let performed = self.services.find_performed_by_attendances(history).await.map_err(database_error)?;
+            let history = self
+                .store
+                .attendance_ids_by_vehicle(attendance.vehicle_id)
+                .await?;
+            let performed = self
+                .store
+                .performed_services_by_attendances(history)
+                .await?;
             let cells = models
                 .iter()
                 .map(|m| {
-                    let i = records.iter().position(|r| Some(r.service_model_id) == Some(m.id))?;
+                    let model_id = m.id?;
+                    let i = records
+                        .iter()
+                        .position(|r| r.service_model_id == model_id)?;
                     let (effective, _) = evaluation.services[i];
                     let record = &records[i];
                     Some(MatrixCell {
@@ -261,21 +308,29 @@ impl GarageQueueUseCase {
                             _ => record.marked_at,
                         },
                         last_performed_at: (effective == GarageServiceState::Pending)
-                            .then(|| performed.iter().find(|p| p.service_model_id == m.id).map(|p| p.performed_at.map(|t| t.naive_utc())))
-                            .flatten()
+                            .then(|| {
+                                performed
+                                    .iter()
+                                    .find(|p| Some(p.service_model_id) == m.id)
+                                    .and_then(|p| p.performed_at)
+                            })
                             .flatten(),
                     })
                 })
                 .collect();
-            rows.push(MatrixRow { vehicle_uuid: entry.vehicle_uuid.clone(), prefix: entry.prefix.clone(), cells });
+            rows.push(MatrixRow {
+                vehicle_uuid: entry.vehicle_uuid.clone(),
+                prefix: entry.prefix.clone(),
+                cells,
+            });
         }
         Ok(Matrix {
             columns: models
                 .iter()
                 .map(|m| MatrixColumn {
-                    uuid: crate::commons::functions::bytes_para_string(m.uuid.clone()),
+                    uuid: m.uuid.clone().unwrap_or_default(),
                     name: m.name.clone(),
-                    internal: m.service_group == "Internal",
+                    internal: m.service_group == GarageServiceGroup::Internal,
                 })
                 .collect(),
             rows,
@@ -290,37 +345,60 @@ impl GarageQueueUseCase {
         // The horizon's days are read once for the whole yard (`TRM-001`, `TRM-481`).
         let departures_of = self.schedule.departures_by_vehicle(today, horizon).await?;
         let mut entries = Vec::new();
-        for model in self.attendances.find_all_active().await.map_err(database_error)? {
-            let attendance = GarageAttendanceEntityMapper::from_model(model);
-            let vehicle = self.vehicles.find_by_id(attendance.vehicle_id).await.map_err(database_error)?;
+        for attendance in self.store.active_attendances().await? {
+            let vehicle = self.store.find_vehicle(attendance.vehicle_id).await?;
             let Some(vehicle) = vehicle else { continue };
-            let rows = self.services.find_by_attendance(attendance.id.unwrap_or_default()).await.map_err(database_error)?;
-            let services = GarageServiceEntityMapper::from_models(rows);
+            let services = self
+                .store
+                .services(attendance.id.unwrap_or_default())
+                .await?;
             let evaluation = self.validity.evaluate_full(&attendance, &services).await?;
 
             // A line or charter alone is never "going to travel" (`TRM-475`): only a
             // real trip is. Both order the queue (`TRM-480`).
-            let departures = departures_of.get(&attendance.vehicle_id).cloned().unwrap_or_default();
+            let departures = departures_of
+                .get(&attendance.vehicle_id)
+                .cloned()
+                .unwrap_or_default();
             let going_to_travel = departures.iter().any(|d| d.is_trip);
 
-            let pairs: Vec<_> = evaluation.required.iter().copied().zip(evaluation.services.iter().map(|(s, _)| *s)).collect();
-            let blocking = required_pending(&pairs).into_iter().map(|i| evaluation.names[i].clone()).collect();
+            let pairs: Vec<_> = evaluation
+                .required
+                .iter()
+                .copied()
+                .zip(evaluation.services.iter().map(|(s, _)| *s))
+                .collect();
+            let blocking = required_pending(&pairs)
+                .into_iter()
+                .map(|i| evaluation.names[i].clone())
+                .collect();
             entries.push(QueueEntry {
-                fill_tank_alert: fill_tank_alert(evaluation.tank, going_to_travel, &evaluation.rules),
+                fill_tank_alert: fill_tank_alert(
+                    evaluation.tank,
+                    going_to_travel,
+                    &evaluation.rules,
+                ),
                 called_by_manager: self.calls.active(attendance.vehicle_id).await?.is_some(),
                 next_departure: departures.first().map(|d| d.at),
                 next_is_trip: departures.first().is_some_and(|d| d.is_trip),
-                outstanding: evaluation.services.iter().any(|(state, _)| *state == GarageServiceState::Pending),
+                outstanding: evaluation
+                    .services
+                    .iter()
+                    .any(|(state, _)| *state == GarageServiceState::Pending),
                 rules: evaluation.rules,
                 required_pending: blocking,
-                vehicle_uuid: crate::commons::functions::bytes_para_string(vehicle.uuid),
+                vehicle_uuid: vehicle.uuid.unwrap_or_default(),
                 prefix: vehicle.prefix.unwrap_or_else(|| vehicle.plate.clone()),
                 attendance,
             });
         }
         let keys: Vec<QueueKey> = entries
             .iter()
-            .map(|e| QueueKey { manual_priority: e.attendance.manual_priority, next_departure: e.next_departure, prefix: e.prefix.clone() })
+            .map(|e| QueueKey {
+                manual_priority: e.attendance.manual_priority,
+                next_departure: e.next_departure,
+                prefix: e.prefix.clone(),
+            })
             .collect();
         let order = order_queue(&keys, today);
         let mut slots: Vec<Option<QueueEntry>> = entries.into_iter().map(Some).collect();
@@ -330,26 +408,20 @@ impl GarageQueueUseCase {
 
 fn has_resolved_tank_service(services: &[GarageService], tank_model_ids: &HashSet<i64>) -> bool {
     services.iter().any(|service| {
-        tank_model_ids.contains(&service.service_model_id) && service.state != GarageServiceState::Pending
+        tank_model_ids.contains(&service.service_model_id)
+            && service.state != GarageServiceState::Pending
     })
 }
 
 async fn latest_triage_has_resolved_tank_service(
-    attendances: &GarageAttendanceGateway,
-    services: &GarageServiceGateway,
+    store: &dyn GarageQueueStore,
     vehicle_id: i64,
     tank_model_ids: &HashSet<i64>,
 ) -> Result<bool, BusinessError> {
-    let Some(attendance) = attendances
-        .find_latest_by_vehicle(vehicle_id)
-        .await
-        .map_err(database_error)?
-    else {
+    let Some(attendance) = store.latest_attendance(vehicle_id).await? else {
         return Ok(false);
     };
-    let records = GarageServiceEntityMapper::from_models(
-        services.find_by_attendance(attendance.id).await.map_err(database_error)?,
-    );
+    let records = store.services(attendance.id.unwrap_or_default()).await?;
     Ok(has_resolved_tank_service(&records, tank_model_ids))
 }
 
@@ -379,15 +451,28 @@ mod tests {
     #[test]
     fn only_a_resolved_tank_governed_service_suppresses_the_tank_call() {
         let tank_models = HashSet::from([7]);
-        assert!(!has_resolved_tank_service(&[service(7, GarageServiceState::Pending)], &tank_models));
-        assert!(!has_resolved_tank_service(&[service(8, GarageServiceState::Performed)], &tank_models));
-        assert!(has_resolved_tank_service(&[service(7, GarageServiceState::Performed)], &tank_models));
+        assert!(!has_resolved_tank_service(
+            &[service(7, GarageServiceState::Pending)],
+            &tank_models
+        ));
+        assert!(!has_resolved_tank_service(
+            &[service(8, GarageServiceState::Performed)],
+            &tank_models
+        ));
+        assert!(has_resolved_tank_service(
+            &[service(7, GarageServiceState::Performed)],
+            &tank_models
+        ));
     }
 }
 
 #[cfg(all(test, feature = "mock"))]
 mod gateway_tests {
     use super::*;
+    use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
+    use crate::gateway::garage_service_gateway::GarageServiceGateway;
+    use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
+    use crate::gateway::vehicle_gateway::VehicleGateway;
     use chrono::{NaiveDate, TimeZone, Utc};
     use entity::audit::{AuditUser, run_with_user};
     use sea_orm::{DatabaseBackend, MockDatabase};
@@ -441,8 +526,12 @@ mod gateway_tests {
             .append_query_results([[attendance()]])
             .append_query_results([[service()]])
             .into_connection();
-        let attendances = GarageAttendanceGateway::new(db.clone());
-        let services = GarageServiceGateway::new(db);
+        let store = crate::gateway::garage_queue_gateway::GarageQueueDatabaseGateway::new(
+            GarageAttendanceGateway::new(db.clone()),
+            GarageServiceGateway::new(db.clone()),
+            GarageServiceModelGateway::new(db.clone()),
+            VehicleGateway::new(db),
+        );
         let user = AuditUser {
             id: 2,
             email: "owner@example.com".into(),
@@ -452,17 +541,11 @@ mod gateway_tests {
 
         let resolved = run_with_user(
             Some(user),
-            latest_triage_has_resolved_tank_service(&attendances, &services, 11, &HashSet::from([7])),
+            latest_triage_has_resolved_tank_service(&store, 11, &HashSet::from([7])),
         )
         .await
         .expect("latest triage was read");
 
         assert!(resolved);
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[GarageQueueUseCase] {}", msg);
-    BusinessError::new(msg)
 }

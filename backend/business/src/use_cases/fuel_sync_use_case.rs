@@ -4,18 +4,16 @@
 //! belongs to (`TRM-507`), whether it is a correction or a new fuelling
 //! (`TRM-511`/`512`), and what gets written to `EPIC-FU-01`'s own ledger.
 
-use crate::commons::functions::bytes_para_string;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::FuelEntryOrigin;
 use crate::domain::fuel_entry::FuelEntry;
-use crate::gateway::fuel_entry_gateway::FuelEntryGateway;
-use crate::gateway::fuel_provider::{AckStatus, FuelProvider, ProviderFuelTransaction};
 use crate::domain::tenant_rule_setting::RuleSettings;
-use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
+use crate::domain::vehicle::Vehicle;
+use crate::gateway::fuel_entry_gateway::FuelSyncStore;
+use crate::gateway::fuel_provider::{AckStatus, FuelProvider, ProviderFuelTransaction};
+use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingStore;
+use crate::gateway::vehicle_gateway::FuelSyncVehicleStore;
 use crate::use_cases::vehicle_use_case::VehicleUseCase;
-use entity::vehicle_entity;
 
 /// `TRM-501`/`517`: what one sync call did, for the triggering caller to see
 /// immediately -- not persisted as its own "retrievable operational state"
@@ -33,23 +31,23 @@ pub struct FuelSyncOutcome {
 
 pub struct FuelSyncUseCase<P: FuelProvider> {
     provider: P,
-    fuel_entries: FuelEntryGateway,
-    vehicles: VehicleGateway,
-    rules: TenantRuleSettingGateway,
+    fuel_entries: Box<dyn FuelSyncStore>,
+    vehicles: Box<dyn FuelSyncVehicleStore>,
+    rules: Box<dyn TenantRuleSettingStore>,
 }
 
 impl<P: FuelProvider> FuelSyncUseCase<P> {
-    pub fn new(
-        provider: P,
-        fuel_entries: FuelEntryGateway,
-        vehicles: VehicleGateway,
-        rules: TenantRuleSettingGateway,
-    ) -> Self {
+    pub fn new<F, V, R>(provider: P, fuel_entries: F, vehicles: V, rules: R) -> Self
+    where
+        F: FuelSyncStore + 'static,
+        V: FuelSyncVehicleStore + 'static,
+        R: TenantRuleSettingStore + 'static,
+    {
         Self {
             provider,
-            fuel_entries,
-            vehicles,
-            rules,
+            fuel_entries: Box::new(fuel_entries),
+            vehicles: Box::new(vehicles),
+            rules: Box::new(rules),
         }
     }
 
@@ -66,7 +64,12 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             ..Default::default()
         };
         let mut acks: Vec<(String, AckStatus)> = Vec::with_capacity(transactions.len());
-        let rules = self.rules.settings_for(tenant_id).await.map_err(database_error)?;
+        let rules = self
+            .rules
+            .get_current(tenant_id)
+            .await?
+            .map(|setting| setting.settings())
+            .unwrap_or_default();
 
         for tx in transactions {
             let Some(vehicle) = self.matched_vehicle(&tx, tenant_id).await? else {
@@ -84,9 +87,8 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
 
             let existing = self
                 .fuel_entries
-                .find_by_provider_transaction_id(&tx.external_id)
-                .await
-                .map_err(database_error)?;
+                .get_by_provider_transaction_id(&tx.external_id)
+                .await?;
 
             match existing {
                 Some(row) => {
@@ -126,23 +128,15 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
         &self,
         tx: &ProviderFuelTransaction,
         tenant_id: Option<i64>,
-    ) -> Result<Option<vehicle_entity::Model>, BusinessError> {
+    ) -> Result<Option<Vehicle>, BusinessError> {
         if let Some(prefix) = tx.fleet_prefix.as_deref()
-            && let Some(vehicle) = self
-                .vehicles
-                .find_by_prefix(prefix, tenant_id)
-                .await
-                .map_err(database_error)?
+            && let Some(vehicle) = self.vehicles.find_by_prefix(prefix, tenant_id).await?
         {
             return Ok(Some(vehicle));
         }
         if let Some(plate) = tx.plate.as_deref() {
             let normalised = VehicleUseCase::normalise_plate(plate);
-            return self
-                .vehicles
-                .find_by_plate(&normalised, tenant_id)
-                .await
-                .map_err(database_error);
+            return self.vehicles.find_by_plate(&normalised, tenant_id).await;
         }
         Ok(None)
     }
@@ -150,8 +144,10 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
     /// `TRM-512`: mutable fields only -- `data_hora`, `volume_litros`,
     /// `odometro_km`, `valor`, `tanque_cheio`. The vehicle a transaction
     /// belongs to is not one of them; a correction never re-matches it.
-    fn changed(row: &entity::fuel_entry_entity::Model, tx: &ProviderFuelTransaction) -> bool {
-        let recorded_at_changed = tx.recorded_at.is_some_and(|dt| dt.naive_utc() != row.recorded_at.naive_utc());
+    fn changed(row: &FuelEntry, tx: &ProviderFuelTransaction) -> bool {
+        let recorded_at_changed = tx
+            .recorded_at
+            .is_some_and(|date_time| date_time.naive_utc() != row.recorded_at);
         recorded_at_changed
             || (tx.volume_liters - row.volume_liters).abs() > f64::EPSILON
             || tx.value_cents != row.value_cents
@@ -161,26 +157,29 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
 
     async fn apply_correction(
         &self,
-        row: entity::fuel_entry_entity::Model,
+        row: FuelEntry,
         tx: &ProviderFuelTransaction,
     ) -> Result<(), BusinessError> {
         let corrected = FuelEntry {
-            id: Some(row.id),
-            uuid: Some(bytes_para_string(row.uuid)),
+            id: row.id,
+            uuid: row.uuid.clone(),
             tenant_id: row.tenant_id,
             vehicle_id: row.vehicle_id,
-            recorded_at: tx.recorded_at.map(|dt| dt.naive_utc()).unwrap_or(row.recorded_at.naive_utc()),
+            recorded_at: tx
+                .recorded_at
+                .map(|date_time| date_time.naive_utc())
+                .unwrap_or(row.recorded_at),
             volume_liters: tx.volume_liters,
             value_cents: tx.value_cents,
             odometer_km: tx.odometer_km,
-            station: tx.station.clone().or(row.station),
+            station: tx.station.clone().or_else(|| row.station.clone()),
             full_tank: tx.full_tank,
             // A reconciled driver record keeps its origin (`TRM-548`).
-            origin: row.origin.parse().unwrap_or(FuelEntryOrigin::CtaSync),
+            origin: row.origin,
             provider_transaction_id: Some(tx.external_id.clone()),
             reported_by_user_id: row.reported_by_user_id,
             odometer_override_note: row.odometer_override_note,
-            provider_confirmed_at: row.provider_confirmed_at.map(|dt| dt.naive_utc()),
+            provider_confirmed_at: row.provider_confirmed_at,
             deleted_at: None,
             unified_into_id: None,
             unification_note: row.unification_note,
@@ -189,7 +188,7 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             updated_at: None,
             updated_by: None,
         };
-        self.fuel_entries.persist(corrected).await.map_err(database_error)?;
+        self.fuel_entries.save(corrected).await?;
         Ok(())
     }
 
@@ -199,29 +198,36 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
     /// the provider's official figures overlaid on it (`TRM-548`).
     async fn reconcile(
         &self,
-        vehicle: &vehicle_entity::Model,
+        vehicle: &Vehicle,
         recorded_at: chrono::DateTime<chrono::Utc>,
         tx: &ProviderFuelTransaction,
         rules: &RuleSettings,
     ) -> Result<bool, BusinessError> {
         let at = recorded_at.naive_utc();
         let window = chrono::Duration::hours(rules.reconciliation_window_hours as i64);
+        let vehicle_id = vehicle
+            .id
+            .filter(|id| *id > 0)
+            .ok_or_else(|| BusinessError::new("Vehicle identity is incomplete".to_string()))?;
         let candidates = self
             .fuel_entries
-            .find_unreconciled_driver_entries(vehicle.id, at - window, at + window)
-            .await
-            .map_err(database_error)?;
+            .find_unreconciled_driver_entries(vehicle_id, at - window, at + window)
+            .await?;
         let Some(row) = pick_candidate(at, tx.volume_liters, candidates, rules) else {
             return Ok(false);
         };
         // `TRM-549`: re-verify at write time that nobody reconciled it meanwhile.
-        let fresh = self.fuel_entries.find_by_id(row.id).await.map_err(database_error)?;
+        let row_id = row
+            .id
+            .filter(|id| *id > 0)
+            .ok_or_else(|| BusinessError::new("Fuel entry identity is incomplete".to_string()))?;
+        let fresh = self.fuel_entries.get_by_id(row_id).await?;
         if fresh.is_none_or(|f| f.provider_transaction_id.is_some()) {
             return Ok(false);
         }
         let adopted = FuelEntry {
-            id: Some(row.id),
-            uuid: Some(bytes_para_string(row.uuid)),
+            id: row.id,
+            uuid: row.uuid.clone(),
             tenant_id: row.tenant_id,
             vehicle_id: row.vehicle_id,
             recorded_at: at,
@@ -243,21 +249,25 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             updated_at: None,
             updated_by: None,
         };
-        self.fuel_entries.persist(adopted).await.map_err(database_error)?;
+        self.fuel_entries.save(adopted).await?;
         Ok(true)
     }
 
     async fn import(
         &self,
-        vehicle: &vehicle_entity::Model,
+        vehicle: &Vehicle,
         recorded_at: chrono::DateTime<chrono::Utc>,
         tx: &ProviderFuelTransaction,
     ) -> Result<(), BusinessError> {
+        let vehicle_id = vehicle
+            .id
+            .filter(|id| *id > 0)
+            .ok_or_else(|| BusinessError::new("Vehicle identity is incomplete".to_string()))?;
         let entry = FuelEntry {
             id: None,
             uuid: None,
             tenant_id: vehicle.tenant_id,
-            vehicle_id: vehicle.id,
+            vehicle_id,
             recorded_at: recorded_at.naive_utc(),
             volume_liters: tx.volume_liters,
             value_cents: tx.value_cents,
@@ -277,7 +287,7 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
             updated_at: None,
             updated_by: None,
         };
-        self.fuel_entries.persist(entry).await.map_err(database_error)?;
+        self.fuel_entries.save(entry).await?;
         Ok(())
     }
 }
@@ -287,18 +297,14 @@ impl<P: FuelProvider> FuelSyncUseCase<P> {
 pub fn pick_candidate(
     at: chrono::NaiveDateTime,
     volume_liters: f64,
-    candidates: Vec<entity::fuel_entry_entity::Model>,
+    candidates: Vec<FuelEntry>,
     rules: &RuleSettings,
-) -> Option<entity::fuel_entry_entity::Model> {
-    let tolerance = rules.reconciliation_volume_tolerance_liters.max(volume_liters * rules.reconciliation_volume_tolerance_ratio);
+) -> Option<FuelEntry> {
+    let tolerance = rules
+        .reconciliation_volume_tolerance_liters
+        .max(volume_liters * rules.reconciliation_volume_tolerance_ratio);
     candidates
         .into_iter()
         .filter(|c| (c.volume_liters - volume_liters).abs() <= tolerance)
-        .min_by_key(|c| (c.recorded_at.naive_utc() - at).num_seconds().abs())
-}
-
-fn database_error(e: sea_orm::DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[FuelSyncUseCase] {}", msg);
-    BusinessError::new(msg)
+        .min_by_key(|candidate| (candidate.recorded_at - at).num_seconds().abs())
 }

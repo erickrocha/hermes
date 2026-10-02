@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::maintenance_plan::{MaintenancePlan, MaintenancePlanEntityMapper};
 use entity::maintenance_plan_entity;
 use entity::prelude::MaintenancePlanEntity as MaintenancePlanQuery;
@@ -9,6 +10,23 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait MaintenancePlanStore: Send + Sync {
+    async fn save(&self, plan: MaintenancePlan) -> Result<MaintenancePlan, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<MaintenancePlan>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<MaintenancePlan>, BusinessError>;
+    async fn find_by_vehicle_and_date(
+        &self,
+        vehicle_id: i64,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<MaintenancePlan>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<MaintenancePlan>, u64), BusinessError>;
+}
 
 /// `HRMS-703` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +38,70 @@ impl MaintenancePlanGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl MaintenancePlanStore for MaintenancePlanGateway {
+    async fn save(&self, plan: MaintenancePlan) -> Result<MaintenancePlan, BusinessError> {
+        let active_model = <Self as Gateway<
+            MaintenancePlan,
+            maintenance_plan_entity::Model,
+            maintenance_plan_entity::ActiveModel,
+        >>::persist(self, plan)
+        .await
+        .map_err(database_error)?;
+        Ok(MaintenancePlanEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<MaintenancePlan>, BusinessError> {
+        let model = <Self as Gateway<
+            MaintenancePlan,
+            maintenance_plan_entity::Model,
+            maintenance_plan_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(MaintenancePlanEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<MaintenancePlan>, BusinessError> {
+        let model = <Self as Gateway<
+            MaintenancePlan,
+            maintenance_plan_entity::Model,
+            maintenance_plan_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(MaintenancePlanEntityMapper::from_model))
+    }
+
+    async fn find_by_vehicle_and_date(
+        &self,
+        vehicle_id: i64,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<MaintenancePlan>, BusinessError> {
+        let models = MaintenancePlanGateway::find_by_vehicle_and_date(self, vehicle_id, date)
+            .await
+            .map_err(database_error)?;
+        Ok(MaintenancePlanEntityMapper::from_models(models))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<MaintenancePlan>, u64), BusinessError> {
+        let (models, total) = MaintenancePlanGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((MaintenancePlanEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Maintenance plan database error: {error}");
+    log::error!("[MaintenancePlanGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

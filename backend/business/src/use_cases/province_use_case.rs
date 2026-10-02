@@ -1,13 +1,10 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::province::{Province, ProvinceEntityMapper, normalize_country_code};
-use crate::gateway::province_gateway::ProvinceGateway;
+use crate::domain::province::{Province, normalize_country_code};
+use crate::gateway::province_gateway::ProvinceStore;
 use crate::use_cases::reference_import::{
     ImportOutcome, ImportRejection, ReferenceDataError, RejectionReason, find_duplicate_keys,
     fold_key,
 };
-use sea_orm::{ActiveModelTrait, TransactionTrait};
 
 /// `province.name` is `varchar(255)` and `province.acronym` `varchar(10)`
 /// (migration `m20260916_000006`).
@@ -15,12 +12,14 @@ const NAME_MAX: usize = 255;
 const ACRONYM_MAX: usize = 10;
 
 pub struct ProvinceUseCase {
-    gateway: ProvinceGateway,
+    gateway: Box<dyn ProvinceStore>,
 }
 
 impl ProvinceUseCase {
-    pub fn new(gateway: ProvinceGateway) -> Self {
-        Self { gateway }
+    pub fn new<G: ProvinceStore + 'static>(gateway: G) -> Self {
+        Self {
+            gateway: Box::new(gateway),
+        }
     }
 
     /// PD-027: valida e normaliza uma província antes de gravar. A mesma
@@ -55,11 +54,12 @@ impl ProvinceUseCase {
 
         // A sigla é única dentro do país: gravar uma que já existe em outra
         // linha seria criar uma segunda verdade para o mesmo lugar.
-        if let Ok(Some(existing)) = self
+        if let Some(existing) = self
             .gateway
             .find_by_acronym(&province.country_code, &province.acronym)
             .await
-            && Some(existing.id) != province.id
+            .map_err(|error| ReferenceDataError::unavailable("ProvinceUseCase::save", error))?
+            && existing.id != province.id
         {
             return Err(ReferenceDataError::one(
                 0,
@@ -67,11 +67,10 @@ impl ProvinceUseCase {
             ));
         }
 
-        let saved = ProvinceEntityMapper::build_active_model(province)
-            .save(self.gateway.db())
+        self.gateway
+            .save(province)
             .await
-            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::save", e))?;
-        Ok(ProvinceEntityMapper::from_active_model(saved))
+            .map_err(|error| ReferenceDataError::unavailable("ProvinceUseCase::save", error))
     }
 
     /// PD-027: tudo ou nada — ver `reference_import`.
@@ -105,46 +104,12 @@ impl ProvinceUseCase {
             return Err(ReferenceDataError::Rejected(rejections));
         }
 
-        // PD-027 all-or-nothing (DEF-RD-01): a failure partway through the
-        // loop used to leave the rows before it committed.
-        let transaction = self
-            .gateway
-            .db()
-            .begin()
-            .await
-            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
-
-        let mut outcome = ImportOutcome::default();
-        for (_, mut row) in prepared {
-            let existing = self
-                .gateway
-                .find_by_acronym(&row.country_code, &row.acronym)
-                .await
-                .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
-            match existing {
-                Some(found) => {
-                    row.id = Some(found.id);
-                    outcome.updated += 1;
-                }
-                None => outcome.created += 1,
-            }
-            if let Err(e) = ProvinceEntityMapper::build_active_model(row)
-                .save(&transaction)
-                .await
-            {
-                let _ = transaction.rollback().await;
-                return Err(ReferenceDataError::unavailable(
-                    "ProvinceUseCase::import",
-                    e,
-                ));
-            }
-        }
-
-        transaction
-            .commit()
-            .await
-            .map_err(|e| ReferenceDataError::unavailable("ProvinceUseCase::import", e))?;
-        Ok(outcome)
+        let (_, rows): (Vec<usize>, Vec<Province>) = prepared.into_iter().unzip();
+        let (created, updated) =
+            self.gateway.import(rows).await.map_err(|error| {
+                ReferenceDataError::unavailable("ProvinceUseCase::import", error)
+            })?;
+        Ok(ImportOutcome { created, updated })
     }
 
     /// PD-028.
@@ -154,28 +119,15 @@ impl ProvinceUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<Province>, u64), BusinessError> {
-        let (models, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[ProvinceUseCase::find_page] {}", msg);
-                BusinessError::new(msg)
-            })?;
-        Ok((ProvinceEntityMapper::from_models(models), total))
+        self.gateway.find_page(page, page_size, search).await
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Province, BusinessError> {
         log::info!("[ProvinceUseCase::find_by_id] Executing for id: {}", id);
-        let model = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[ProvinceUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let model = self.gateway.find_by_id(id).await?;
 
         match model {
-            Some(val) => Ok(ProvinceEntityMapper::from_model(val)),
+            Some(province) => Ok(province),
             None => {
                 let msg = format!("Province not found with id: {}", id);
                 log::error!("[ProvinceUseCase::find_by_id] {}", msg);
@@ -189,14 +141,10 @@ impl ProvinceUseCase {
             "[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",
             uuid
         );
-        let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[ProvinceUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let model = self.gateway.find_by_uuid(uuid.clone()).await?;
 
         match model {
-            Some(val) => Ok(ProvinceEntityMapper::from_model(val)),
+            Some(province) => Ok(province),
             None => {
                 let msg = format!("Province not found with uuid: {}", uuid);
                 log::error!("[ProvinceUseCase::find_by_uuid] {}", msg);
@@ -213,28 +161,14 @@ impl ProvinceUseCase {
             "[ProvinceUseCase::find_by_country_code] Executing for country_code: {}",
             country_code
         );
-        let models = self
-            .gateway
-            .find_by_country_code(&country_code)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[ProvinceUseCase::find_by_country_code] {}", msg);
-                BusinessError::new(msg)
-            })?;
-
-        Ok(ProvinceEntityMapper::from_models(models))
+        self.gateway.find_by_country_code(&country_code).await
     }
 
     /// DEF-RD-08: the countries a tenant can be placed in. The console used a
     /// hardcoded `["BR","US"]`, so a country onboarded through PD-027's import
     /// could never be chosen — which defeats the reason PD-027 exists.
     pub async fn find_countries(&self) -> Result<Vec<String>, BusinessError> {
-        self.gateway.distinct_country_codes().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[ProvinceUseCase::find_countries] {}", msg);
-            BusinessError::new(msg)
-        })
+        self.gateway.distinct_country_codes().await
     }
 }
 

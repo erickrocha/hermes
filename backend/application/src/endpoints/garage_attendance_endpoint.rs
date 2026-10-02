@@ -2,10 +2,14 @@ use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::error_response_json::{
-    BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
+    BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
+    UnauthorizedErrorJson,
 };
 use crate::endpoints::json::garage_attendance_json::{
-    GarageAttendanceJson, GarageAttendanceOpenJson, GarageCallListEntryJson, GarageMatrixCellJson, GarageMatrixColumnJson, GarageMatrixJson, GarageMatrixRowJson, GarageMonitorCardJson, GarageMonitorCardsJson, GarageMonitorEntryJson, GarageQueueEntryJson, GarageServiceJson, GarageServiceMarkJson,
+    GarageAttendanceJson, GarageAttendanceOpenJson, GarageCallListEntryJson, GarageMatrixCellJson,
+    GarageMatrixColumnJson, GarageMatrixJson, GarageMatrixRowJson, GarageMonitorCardJson,
+    GarageMonitorCardsJson, GarageMonitorEntryJson, GarageQueueEntryJson, GarageServiceJson,
+    GarageServiceMarkJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -14,56 +18,66 @@ use axum::http::StatusCode;
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
 use business::domain::authorization::{can_operate_garage, can_read_garage};
+use business::domain::enums::GarageServiceState as ServiceState;
 use business::domain::enums::{GarageAttendanceOrigin, GarageServiceState};
 use business::domain::garage_attendance::GarageAttendance;
 use business::domain::garage_service::GarageService;
 use business::domain::user::User;
 use business::gateway::garage_attendance_gateway::GarageAttendanceGateway;
+use business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway;
 use business::gateway::garage_service_gateway::GarageServiceGateway;
 use business::gateway::garage_service_log_gateway::GarageServiceLogGateway;
 use business::gateway::garage_service_model_gateway::GarageServiceModelGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
-use business::use_cases::garage_validity::ValidityReason;
-use business::use_cases::garage_readiness::required_pending;
-use business::use_cases::garage_validity_use_case::{Evaluation, GarageValidityUseCase};
-use business::domain::enums::GarageServiceState as ServiceState;
 use business::use_cases::garage_attendance_use_case::{
-    ALREADY_ACTIVE, ATTENDANCE_CLOSED, ATTENDANCE_NOT_FOUND, GarageAttendanceUseCase, NO_SERVICES, SERVICE_NOT_FOUND,
+    ALREADY_ACTIVE, ATTENDANCE_CLOSED, ATTENDANCE_NOT_FOUND, GarageAttendanceUseCase, NO_SERVICES,
+    SERVICE_NOT_FOUND,
 };
+use business::use_cases::garage_readiness::required_pending;
+use business::use_cases::garage_validity::ValidityReason;
+use business::use_cases::garage_validity_use_case::{Evaluation, GarageValidityUseCase};
 use std::str::FromStr;
 
 fn use_case(state: &AppState) -> GarageAttendanceUseCase {
     let db = state.conn.as_ref().clone();
-    GarageAttendanceUseCase::new(
+    GarageAttendanceUseCase::new(GarageAttendanceDatabaseGateway::new(
         GarageAttendanceGateway::new(db.clone()),
         GarageServiceGateway::new(db.clone()),
         GarageServiceLogGateway::new(db.clone()),
         GarageServiceModelGateway::new(db.clone()),
         VehicleGateway::new(db),
-    )
+    ))
 }
 
 /// `EPIC-GA-06-S02`: the automatic fuelling mark, for the endpoints that bring a
 /// fuelling or a triage into being.
-pub fn fuelling_mark_use_case(state: &AppState) -> business::use_cases::garage_fuelling_mark_use_case::GarageFuellingMarkUseCase {
+pub fn fuelling_mark_use_case(
+    state: &AppState,
+) -> business::use_cases::garage_fuelling_mark_use_case::GarageFuellingMarkUseCase {
     use business::gateway::*;
     let db = state.conn.as_ref().clone();
     business::use_cases::garage_fuelling_mark_use_case::GarageFuellingMarkUseCase::new(
-        GarageAttendanceGateway::new(db.clone()),
-        GarageServiceGateway::new(db.clone()),
-        GarageServiceLogGateway::new(db.clone()),
-        GarageServiceModelGateway::new(db.clone()),
-        fuel_entry_gateway::FuelEntryGateway::new(db.clone()),
-        vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
-        tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
+        business::gateway::garage_fuelling_mark_gateway::GarageFuellingMarkDatabaseGateway::new(
+            GarageAttendanceGateway::new(db.clone()),
+            GarageServiceGateway::new(db.clone()),
+            GarageServiceLogGateway::new(db.clone()),
+            GarageServiceModelGateway::new(db.clone()),
+            fuel_entry_gateway::FuelEntryGateway::new(db.clone()),
+            vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
+            tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
+        ),
     )
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
-        ALREADY_ACTIVE => ExceptionResponse::Conflict(locale, ErrorKey::GarageAttendanceAlreadyActive),
+        ALREADY_ACTIVE => {
+            ExceptionResponse::Conflict(locale, ErrorKey::GarageAttendanceAlreadyActive)
+        }
         ATTENDANCE_CLOSED => ExceptionResponse::Conflict(locale, ErrorKey::GarageAttendanceClosed),
-        ATTENDANCE_NOT_FOUND | SERVICE_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::GarageAttendanceNotFound),
+        ATTENDANCE_NOT_FOUND | SERVICE_NOT_FOUND => {
+            ExceptionResponse::NotFound(locale, ErrorKey::GarageAttendanceNotFound)
+        }
         NO_SERVICES => ExceptionResponse::BadRequest(locale, ErrorKey::GarageNoServices),
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
     }
@@ -89,17 +103,31 @@ fn validity_use_case(state: &AppState) -> GarageValidityUseCase {
 
 /// The evaluation of a triage's services, falling back to the stored states if
 /// the evaluation itself fails -- a screen never loses the record.
-async fn evaluations(state: &AppState, attendance: &GarageAttendance, services: &[GarageService]) -> Evaluation {
-    validity_use_case(state).evaluate_full(attendance, services).await.unwrap_or_else(|_| Evaluation {
-        services: services.iter().map(|s| (s.state, ValidityReason::Valid)).collect(),
-        required: vec![false; services.len()],
-        names: vec![String::new(); services.len()],
-        tank: business::use_cases::garage_validity::TankFact::NoUsableReading,
-        rules: Default::default(),
-    })
+async fn evaluations(
+    state: &AppState,
+    attendance: &GarageAttendance,
+    services: &[GarageService],
+) -> Evaluation {
+    validity_use_case(state)
+        .evaluate_full(attendance, services)
+        .await
+        .unwrap_or_else(|_| Evaluation {
+            services: services
+                .iter()
+                .map(|s| (s.state, ValidityReason::Valid))
+                .collect(),
+            required: vec![false; services.len()],
+            names: vec![String::new(); services.len()],
+            tank: business::use_cases::garage_validity::TankFact::NoUsableReading,
+            rules: Default::default(),
+        })
 }
 
-async fn service_json(state: &AppState, s: GarageService, effective: (ServiceState, ValidityReason)) -> GarageServiceJson {
+async fn service_json(
+    state: &AppState,
+    s: GarageService,
+    effective: (ServiceState, ValidityReason),
+) -> GarageServiceJson {
     let model = GarageServiceModelGateway::new(state.conn.as_ref().clone())
         .find_by_id(s.service_model_id)
         .await
@@ -109,7 +137,10 @@ async fn service_json(state: &AppState, s: GarageService, effective: (ServiceSta
         uuid: s.uuid,
         service_model_uuid: model.as_ref().map(|m| bytes_para_string(m.uuid.clone())),
         name: model.as_ref().map(|m| m.name.clone()).unwrap_or(s.name_key),
-        service_group: model.as_ref().map(|m| m.service_group.clone()).unwrap_or_default(),
+        service_group: model
+            .as_ref()
+            .map(|m| m.service_group.clone())
+            .unwrap_or_default(),
         required_for_departure: model.as_ref().is_some_and(|m| m.required_for_departure),
         state: s.state.to_string(),
         effective_state: effective.0.to_string(),
@@ -120,7 +151,11 @@ async fn service_json(state: &AppState, s: GarageService, effective: (ServiceSta
     }
 }
 
-async fn json(state: &AppState, a: GarageAttendance, services: Vec<GarageService>) -> GarageAttendanceJson {
+async fn json(
+    state: &AppState,
+    a: GarageAttendance,
+    services: Vec<GarageService>,
+) -> GarageAttendanceJson {
     let vehicle_uuid = VehicleGateway::new(state.conn.as_ref().clone())
         .find_by_id(a.vehicle_id)
         .await
@@ -129,8 +164,16 @@ async fn json(state: &AppState, a: GarageAttendance, services: Vec<GarageService
         .map(|m| bytes_para_string(m.uuid))
         .unwrap_or_default();
     let evaluation = evaluations(state, &a, &services).await;
-    let pairs: Vec<_> = evaluation.required.iter().copied().zip(evaluation.services.iter().map(|(s, _)| *s)).collect();
-    let blocking: Vec<String> = required_pending(&pairs).into_iter().map(|i| evaluation.names[i].clone()).collect();
+    let pairs: Vec<_> = evaluation
+        .required
+        .iter()
+        .copied()
+        .zip(evaluation.services.iter().map(|(s, _)| *s))
+        .collect();
+    let blocking: Vec<String> = required_pending(&pairs)
+        .into_iter()
+        .map(|i| evaluation.names[i].clone())
+        .collect();
     let mut rows = Vec::with_capacity(services.len());
     for (s, e) in services.into_iter().zip(evaluation.services) {
         rows.push(service_json(state, s, e).await);
@@ -160,12 +203,20 @@ async fn visible(
     let (attendance, services) = use_case(state)
         .find_by_uuid(uuid.to_string())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::GarageAttendanceNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::GarageAttendanceNotFound)
+        })?;
     if !can_read_garage(current_user, attendance.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::GarageAttendanceNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::GarageAttendanceNotFound,
+        ));
     }
     if operate && !can_operate_garage(current_user, attendance.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::GarageForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale.clone(),
+            ErrorKey::GarageForbidden,
+        ));
     }
     Ok((attendance, services))
 }
@@ -194,13 +245,24 @@ pub async fn open(
 ) -> HttpResponse<(StatusCode, Json<GarageAttendanceJson>)> {
     let vehicle = find_visible(&state, &locale, &current_user, payload.vehicle_uuid).await?;
     if !can_operate_garage(&current_user, vehicle.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::GarageForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::GarageForbidden,
+        ));
     }
     match use_case(&state)
-        .open(vehicle.tenant_id, vehicle.id.unwrap_or_default(), payload.manual_priority, GarageAttendanceOrigin::Manual)
+        .open(
+            vehicle.tenant_id,
+            vehicle.id.unwrap_or_default(),
+            payload.manual_priority,
+            GarageAttendanceOrigin::Manual,
+        )
         .await
     {
-        Ok((attendance, services)) => Ok((StatusCode::CREATED, Json(json(&state, attendance, services).await))),
+        Ok((attendance, services)) => Ok((
+            StatusCode::CREATED,
+            Json(json(&state, attendance, services).await),
+        )),
         Err(e) => Err(error(locale, &e.message)),
     }
 }
@@ -254,10 +316,19 @@ pub async fn active(
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<GarageAttendanceJson>> {
     let vehicle = find_visible(&state, &locale, &current_user, q.vehicle_uuid).await?;
-    match use_case(&state).find_active(vehicle.id.unwrap_or_default()).await {
+    match use_case(&state)
+        .find_active(vehicle.id.unwrap_or_default())
+        .await
+    {
         Ok(Some((attendance, services))) => Ok(Json(json(&state, attendance, services).await)),
-        Ok(None) => Err(ExceptionResponse::NotFound(locale, ErrorKey::GarageAttendanceNotFound)),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Ok(None) => Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::GarageAttendanceNotFound,
+        )),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }
 
@@ -289,11 +360,18 @@ pub async fn mark_service(
     Json(payload): Json<GarageServiceMarkJson>,
 ) -> HttpResponse<Json<GarageServiceJson>> {
     let (attendance, _) = visible(&state, &locale, &current_user, &uuid, true).await?;
-    let new_state = GarageServiceState::from_str(&payload.state)
-        .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue))?;
-    match use_case(&state).mark_service(uuid, service_uuid, new_state, current_user.id).await {
+    let new_state = GarageServiceState::from_str(&payload.state).map_err(|_| {
+        ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue)
+    })?;
+    match use_case(&state)
+        .mark_service(uuid, service_uuid, new_state, current_user.id)
+        .await
+    {
         Ok(service) => {
-            let effective = evaluations(&state, &attendance, std::slice::from_ref(&service)).await.services.remove(0);
+            let effective = evaluations(&state, &attendance, std::slice::from_ref(&service))
+                .await
+                .services
+                .remove(0);
             Ok(Json(service_json(&state, service, effective).await))
         }
         Err(e) => Err(error(locale, &e.message)),
@@ -346,26 +424,33 @@ pub async fn queue(
 ) -> HttpResponse<Json<Vec<GarageQueueEntryJson>>> {
     match queue_use_case(&state).queue().await {
         Ok(entries) => Ok(Json(entries.iter().map(queue_json).collect())),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }
 
-fn queue_use_case(state: &AppState) -> business::use_cases::garage_queue_use_case::GarageQueueUseCase {
+fn queue_use_case(
+    state: &AppState,
+) -> business::use_cases::garage_queue_use_case::GarageQueueUseCase {
     use business::gateway::*;
     use business::use_cases::garage_call_use_case::GarageCallUseCase;
     let db = state.conn.as_ref().clone();
     business::use_cases::garage_queue_use_case::GarageQueueUseCase::new(
-        GarageAttendanceGateway::new(db.clone()),
-        GarageServiceGateway::new(db.clone()),
+        garage_queue_gateway::GarageQueueDatabaseGateway::new(
+            GarageAttendanceGateway::new(db.clone()),
+            GarageServiceGateway::new(db.clone()),
+            GarageServiceModelGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+        ),
         crate::endpoints::schedule_endpoint::schedule_use_case(state),
-        VehicleGateway::new(db.clone()),
         validity_use_case(state),
         GarageCallUseCase::new(
             garage_call_gateway::GarageCallGateway::new(db.clone()),
             vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
             VehicleGateway::new(db.clone()),
         ),
-        GarageServiceModelGateway::new(db),
     )
 }
 
@@ -409,14 +494,29 @@ pub async fn monitor(
                     GarageMonitorEntryJson {
                         entry: queue_json(e),
                         readiness: e.next_departure.map(|at| {
-                            format!("{:?}", departure_readiness(at, e.next_is_trip, now, pending, e.outstanding, &e.rules))
+                            format!(
+                                "{:?}",
+                                departure_readiness(
+                                    at,
+                                    e.next_is_trip,
+                                    now,
+                                    pending,
+                                    e.outstanding,
+                                    &e.rules
+                                )
+                            )
                         }),
-                        urgent: e.next_departure.is_some_and(|at| urgent_animation(at, e.next_is_trip, now, pending, &e.rules)),
+                        urgent: e.next_departure.is_some_and(|at| {
+                            urgent_animation(at, e.next_is_trip, now, pending, &e.rules)
+                        }),
                     }
                 })
                 .collect(),
         )),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }
 
@@ -449,7 +549,10 @@ pub async fn monitor_cards(
                 .collect(),
             not_shown,
         })),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }
 
@@ -483,7 +586,10 @@ pub async fn call_list(
                 })
                 .collect(),
         )),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }
 
@@ -508,7 +614,11 @@ pub async fn monitor_matrix(
             columns: m
                 .columns
                 .into_iter()
-                .map(|c| GarageMatrixColumnJson { service_model_uuid: c.uuid, name: c.name, internal: c.internal })
+                .map(|c| GarageMatrixColumnJson {
+                    service_model_uuid: c.uuid,
+                    name: c.name,
+                    internal: c.internal,
+                })
                 .collect(),
             rows: m
                 .rows
@@ -532,6 +642,9 @@ pub async fn monitor_matrix(
             rows_not_shown: m.rows_not_shown,
             columns_not_shown: m.columns_not_shown,
         })),
-        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        Err(_) => Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::UnexpectedError,
+        )),
     }
 }

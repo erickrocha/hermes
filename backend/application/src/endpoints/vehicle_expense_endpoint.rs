@@ -24,7 +24,7 @@ use business::use_cases::vehicle_expense_use_case::{
     VALUE_MUST_BE_POSITIVE, VEHICLE_NOT_FOUND, VehicleExpenseUseCase,
 };
 
-fn use_case(state: &AppState) -> VehicleExpenseUseCase {
+fn use_case(state: &AppState) -> VehicleExpenseUseCase<VehicleExpenseGateway, VehicleGateway> {
     let db = state.conn.as_ref().clone();
     VehicleExpenseUseCase::new(
         VehicleExpenseGateway::new(db.clone()),

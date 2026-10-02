@@ -1,11 +1,21 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::fuel_gauge_setting::{FuelGaugeSetting, FuelGaugeSettingEntityMapper};
 use entity::fuel_gauge_setting_entity;
 use entity::prelude::FuelGaugeSettingEntity as FuelGaugeSettingQuery;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+
+#[async_trait]
+pub trait FuelGaugeSettingStore: Send + Sync {
+    async fn get_current(
+        &self,
+        target_tenant_id: Option<i64>,
+    ) -> Result<Option<FuelGaugeSetting>, BusinessError>;
+    async fn save(&self, setting: FuelGaugeSetting) -> Result<FuelGaugeSetting, BusinessError>;
+}
 
 /// `HRMS-953` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -17,6 +27,36 @@ impl FuelGaugeSettingGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl FuelGaugeSettingStore for FuelGaugeSettingGateway {
+    async fn get_current(
+        &self,
+        target_tenant_id: Option<i64>,
+    ) -> Result<Option<FuelGaugeSetting>, BusinessError> {
+        let model = FuelGaugeSettingGateway::find_current(self, target_tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(FuelGaugeSettingEntityMapper::from_model))
+    }
+
+    async fn save(&self, setting: FuelGaugeSetting) -> Result<FuelGaugeSetting, BusinessError> {
+        let active_model = <Self as Gateway<
+            FuelGaugeSetting,
+            fuel_gauge_setting_entity::Model,
+            fuel_gauge_setting_entity::ActiveModel,
+        >>::persist(self, setting)
+        .await
+        .map_err(database_error)?;
+        Ok(FuelGaugeSettingEntityMapper::from_active_model(active_model))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Fuel gauge setting database error: {error}");
+    log::error!("[FuelGaugeSettingGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

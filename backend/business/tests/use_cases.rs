@@ -900,8 +900,10 @@ async fn user_reads() {
     );
     assert_eq!(uc.find_all_by_tenant_id(42).await.unwrap().len(), 1);
     assert!(
-        UserUseCase::find_by_email(&db, "u@example.com".into())
+        UserUseCase::new(UserGateway::new(db.clone()))
+            .find_by_email("u@example.com".into())
             .await
+            .expect("email lookup succeeds")
             .is_some()
     );
 }
@@ -931,12 +933,13 @@ async fn seeding_creates_the_sysadmin_once_under_platform_scope() {
             "$argon2id$x",
         )]]) // second boot
         .into_connection();
-    let first = run_as_platform(UserUseCase::seed_sysadmin(&db))
+    let use_case = UserUseCase::new(UserGateway::new(db.clone()));
+    let first = run_as_platform(use_case.seed_sysadmin())
         .await
         .expect("seeded");
     assert_eq!(first.role, Role::SysAdmin);
     assert_eq!(first.tenant_id, None);
-    let again = run_as_platform(UserUseCase::seed_sysadmin(&db))
+    let again = run_as_platform(use_case.seed_sysadmin())
         .await
         .expect("found");
     assert_eq!(
@@ -1099,9 +1102,10 @@ async fn database_failures_surface_as_errors_not_as_empty_results() {
             .is_err()
     );
     assert!(
-        UserUseCase::find_by_email(&failing(1), "u@example.com".into())
+        UserUseCase::new(UserGateway::new(failing(1)))
+            .find_by_email("u@example.com".into())
             .await
-            .is_none()
+            .is_err()
     );
 }
 
@@ -1139,8 +1143,7 @@ async fn failed_writes_are_reported() {
     .await;
     assert!(user_err.is_err());
 
-    let persisted = run_as_platform(UserUseCase::persist(
-        write_fails(),
+    let persisted = run_as_platform(UserUseCase::new(UserGateway::new(write_fails())).persist(
         new_user(
             "n@example.com",
             "Correct#Horse9",
@@ -1151,12 +1154,10 @@ async fn failed_writes_are_reported() {
     .await;
     assert!(persisted.is_err());
     assert!(
-        UserUseCase::persist(
-            mock().into_connection(),
-            new_user("", "", Role::TenantUser, None)
-        )
-        .await
-        .is_err()
+        UserUseCase::new(UserGateway::new(mock().into_connection()))
+            .persist(new_user("", "", Role::TenantUser, None))
+            .await
+            .is_err()
     );
 }
 
@@ -1172,15 +1173,14 @@ async fn persisting_a_user_hashes_the_password() {
             "$argon2id$x",
         )]])
         .into_connection();
-    let saved = run_as_platform(UserUseCase::persist(
-        db.clone(),
-        new_user(
+    let saved = run_as_platform(
+        UserUseCase::new(UserGateway::new(db.clone())).persist(new_user(
             "p@example.com",
             "Correct#Horse9",
             Role::TenantUser,
             Some(42),
-        ),
-    ))
+        )),
+    )
     .await
     .expect("persisted");
     assert_eq!(saved.id, Some(6));
@@ -1268,7 +1268,7 @@ async fn changing_sysadmin_email_repoints_the_same_account_instead_of_adding_one
             "$argon2id$x",
         )]])
         .into_connection();
-    let seeded = run_as_platform(UserUseCase::seed_sysadmin(&db))
+    let seeded = run_as_platform(UserUseCase::new(UserGateway::new(db.clone())).seed_sysadmin())
         .await
         .expect("re-pointed");
     assert_eq!(
@@ -1642,7 +1642,9 @@ use business::use_cases::vehicle_assignment_use_case::{
 };
 use entity::vehicle_assignment_entity;
 
-fn assignment_use_case(db: &DatabaseConnection) -> VehicleAssignmentUseCase {
+fn assignment_use_case(
+    db: &DatabaseConnection,
+) -> VehicleAssignmentUseCase<VehicleAssignmentGateway, UserGateway> {
     VehicleAssignmentUseCase::new(
         VehicleAssignmentGateway::new(db.clone()),
         UserGateway::new(db.clone()),
@@ -1679,9 +1681,12 @@ async fn only_an_active_driver_of_the_vehicles_own_tenant_can_be_assigned() {
         disabled,
     ] {
         let db = mock().append_query_results([[candidate]]).into_connection();
-        let refused = run_with_user(Some(owner(42)), assignment_use_case(&db).assign(&vehicle, UUID.into()))
-            .await
-            .expect_err("not an assignable driver");
+        let refused = run_with_user(
+            Some(owner(42)),
+            assignment_use_case(&db).assign(&vehicle, UUID.into()),
+        )
+        .await
+        .expect_err("not an assignable driver");
         assert_eq!(refused.message, NOT_A_DRIVER);
         assert!(!format!("{:?}", log(db)).contains("INSERT"));
     }
@@ -1696,13 +1701,19 @@ async fn a_vehicle_with_a_live_assignment_is_refused_a_second_one() {
         .append_query_results([[user_row(6, "d2@example.com", "Driver", Some(42), "x")]])
         .append_query_results([[live_assignment(10, 5)]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), assignment_use_case(&db).assign(&vehicle, UUID.into()))
-        .await
-        .expect_err("second live assignment");
+    let refused = run_with_user(
+        Some(owner(42)),
+        assignment_use_case(&db).assign(&vehicle, UUID.into()),
+    )
+    .await
+    .expect_err("second live assignment");
     assert_eq!(refused.message, VEHICLE_ALREADY_ASSIGNED);
     let sql = format!("{:?}", log(db));
     assert!(!sql.contains("INSERT"), "{sql}");
-    assert!(sql.contains("`ended_at` IS NULL"), "the check looks for a live row: {sql}");
+    assert!(
+        sql.contains("`ended_at` IS NULL"),
+        "the check looks for a live row: {sql}"
+    );
 }
 
 // ---------------------------------------------------------- EPIC-SC-02 transport demand
@@ -1799,8 +1810,8 @@ async fn a_vehicle_outside_the_demands_own_tenant_may_not_be_named() {
 use business::domain::transport_demand_allocation::TransportDemandAllocation;
 use business::gateway::transport_demand_allocation_gateway::TransportDemandAllocationGateway;
 use business::use_cases::transport_demand_allocation_use_case::{
-    NOT_A_DRIVER as ALLOCATION_NOT_A_DRIVER, NOT_A_TENANT_VEHICLE as ALLOCATION_NOT_A_TENANT_VEHICLE,
-    TransportDemandAllocationUseCase,
+    NOT_A_DRIVER as ALLOCATION_NOT_A_DRIVER,
+    NOT_A_TENANT_VEHICLE as ALLOCATION_NOT_A_TENANT_VEHICLE, TransportDemandAllocationUseCase,
 };
 
 fn allocation_use_case(db: &DatabaseConnection) -> TransportDemandAllocationUseCase {
@@ -1868,9 +1879,12 @@ async fn a_vehicle_outside_the_allocations_own_tenant_may_not_be_named() {
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
     let allocation = new_allocation(Some(42));
-    let refused = run_with_user(Some(unbound_admin), allocation_use_case(&db).create(allocation))
-        .await
-        .expect_err("vehicle belongs to another tenant");
+    let refused = run_with_user(
+        Some(unbound_admin),
+        allocation_use_case(&db).create(allocation),
+    )
+    .await
+    .expect_err("vehicle belongs to another tenant");
     assert_eq!(refused.message, ALLOCATION_NOT_A_TENANT_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2007,7 +2021,11 @@ async fn a_cancellation_naming_neither_a_driver_nor_a_vehicle_queries_neither_ga
     );
 }
 
-fn schedule_exception_row(id: i64, tenant_id: i64, demand_id: i64) -> schedule_exception_entity::Model {
+fn schedule_exception_row(
+    id: i64,
+    tenant_id: i64,
+    demand_id: i64,
+) -> schedule_exception_entity::Model {
     schedule_exception_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -2064,9 +2082,12 @@ async fn a_named_replacement_vehicle_must_belong_to_the_exceptions_own_tenant() 
         .into_connection();
     let mut exception = new_exception(Some(42));
     exception.new_vehicle_id = Some(10);
-    let refused = run_with_user(Some(unbound_admin), exception_use_case(&db).create(exception))
-        .await
-        .expect_err("vehicle belongs to another tenant");
+    let refused = run_with_user(
+        Some(unbound_admin),
+        exception_use_case(&db).create(exception),
+    )
+    .await
+    .expect_err("vehicle belongs to another tenant");
     assert_eq!(refused.message, EXCEPTION_NOT_A_TENANT_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2076,8 +2097,8 @@ use business::domain::extra_trip::ExtraTrip;
 use business::gateway::customer_gateway::CustomerGateway;
 use business::gateway::extra_trip_gateway::ExtraTripGateway;
 use business::use_cases::extra_trip_use_case::{
-    DUPLICATE_TRIP, ExtraTripUseCase, NOT_A_DRIVER as TRIP_NOT_A_DRIVER,
-    NOT_A_TENANT_CUSTOMER, NOT_A_TENANT_VEHICLE as TRIP_NOT_A_TENANT_VEHICLE,
+    DUPLICATE_TRIP, ExtraTripUseCase, NOT_A_DRIVER as TRIP_NOT_A_DRIVER, NOT_A_TENANT_CUSTOMER,
+    NOT_A_TENANT_VEHICLE as TRIP_NOT_A_TENANT_VEHICLE,
 };
 
 fn trip_use_case(db: &DatabaseConnection) -> ExtraTripUseCase {
@@ -2131,9 +2152,12 @@ async fn a_trip_with_the_same_order_code_and_date_in_the_same_tenant_is_refused_
     let db = mock()
         .append_query_results([[extra_trip_row(1, 42, "ORD-100")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), trip_use_case(&db).create(new_trip(Some(42))))
-        .await
-        .expect_err("a duplicate order code + date is refused");
+    let refused = run_with_user(
+        Some(owner(42)),
+        trip_use_case(&db).create(new_trip(Some(42))),
+    )
+    .await
+    .expect_err("a duplicate order code + date is refused");
     assert_eq!(refused.message, DUPLICATE_TRIP);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2239,7 +2263,11 @@ async fn an_empty_order_code_is_rejected_before_any_query() {
     trip.order_code = "   ".into();
     let result = run_with_user(Some(owner(42)), trip_use_case(&db).import(vec![trip])).await;
     let err = result.expect_err("blank order code is refused");
-    assert!(err.english().contains("row 1: order code is required"), "{}", err.english());
+    assert!(
+        err.english().contains("row 1: order code is required"),
+        "{}",
+        err.english()
+    );
     assert!(log(db).is_empty());
 }
 
@@ -2258,7 +2286,8 @@ async fn two_rows_with_the_same_order_code_and_date_in_one_file_are_rejected_as_
     .await;
     let err = result.expect_err("duplicate order code + date within the file");
     assert!(
-        err.english().contains("row 2: duplicate order code and date within the file"),
+        err.english()
+            .contains("row 2: duplicate order code and date within the file"),
         "{}",
         err.english()
     );
@@ -2378,7 +2407,11 @@ async fn a_negative_odometer_reading_is_rejected_before_any_query() {
     let err = run_with_user(Some(owner(42)), km_use_case(&db).create(reading))
         .await
         .expect_err("a negative reading is refused");
-    assert!(err.message.contains("cannot be negative"), "{}", err.message);
+    assert!(
+        err.message.contains("cannot be negative"),
+        "{}",
+        err.message
+    );
     assert!(log(db).is_empty());
 }
 
@@ -2388,8 +2421,7 @@ async fn a_negative_odometer_reading_is_rejected_before_any_query() {
 /// backdated `Adjustment` while a different, already-on-file row is the one
 /// `find_latest_by_vehicle` reports back as latest.
 #[tokio::test]
-async fn creating_a_reading_recomputes_the_vehicles_odometer_from_the_query_confirmed_latest_row()
-{
+async fn creating_a_reading_recomputes_the_vehicles_odometer_from_the_query_confirmed_latest_row() {
     let reading = new_km_reading(Some(42), 10, 500.0);
     let db = mock()
         .append_exec_results([inserted(91)]) // insert the new (backdated) reading
@@ -2423,10 +2455,10 @@ use business::use_cases::checklist_template_use_case::{
 };
 
 fn checklist_template_use_case(db: &DatabaseConnection) -> ChecklistTemplateUseCase {
-    ChecklistTemplateUseCase::new(
+    ChecklistTemplateUseCase::new(business::gateway::checklist_template_gateway::ChecklistTemplateDatabaseGateway::new(
         ChecklistTemplateGateway::new(db.clone()),
         ChecklistTemplateItemGateway::new(db.clone()),
-    )
+    ))
 }
 
 fn new_checklist_template(tenant_id: Option<i64>, name: &str) -> ChecklistTemplate {
@@ -2459,7 +2491,11 @@ fn new_checklist_template_item(description: &str) -> ChecklistTemplateItem {
     }
 }
 
-fn checklist_template_row(id: i64, tenant_id: i64, name: &str) -> entity::checklist_template_entity::Model {
+fn checklist_template_row(
+    id: i64,
+    tenant_id: i64,
+    name: &str,
+) -> entity::checklist_template_entity::Model {
     entity::checklist_template_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -2554,7 +2590,12 @@ async fn creating_a_template_writes_it_and_its_items_in_one_transaction() {
         .append_exec_results([inserted(92)]) // insert the template
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]]) // refetch after insert
         .append_exec_results([inserted(93)]) // insert the item
-        .append_query_results([[checklist_template_item_row(93, 42, 92, "Check tyre pressure")]]) // refetch after insert
+        .append_query_results([[checklist_template_item_row(
+            93,
+            42,
+            92,
+            "Check tyre pressure",
+        )]]) // refetch after insert
         .into_connection();
 
     let (saved_template, saved_items) = run_with_user(
@@ -2575,27 +2616,27 @@ use business::domain::checklist_run::ChecklistRun;
 use business::gateway::checklist_answer_gateway::ChecklistAnswerGateway;
 use business::gateway::checklist_run_gateway::ChecklistRunGateway;
 use business::use_cases::checklist_run_use_case::{
-    AT_LEAST_ONE_ANSWER_REQUIRED, ANSWER_NOT_A_TEMPLATE_ITEM, ChecklistRunUseCase,
+    ANSWER_NOT_A_TEMPLATE_ITEM, AT_LEAST_ONE_ANSWER_REQUIRED, ChecklistRunUseCase,
     DRIVER_ALREADY_HOLDS_A_VEHICLE, DUPLICATE_ANSWER_FOR_ITEM, MAY_NOT_NAME_AN_OPENING_CHECKLIST,
-    NOT_A_DRIVER as RUN_NOT_A_DRIVER, NOT_A_TENANT_TEMPLATE, NOT_A_TENANT_VEHICLE as RUN_NOT_A_TENANT_VEHICLE,
-    OPENING_CHECKLIST_ALREADY_CLOSED, OPENING_CHECKLIST_WRONG_VEHICLE, RETURN_REQUIRES_OPENING_CHECKLIST,
+    NOT_A_DRIVER as RUN_NOT_A_DRIVER, NOT_A_TENANT_TEMPLATE,
+    NOT_A_TENANT_VEHICLE as RUN_NOT_A_TENANT_VEHICLE, OPENING_CHECKLIST_ALREADY_CLOSED,
+    OPENING_CHECKLIST_WRONG_VEHICLE, RETURN_REQUIRES_OPENING_CHECKLIST,
 };
 
 fn checklist_run_use_case(db: &DatabaseConnection) -> ChecklistRunUseCase {
-    ChecklistRunUseCase::new(
+    ChecklistRunUseCase::new(business::gateway::checklist_run_gateway::ChecklistRunDatabaseGateway::new(
         ChecklistRunGateway::new(db.clone()),
         ChecklistTemplateGateway::new(db.clone()),
         ChecklistTemplateItemGateway::new(db.clone()),
         ChecklistAnswerGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
         UserGateway::new(db.clone()),
-        business::use_cases::km_evolution_use_case::KmEvolutionUseCase::new(
-            business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
-            VehicleGateway::new(db.clone()),
-        ),
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
-    )
+    ), business::use_cases::km_evolution_use_case::KmEvolutionUseCase::new(
+        business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+    ))
 }
 
 fn new_checklist_answer(checklist_template_item_id: i64) -> ChecklistAnswer {
@@ -2695,9 +2736,12 @@ async fn a_checklist_template_outside_the_runs_own_tenant_may_not_be_named() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 99, "Departure inspection")]])
         .into_connection();
-    let refused = run_with_user(Some(unbound_admin), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("template belongs to another tenant");
+    let refused = run_with_user(
+        Some(unbound_admin),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("template belongs to another tenant");
     assert_eq!(refused.message, NOT_A_TENANT_TEMPLATE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2715,9 +2759,12 @@ async fn a_vehicle_outside_the_runs_own_tenant_may_not_be_named() {
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
-    let refused = run_with_user(Some(unbound_admin), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("vehicle belongs to another tenant");
+    let refused = run_with_user(
+        Some(unbound_admin),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("vehicle belongs to another tenant");
     assert_eq!(refused.message, RUN_NOT_A_TENANT_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2730,9 +2777,12 @@ async fn a_named_driver_must_be_an_active_driver_of_the_runs_own_tenant() {
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "x")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("not an assignable driver");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("not an assignable driver");
     assert_eq!(refused.message, RUN_NOT_A_DRIVER);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2746,9 +2796,12 @@ async fn a_departure_may_not_name_an_opening_checklist() {
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("a departure may not name an opening checklist");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("a departure may not name an opening checklist");
     assert_eq!(refused.message, MAY_NOT_NAME_AN_OPENING_CHECKLIST);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2761,9 +2814,12 @@ async fn a_return_must_name_the_departure_it_closes() {
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("a return with no opening checklist is refused");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("a return with no opening checklist is refused");
     assert_eq!(refused.message, RETURN_REQUIRES_OPENING_CHECKLIST);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2780,9 +2836,12 @@ async fn a_return_naming_a_departure_of_a_different_vehicle_is_refused() {
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .append_query_results([[checklist_run_row(1, 42, "Departure", 999, None)]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("the departure named belongs to a different vehicle");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("the departure named belongs to a different vehicle");
     assert_eq!(refused.message, OPENING_CHECKLIST_WRONG_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2800,9 +2859,12 @@ async fn a_return_naming_an_already_closed_departure_is_refused() {
         .append_query_results([[checklist_run_row(1, 42, "Departure", 10, None)]])
         .append_query_results([[checklist_run_row(2, 42, "Return", 10, Some(1))]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("the departure named has already been closed");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("the departure named has already been closed");
     assert_eq!(refused.message, OPENING_CHECKLIST_ALREADY_CLOSED);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2818,9 +2880,12 @@ async fn a_driver_who_already_holds_an_open_vehicle_may_not_open_a_second_one() 
         .append_query_results([[checklist_run_row(1, 42, "Departure", 99, None)]]) // find_departures_by_driver
         .append_query_results([Vec::<entity::checklist_run_entity::Model>::new()]) // find_returns_closing: none close it
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("the driver already holds a vehicle");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("the driver already holds a vehicle");
     assert_eq!(refused.message, DRIVER_ALREADY_HOLDS_A_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2836,9 +2901,12 @@ async fn a_checklist_with_no_answered_items_is_rejected_before_any_write() {
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, Vec::new()))
-        .await
-        .expect_err("no answered items is refused");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, Vec::new()),
+    )
+    .await
+    .expect_err("no answered items is refused");
     assert_eq!(refused.message, AT_LEAST_ONE_ANSWER_REQUIRED);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2853,9 +2921,12 @@ async fn answering_the_same_item_twice_in_one_submission_is_refused() {
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .append_query_results([[checklist_template_item_row(95, 42, 92, "Check tyres")]]) // first answer's item lookup; the second is the duplicate and never gets one
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, answers))
-        .await
-        .expect_err("the same item answered twice is refused");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, answers),
+    )
+    .await
+    .expect_err("the same item answered twice is refused");
     assert_eq!(refused.message, DUPLICATE_ANSWER_FOR_ITEM);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2872,9 +2943,12 @@ async fn an_answer_naming_an_item_of_a_different_template_is_refused() {
         .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
         .append_query_results([[checklist_template_item_row(95, 42, 999, "Check tyres")]])
         .into_connection();
-    let refused = run_with_user(Some(owner(42)), checklist_run_use_case(&db).create(run, answers))
-        .await
-        .expect_err("the item belongs to a different template");
+    let refused = run_with_user(
+        Some(owner(42)),
+        checklist_run_use_case(&db).create(run, answers),
+    )
+    .await
+    .expect_err("the item belongs to a different template");
     assert_eq!(refused.message, ANSWER_NOT_A_TEMPLATE_ITEM);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2886,7 +2960,7 @@ async fn an_answer_naming_an_item_of_a_different_template_is_refused() {
 /// correct.
 #[tokio::test]
 async fn a_valid_standalone_checklist_and_its_answer_are_recorded_and_write_the_vehicles_official_odometer()
-{
+ {
     let run = new_checklist_run(Some(42), ChecklistType::Standalone);
     let answers = vec![new_checklist_answer(95)];
     let db = mock()
@@ -3074,25 +3148,29 @@ async fn a_non_conforming_answer_on_an_unflagged_item_does_not_open_a_work_order
 use business::domain::enums::{WorkOrderItemStatus, WorkOrderOrigin, WorkOrderStatus};
 use business::domain::work_order::WorkOrder;
 use business::domain::work_order_item::WorkOrderItem;
-use business::gateway::work_order_gateway::WorkOrderGateway;
+use business::gateway::work_order_gateway::{WorkOrderGateway, WorkOrderWorkflowDatabaseGateway};
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::work_order_use_case::{
     DESCRIPTION_REQUIRED, ITEM_DESCRIPTION_REQUIRED as WO_ITEM_DESCRIPTION_REQUIRED,
-    ITEM_NOT_ON_THIS_WORK_ORDER, NEGATIVE_ODOMETER, NOT_A_TENANT_VEHICLE as WO_NOT_A_TENANT_VEHICLE,
-    WORK_ORDER_NOT_FOUND, WorkOrderUseCase,
+    ITEM_NOT_ON_THIS_WORK_ORDER, NEGATIVE_ODOMETER,
+    NOT_A_TENANT_VEHICLE as WO_NOT_A_TENANT_VEHICLE, WORK_ORDER_NOT_FOUND, WorkOrderUseCase,
 };
 
 fn work_order_use_case(db: &DatabaseConnection) -> WorkOrderUseCase {
     WorkOrderUseCase::new(
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
+        WorkOrderWorkflowDatabaseGateway::new(
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+            business::gateway::preventive_plan_gateway::PreventivePlanGateway::new(db.clone()),
+            business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(
+                db.clone(),
+            ),
+        ),
         business::use_cases::km_evolution_use_case::KmEvolutionUseCase::new(
             business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
             VehicleGateway::new(db.clone()),
         ),
-        business::gateway::preventive_plan_gateway::PreventivePlanGateway::new(db.clone()),
-        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db.clone()),
     )
 }
 
@@ -3194,9 +3272,12 @@ async fn a_work_order_vehicle_must_belong_to_the_orders_own_tenant() {
     let db = mock()
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
-    let refused = run_with_user(Some(unbound_admin), work_order_use_case(&db).create(work_order))
-        .await
-        .expect_err("vehicle belongs to another tenant");
+    let refused = run_with_user(
+        Some(unbound_admin),
+        work_order_use_case(&db).create(work_order),
+    )
+    .await
+    .expect_err("vehicle belongs to another tenant");
     assert_eq!(refused.message, WO_NOT_A_TENANT_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -3335,9 +3416,10 @@ async fn adding_a_lone_pending_item_to_an_open_work_order_keeps_it_open() {
         .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]]) // find_by_work_order
         .into_connection();
 
-    let (work_order, saved_item) = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
-        .await
-        .expect("a valid item is accepted");
+    let (work_order, saved_item) =
+        run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+            .await
+            .expect("a valid item is accepted");
     assert_eq!(work_order.status, WorkOrderStatus::Open);
     assert_eq!(saved_item.id, Some(97));
     assert!(
@@ -3363,9 +3445,10 @@ async fn adding_a_pending_item_alongside_a_resolved_one_sets_the_work_order_part
         .append_query_results([[work_order_row_with_status(96, 42, 10, "PartiallyResolved")]]) // refetch after update
         .into_connection();
 
-    let (work_order, _) = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
-        .await
-        .expect("a valid item is accepted");
+    let (work_order, _) =
+        run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+            .await
+            .expect("a valid item is accepted");
     assert_eq!(work_order.status, WorkOrderStatus::PartiallyResolved);
 }
 
@@ -3383,9 +3466,10 @@ async fn adding_an_awaiting_parts_item_holds_the_work_order_in_awaiting_parts() 
         .append_query_results([[work_order_row_with_status(96, 42, 10, "AwaitingParts")]])
         .into_connection();
 
-    let (work_order, _) = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
-        .await
-        .expect("a valid item is accepted");
+    let (work_order, _) =
+        run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+            .await
+            .expect("a valid item is accepted");
     assert_eq!(work_order.status, WorkOrderStatus::AwaitingParts);
 }
 
@@ -3401,9 +3485,10 @@ async fn adding_a_resolved_item_to_a_concluded_work_order_leaves_it_untouched() 
         .append_query_results([[work_order_item_row(100, 42, 96, "Resolved")]])
         .into_connection();
 
-    let (work_order, _) = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
-        .await
-        .expect("a valid item is accepted");
+    let (work_order, _) =
+        run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+            .await
+            .expect("a valid item is accepted");
     assert_eq!(work_order.status, WorkOrderStatus::Concluded);
     assert!(
         !format!("{:?}", log(db)).contains("UPDATE"),
@@ -3424,9 +3509,10 @@ async fn adding_a_pending_item_to_a_concluded_work_order_reopens_it() {
         .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
         .into_connection();
 
-    let (work_order, _) = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
-        .await
-        .expect("a valid item is accepted");
+    let (work_order, _) =
+        run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
+            .await
+            .expect("a valid item is accepted");
     assert_eq!(
         work_order.status,
         WorkOrderStatus::Open,
@@ -3498,7 +3584,10 @@ async fn concluding_an_already_concluded_work_order_is_a_no_op() {
         .await
         .expect("a no-op still succeeds");
     assert_eq!(work_order.status, WorkOrderStatus::Concluded);
-    assert!(!format!("{:?}", log(db)).contains("UPDATE"), "a terminal order is not re-stamped");
+    assert!(
+        !format!("{:?}", log(db)).contains("UPDATE"),
+        "a terminal order is not re-stamped"
+    );
 }
 
 /// `TRM-205`: cancelling closes a work order regardless of outstanding
@@ -3527,7 +3616,10 @@ async fn cancelling_an_already_cancelled_work_order_is_a_no_op() {
         .await
         .expect("a no-op still succeeds");
     assert_eq!(work_order.status, WorkOrderStatus::Cancelled);
-    assert!(!format!("{:?}", log(db)).contains("UPDATE"), "a terminal order is not re-stamped");
+    assert!(
+        !format!("{:?}", log(db)).contains("UPDATE"),
+        "a terminal order is not re-stamped"
+    );
 }
 
 // ------------------------------------------------------- EPIC-SP-03-S02 purchase-order pendency wiring
@@ -3535,7 +3627,7 @@ async fn cancelling_an_already_cancelled_work_order_is_a_no_op() {
 /// and recomputes the parent work order the same way `add_item` does.
 #[tokio::test]
 async fn linking_an_existing_pendency_to_a_purchase_order_sets_it_awaiting_parts_and_recomputes_the_work_order()
-{
+ {
     let db = mock()
         .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]]) // the work order
         .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]]) // the named pendency
@@ -3610,9 +3702,12 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
         }]]) // all items -- only the placeholder, now resolved
         .into_connection();
 
-    let updated = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_purchase_pendency(98))
-        .await
-        .expect("resolving a placeholder pendency succeeds");
+    let updated = run_with_user(
+        Some(owner(42)),
+        work_order_use_case(&db).resolve_purchase_pendency(98),
+    )
+    .await
+    .expect("resolving a placeholder pendency succeeds");
     assert_eq!(updated.status, WorkOrderStatus::AwaitingParts);
 }
 
@@ -3634,9 +3729,12 @@ async fn resolving_a_real_pendency_returns_it_to_pending_and_recomputes_the_work
         .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]]) // refetch
         .into_connection();
 
-    let updated = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_purchase_pendency(99))
-        .await
-        .expect("resolving a real pendency succeeds");
+    let updated = run_with_user(
+        Some(owner(42)),
+        work_order_use_case(&db).resolve_purchase_pendency(99),
+    )
+    .await
+    .expect("resolving a real pendency succeeds");
     assert_eq!(updated.status, WorkOrderStatus::Open);
 }
 
@@ -3645,8 +3743,8 @@ use business::domain::enums::MaintenancePlanStatus;
 use business::domain::maintenance_plan::MaintenancePlan;
 use business::gateway::maintenance_plan_gateway::MaintenancePlanGateway;
 use business::use_cases::maintenance_plan_use_case::{
-    MaintenancePlanUseCase, NOT_A_TENANT_VEHICLE as PLAN_NOT_A_TENANT_VEHICLE, OVERLAPPING_PLAN_EXISTS,
-    WORK_ORDER_ALREADY_SCHEDULED, WORK_ORDER_WRONG_VEHICLE,
+    MaintenancePlanUseCase, NOT_A_TENANT_VEHICLE as PLAN_NOT_A_TENANT_VEHICLE,
+    OVERLAPPING_PLAN_EXISTS, WORK_ORDER_ALREADY_SCHEDULED, WORK_ORDER_WRONG_VEHICLE,
 };
 
 fn maintenance_plan_use_case(db: &DatabaseConnection) -> MaintenancePlanUseCase {
@@ -3883,9 +3981,12 @@ fn service_type_row(id: i64, tenant_id: i64, code: &str) -> entity::service_type
 async fn a_blank_service_type_code_is_rejected_before_any_query() {
     let db = mock().into_connection();
     let service_type = new_service_type(Some(42), "   ", "Brakes");
-    let err = run_with_user(Some(owner(42)), service_type_use_case(&db).create(service_type))
-        .await
-        .expect_err("a blank code is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        service_type_use_case(&db).create(service_type),
+    )
+    .await
+    .expect_err("a blank code is refused");
     assert_eq!(err.message, CODE_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -3894,9 +3995,12 @@ async fn a_blank_service_type_code_is_rejected_before_any_query() {
 async fn a_blank_service_type_name_is_rejected_before_any_query() {
     let db = mock().into_connection();
     let service_type = new_service_type(Some(42), "BRK", "   ");
-    let err = run_with_user(Some(owner(42)), service_type_use_case(&db).create(service_type))
-        .await
-        .expect_err("a blank name is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        service_type_use_case(&db).create(service_type),
+    )
+    .await
+    .expect_err("a blank name is refused");
     assert_eq!(err.message, SERVICE_TYPE_NAME_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -3909,9 +4013,12 @@ async fn a_duplicate_service_type_code_is_refused_before_writing() {
         .append_query_results([[service_type_row(600, 42, "BRK")]])
         .into_connection();
     let service_type = new_service_type(Some(42), "BRK", "Brakes");
-    let err = run_with_user(Some(owner(42)), service_type_use_case(&db).create(service_type))
-        .await
-        .expect_err("a duplicate code is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        service_type_use_case(&db).create(service_type),
+    )
+    .await
+    .expect_err("a duplicate code is refused");
     assert_eq!(err.message, DUPLICATE_CODE);
     assert_eq!(log(db).len(), 1, "only the lookup ran; nothing was written");
 }
@@ -3924,9 +4031,12 @@ async fn saving_a_new_service_type_inserts_once() {
         .append_query_results([[service_type_row(600, 42, "BRK")]])
         .into_connection();
     let service_type = new_service_type(Some(42), "BRK", "Brakes");
-    let saved = run_with_user(Some(owner(42)), service_type_use_case(&db).create(service_type))
-        .await
-        .expect("a valid service type is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        service_type_use_case(&db).create(service_type),
+    )
+    .await
+    .expect("a valid service type is accepted");
     assert_eq!(saved.id, Some(600));
 }
 
@@ -3972,9 +4082,12 @@ fn priced_service_row(id: i64, tenant_id: i64) -> entity::priced_service_entity:
 async fn a_blank_priced_service_name_is_rejected_before_any_query() {
     let db = mock().into_connection();
     let priced_service = new_priced_service(Some(42), "   ");
-    let err = run_with_user(Some(owner(42)), priced_service_use_case(&db).create(priced_service))
-        .await
-        .expect_err("a blank name is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        priced_service_use_case(&db).create(priced_service),
+    )
+    .await
+    .expect_err("a blank name is refused");
     assert_eq!(err.message, PRICED_SERVICE_NAME_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -3986,9 +4099,12 @@ async fn saving_a_new_priced_service_inserts_once() {
         .append_query_results([[priced_service_row(700, 42)]])
         .into_connection();
     let priced_service = new_priced_service(Some(42), "Oil change");
-    let saved = run_with_user(Some(owner(42)), priced_service_use_case(&db).create(priced_service))
-        .await
-        .expect("a valid priced service is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        priced_service_use_case(&db).create(priced_service),
+    )
+    .await
+    .expect("a valid priced service is accepted");
     assert_eq!(saved.id, Some(700));
 }
 
@@ -4096,17 +4212,26 @@ async fn saving_a_new_part_inserts_once() {
 }
 
 // ------------------------------------------------------------- EPIC-SP-02-S01 stock ledger
-use business::gateway::stock_movement_gateway::StockMovementGateway;
+use business::gateway::stock_movement_gateway::{
+    StockMovementDatabaseGateway, StockMovementGateway,
+};
 use business::use_cases::stock_movement_use_case::{
-    NON_NEGATIVE_BALANCE_REQUIRED, PART_NOT_FOUND as MOVEMENT_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE,
-    StockMovementUseCase, VALUE_REQUIRED,
+    NON_NEGATIVE_BALANCE_REQUIRED, PART_NOT_FOUND as MOVEMENT_PART_NOT_FOUND,
+    QUANTITY_MUST_BE_POSITIVE, StockMovementUseCase, VALUE_REQUIRED,
 };
 
 fn stock_movement_use_case(db: &DatabaseConnection) -> StockMovementUseCase {
-    StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db.clone()))
+    StockMovementUseCase::new(StockMovementDatabaseGateway::new(
+        StockMovementGateway::new(db.clone()),
+        PartGateway::new(db.clone()),
+    ))
 }
 
-fn part_row_with_cost(id: i64, tenant_id: i64, moving_average_cost_cents: Option<i64>) -> entity::part_entity::Model {
+fn part_row_with_cost(
+    id: i64,
+    tenant_id: i64,
+    moving_average_cost_cents: Option<i64>,
+) -> entity::part_entity::Model {
     entity::part_entity::Model {
         moving_average_cost_cents,
         ..part_row(id, tenant_id)
@@ -4178,7 +4303,11 @@ async fn an_entry_against_an_unknown_part_is_refused_after_one_lookup() {
     .await
     .expect_err("an unknown part is refused");
     assert_eq!(err.message, MOVEMENT_PART_NOT_FOUND);
-    assert_eq!(log(db).len(), 1, "only the part lookup ran; nothing was written");
+    assert_eq!(
+        log(db).len(),
+        1,
+        "only the part lookup ran; nothing was written"
+    );
 }
 
 /// `TRM-602`/`608`/`610`/`611`: a fresh part (no prior movements, no prior
@@ -4208,9 +4337,12 @@ async fn a_first_entry_seeds_the_moving_average_from_the_entered_value() {
 #[tokio::test]
 async fn a_negative_adjustment_balance_is_rejected_before_any_query() {
     let db = mock().into_connection();
-    let err = run_with_user(Some(owner(42)), stock_movement_use_case(&db).adjust(800, -1.0))
-        .await
-        .expect_err("a negative balance is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).adjust(800, -1.0),
+    )
+    .await
+    .expect_err("a negative balance is refused");
     assert_eq!(err.message, NON_NEGATIVE_BALANCE_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -4226,15 +4358,18 @@ async fn an_adjustment_records_the_difference_from_current_stock() {
         .append_query_results([[stock_movement_row(901, 42, 800, "Adjustment", 5.0)]]) // refetch
         .into_connection();
 
-    let saved = run_with_user(Some(owner(42)), stock_movement_use_case(&db).adjust(800, 5.0))
-        .await
-        .expect("a valid adjustment is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        stock_movement_use_case(&db).adjust(800, 5.0),
+    )
+    .await
+    .expect("a valid adjustment is accepted");
     assert_eq!(saved.id, Some(901));
 }
 
 // ------------------------------------------------------------- EPIC-SP-03-S01 purchase orders
 use business::domain::purchase_order::PurchaseOrder;
-use business::gateway::purchase_order_gateway::PurchaseOrderGateway;
+use business::gateway::purchase_order_gateway::{PurchaseOrderDatabaseGateway, PurchaseOrderGateway};
 use business::use_cases::purchase_order_use_case::{
     DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND as PO_PART_NOT_FOUND,
     PENDENCY_REQUIRES_WORK_ORDER, PURCHASE_ORDER_NOT_FOUND, PurchaseOrderUseCase,
@@ -4243,13 +4378,20 @@ use business::use_cases::purchase_order_use_case::{
 
 fn purchase_order_use_case(db: &DatabaseConnection) -> PurchaseOrderUseCase {
     PurchaseOrderUseCase::new(
-        PurchaseOrderGateway::new(db.clone()),
-        PartGateway::new(db.clone()),
+        PurchaseOrderDatabaseGateway::new(
+            PurchaseOrderGateway::new(db.clone()),
+            PartGateway::new(db.clone()),
+        ),
         work_order_use_case(db),
     )
 }
 
-fn new_purchase_order(tenant_id: Option<i64>, part_id: i64, quantity: f64, work_order_id: Option<i64>) -> PurchaseOrder {
+fn new_purchase_order(
+    tenant_id: Option<i64>,
+    part_id: i64,
+    quantity: f64,
+    work_order_id: Option<i64>,
+) -> PurchaseOrder {
     PurchaseOrder {
         id: None,
         uuid: None,
@@ -4271,7 +4413,12 @@ fn new_purchase_order(tenant_id: Option<i64>, part_id: i64, quantity: f64, work_
     }
 }
 
-fn purchase_order_row(id: i64, tenant_id: i64, part_id: i64, status: &str) -> entity::purchase_order_entity::Model {
+fn purchase_order_row(
+    id: i64,
+    tenant_id: i64,
+    part_id: i64,
+    status: &str,
+) -> entity::purchase_order_entity::Model {
     entity::purchase_order_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -4297,9 +4444,12 @@ fn purchase_order_row(id: i64, tenant_id: i64, part_id: i64, status: &str) -> en
 async fn a_non_positive_purchase_order_quantity_is_rejected_before_any_query() {
     let db = mock().into_connection();
     let purchase_order = new_purchase_order(Some(42), 800, 0.0, None);
-    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect_err("a zero quantity is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect_err("a zero quantity is refused");
     assert_eq!(err.message, PO_QUANTITY_MUST_BE_POSITIVE);
     assert!(log(db).is_empty());
 }
@@ -4310,11 +4460,18 @@ async fn a_purchase_order_against_an_unknown_part_is_refused_after_one_lookup() 
         .append_query_results([Vec::<entity::part_entity::Model>::new()])
         .into_connection();
     let purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
-    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect_err("an unknown part is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect_err("an unknown part is refused");
     assert_eq!(err.message, PO_PART_NOT_FOUND);
-    assert_eq!(log(db).len(), 1, "only the part lookup ran; nothing was written");
+    assert_eq!(
+        log(db).len(),
+        1,
+        "only the part lookup ran; nothing was written"
+    );
 }
 
 /// `TRM-642`: a second active order for the same part on the same work order
@@ -4326,11 +4483,18 @@ async fn a_duplicate_active_purchase_order_for_the_same_part_and_work_order_is_r
         .append_query_results([[purchase_order_row(950, 42, 800, "Requested")]]) // an existing active order
         .into_connection();
     let purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(94));
-    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect_err("a duplicate active order is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect_err("a duplicate active order is refused");
     assert_eq!(err.message, DUPLICATE_ACTIVE_PURCHASE_ORDER);
-    assert_eq!(log(db).len(), 2, "only the two lookups ran; nothing was written");
+    assert_eq!(
+        log(db).len(),
+        2,
+        "only the two lookups ran; nothing was written"
+    );
 }
 
 #[tokio::test]
@@ -4344,9 +4508,12 @@ async fn saving_a_new_purchase_order_inserts_once() {
         }]]) // refetch: no work order named, so no pendency wiring runs
         .into_connection();
     let purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
-    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect("a valid purchase order is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect("a valid purchase order is accepted");
     assert_eq!(saved.id, Some(950));
 }
 
@@ -4357,10 +4524,16 @@ async fn marking_a_requested_order_ordered_succeeds() {
         .append_exec_results([inserted(950)]) // update
         .append_query_results([[purchase_order_row(950, 42, 800, "Ordered")]]) // refetch
         .into_connection();
-    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_ordered(950, None, None))
-        .await
-        .expect("a requested order can be marked ordered");
-    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Ordered);
+    let saved = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).mark_ordered(950, None, None),
+    )
+    .await
+    .expect("a requested order can be marked ordered");
+    assert_eq!(
+        saved.status,
+        business::domain::enums::PurchaseOrderStatus::Ordered
+    );
 }
 
 #[tokio::test]
@@ -4368,9 +4541,12 @@ async fn marking_an_already_ordered_order_ordered_again_is_refused() {
     let db = mock()
         .append_query_results([[purchase_order_row(950, 42, 800, "Ordered")]])
         .into_connection();
-    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_ordered(950, None, None))
-        .await
-        .expect_err("only a Requested order may be marked ordered");
+    let err = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).mark_ordered(950, None, None),
+    )
+    .await
+    .expect_err("only a Requested order may be marked ordered");
     assert_eq!(err.message, WRONG_STATUS_FOR_TRANSITION);
 }
 
@@ -4382,7 +4558,10 @@ async fn cancelling_an_already_cancelled_purchase_order_is_a_no_op() {
     let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).cancel(950))
         .await
         .expect("cancelling an already-cancelled order succeeds");
-    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Cancelled);
+    assert_eq!(
+        saved.status,
+        business::domain::enums::PurchaseOrderStatus::Cancelled
+    );
     assert_eq!(log(db).len(), 1, "only the load ran; nothing was written");
 }
 
@@ -4402,9 +4581,12 @@ async fn a_pendency_named_without_its_own_work_order_is_refused_before_any_query
     let db = mock().into_connection();
     let mut purchase_order = new_purchase_order(Some(42), 800, 4.0, None);
     purchase_order.work_order_item_id = Some(97);
-    let err = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect_err("a pendency named with no work order is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect_err("a pendency named with no work order is refused");
     assert_eq!(err.message, PENDENCY_REQUIRES_WORK_ORDER);
     assert!(log(db).is_empty());
 }
@@ -4449,9 +4631,12 @@ async fn raising_a_purchase_order_against_an_existing_pendency_links_it() {
 
     let mut purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(96));
     purchase_order.work_order_item_id = Some(97);
-    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect("linking an existing pendency succeeds");
+    let saved = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect("linking an existing pendency succeeds");
     assert_eq!(saved.id, Some(950));
 }
 
@@ -4495,9 +4680,12 @@ async fn raising_a_purchase_order_with_no_named_pendency_opens_a_synthetic_place
         .into_connection();
 
     let purchase_order = new_purchase_order(Some(42), 800, 4.0, Some(96));
-    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).create(purchase_order))
-        .await
-        .expect("opening a synthetic placeholder pendency succeeds");
+    let saved = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).create(purchase_order),
+    )
+    .await
+    .expect("opening a synthetic placeholder pendency succeeds");
     assert_eq!(saved.id, Some(950));
 }
 
@@ -4539,27 +4727,41 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
         }]])
         .into_connection();
 
-    let saved = run_with_user(Some(owner(42)), purchase_order_use_case(&db).mark_purchased(950))
-        .await
-        .expect("receiving a linked purchase order succeeds");
-    assert_eq!(saved.status, business::domain::enums::PurchaseOrderStatus::Purchased);
+    let saved = run_with_user(
+        Some(owner(42)),
+        purchase_order_use_case(&db).mark_purchased(950),
+    )
+    .await
+    .expect("receiving a linked purchase order succeeds");
+    assert_eq!(
+        saved.status,
+        business::domain::enums::PurchaseOrderStatus::Purchased
+    );
 }
 
 // ------------------------------------------------------- EPIC-MT-02-S01 work order postings
-use business::gateway::work_order_posting_gateway::WorkOrderPostingGateway;
+use business::gateway::work_order_posting_gateway::{
+    WorkOrderPostingDatabaseGateway, WorkOrderPostingGateway,
+};
 use business::use_cases::work_order_posting_use_case::{
-    INSUFFICIENT_STOCK, PART_NOT_FOUND as ISSUE_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE as ISSUE_QUANTITY_MUST_BE_POSITIVE,
+    INSUFFICIENT_STOCK, PART_NOT_FOUND as ISSUE_PART_NOT_FOUND,
+    QUANTITY_MUST_BE_POSITIVE as ISSUE_QUANTITY_MUST_BE_POSITIVE,
     WORK_ORDER_NOT_FOUND as ISSUE_WORK_ORDER_NOT_FOUND, WorkOrderPostingUseCase,
 };
 
 fn work_order_posting_use_case(db: &DatabaseConnection) -> WorkOrderPostingUseCase {
     WorkOrderPostingUseCase::new(
-        WorkOrderPostingGateway::new(db.clone()),
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-        PartGateway::new(db.clone()),
-        StockMovementGateway::new(db.clone()),
-        StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db.clone())),
+        WorkOrderPostingDatabaseGateway::new(
+            WorkOrderPostingGateway::new(db.clone()),
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+            PartGateway::new(db.clone()),
+            StockMovementGateway::new(db.clone()),
+        ),
+        StockMovementUseCase::new(StockMovementDatabaseGateway::new(
+            StockMovementGateway::new(db.clone()),
+            PartGateway::new(db.clone()),
+        )),
     )
 }
 
@@ -4618,7 +4820,11 @@ async fn issuing_against_an_unknown_work_order_is_refused_after_one_lookup() {
     .await
     .expect_err("an unknown work order is refused");
     assert_eq!(err.message, ISSUE_WORK_ORDER_NOT_FOUND);
-    assert_eq!(log(db).len(), 1, "only the work order lookup ran; nothing was written");
+    assert_eq!(
+        log(db).len(),
+        1,
+        "only the work order lookup ran; nothing was written"
+    );
 }
 
 #[tokio::test]
@@ -4634,7 +4840,11 @@ async fn issuing_against_an_unknown_part_is_refused_after_two_lookups() {
     .await
     .expect_err("an unknown part is refused");
     assert_eq!(err.message, ISSUE_PART_NOT_FOUND);
-    assert_eq!(log(db).len(), 2, "the work order and part lookups ran; nothing was written");
+    assert_eq!(
+        log(db).len(),
+        2,
+        "the work order and part lookups ran; nothing was written"
+    );
 }
 
 /// `TRM-613`: "refuse to issue a part to a work order when the recorded
@@ -4669,7 +4879,17 @@ async fn issuing_a_part_writes_a_stock_movement_and_a_costed_posting() {
         .append_exec_results([inserted(901)]) // insert the Issue movement
         .append_query_results([[stock_movement_row(901, 42, 800, "Issue", -3.0)]]) // refetch
         .append_exec_results([inserted(500)]) // insert the posting
-        .append_query_results([[work_order_posting_row(500, 42, 96, None, 800, 3.0, 7_500, 22_500, "MovingAverageCost")]]) // refetch
+        .append_query_results([[work_order_posting_row(
+            500,
+            42,
+            96,
+            None,
+            800,
+            3.0,
+            7_500,
+            22_500,
+            "MovingAverageCost",
+        )]]) // refetch
         .into_connection();
 
     let saved = run_with_user(
@@ -4681,10 +4901,16 @@ async fn issuing_a_part_writes_a_stock_movement_and_a_costed_posting() {
     assert_eq!(saved.quantity, 3.0);
     assert_eq!(saved.unit_value_cents, 7_500);
     assert_eq!(saved.total_value_cents, 22_500);
-    assert_eq!(saved.cost_source, business::domain::enums::CostSource::MovingAverageCost);
+    assert_eq!(
+        saved.cost_source,
+        business::domain::enums::CostSource::MovingAverageCost
+    );
 
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("-3"), "the ledger movement must carry the negative issued quantity: {sql}");
+    assert!(
+        sql.contains("-3"),
+        "the ledger movement must carry the negative issued quantity: {sql}"
+    );
 }
 
 // ------------------------------------------------------- EPIC-SP-04-S01 vehicle expenses
@@ -4693,12 +4919,17 @@ use business::domain::vehicle_expense::VehicleExpense;
 use business::gateway::vehicle_expense_gateway::VehicleExpenseGateway;
 use business::use_cases::vehicle_expense_use_case::{
     CATEGORY_REQUIRED, COMPETENCE_PERIOD_REQUIRED, DUPLICATE_EXPENSE_INVOICE,
-    VALUE_MUST_BE_POSITIVE as EXPENSE_VALUE_MUST_BE_POSITIVE, VEHICLE_NOT_FOUND as EXPENSE_VEHICLE_NOT_FOUND,
-    VehicleExpenseUseCase,
+    VALUE_MUST_BE_POSITIVE as EXPENSE_VALUE_MUST_BE_POSITIVE,
+    VEHICLE_NOT_FOUND as EXPENSE_VEHICLE_NOT_FOUND, VehicleExpenseUseCase,
 };
 
-fn vehicle_expense_use_case(db: &DatabaseConnection) -> VehicleExpenseUseCase {
-    VehicleExpenseUseCase::new(VehicleExpenseGateway::new(db.clone()), VehicleGateway::new(db.clone()))
+fn vehicle_expense_use_case(
+    db: &DatabaseConnection,
+) -> VehicleExpenseUseCase<VehicleExpenseGateway, VehicleGateway> {
+    VehicleExpenseUseCase::new(
+        VehicleExpenseGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+    )
 }
 
 fn new_vehicle_expense(tenant_id: Option<i64>) -> VehicleExpense {
@@ -4757,9 +4988,12 @@ async fn a_blank_expense_category_is_rejected_before_any_query() {
         category: "   ".into(),
         ..new_vehicle_expense(Some(42))
     };
-    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
-        .await
-        .expect_err("a blank category is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(expense),
+    )
+    .await
+    .expect_err("a blank category is refused");
     assert_eq!(err.message, CATEGORY_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -4771,9 +5005,12 @@ async fn a_blank_competence_period_is_rejected_before_any_query() {
         competence_period: "   ".into(),
         ..new_vehicle_expense(Some(42))
     };
-    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
-        .await
-        .expect_err("a blank competence period is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(expense),
+    )
+    .await
+    .expect_err("a blank competence period is refused");
     assert_eq!(err.message, COMPETENCE_PERIOD_REQUIRED);
     assert!(log(db).is_empty());
 }
@@ -4785,9 +5022,12 @@ async fn a_non_positive_expense_value_is_rejected_before_any_query() {
         value_cents: 0,
         ..new_vehicle_expense(Some(42))
     };
-    let err = run_with_user(Some(owner(42)), vehicle_expense_use_case(&db).create(expense))
-        .await
-        .expect_err("a non-positive value is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        vehicle_expense_use_case(&db).create(expense),
+    )
+    .await
+    .expect_err("a non-positive value is refused");
     assert_eq!(err.message, EXPENSE_VALUE_MUST_BE_POSITIVE);
     assert!(log(db).is_empty());
 }
@@ -4852,7 +5092,11 @@ use business::use_cases::fuel_entry_use_case::{
 };
 
 fn fuel_entry_use_case(db: &DatabaseConnection) -> FuelEntryUseCase {
-    FuelEntryUseCase::new(FuelEntryGateway::new(db.clone()), VehicleGateway::new(db.clone()), business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()))
+    FuelEntryUseCase::new(
+        FuelEntryGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+        business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()),
+    )
 }
 
 fn new_fuel_entry(tenant_id: Option<i64>) -> FuelEntry {
@@ -4942,9 +5186,12 @@ async fn a_fuel_entry_against_a_vehicle_of_another_tenant_is_refused() {
     let db = mock()
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
-    let err = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))))
-        .await
-        .expect_err("a vehicle from another tenant is refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))),
+    )
+    .await
+    .expect_err("a vehicle from another tenant is refused");
     assert_eq!(err.message, FUEL_VEHICLE_NOT_FOUND);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -4956,9 +5203,12 @@ async fn a_valid_fuel_entry_is_accepted() {
         .append_exec_results([inserted(900)])
         .append_query_results([[fuel_entry_row(900, 42, 10)]])
         .into_connection();
-    let saved = run_with_user(Some(owner(42)), fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))))
-        .await
-        .expect("a valid fuel entry is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        fuel_entry_use_case(&db).create(new_fuel_entry(Some(42))),
+    )
+    .await
+    .expect("a valid fuel entry is accepted");
     assert_eq!(saved.id, Some(900));
     assert_eq!(saved.origin, FuelEntryOrigin::Manual);
 }
@@ -4971,8 +5221,14 @@ use business::use_cases::internal_tank_use_case::{
     InternalTankUseCase, REFERENCE_STOCK_OUT_OF_RANGE, RESERVE_LEVEL_MUST_NOT_BE_NEGATIVE,
 };
 
-fn internal_tank_use_case(db: &DatabaseConnection) -> InternalTankUseCase {
-    InternalTankUseCase::new(InternalTankGateway::new(db.clone()), business::gateway::fuel_entry_gateway::FuelEntryGateway::new(db.clone()))
+fn internal_tank_use_case(
+    db: &DatabaseConnection,
+) -> InternalTankUseCase<InternalTankGateway, business::gateway::fuel_entry_gateway::FuelEntryGateway>
+{
+    InternalTankUseCase::new(
+        InternalTankGateway::new(db.clone()),
+        business::gateway::fuel_entry_gateway::FuelEntryGateway::new(db.clone()),
+    )
 }
 
 fn new_internal_tank(tenant_id: Option<i64>) -> InternalTank {
@@ -5097,7 +5353,10 @@ async fn reconfiguring_updates_the_existing_row_in_place() {
     .await
     .expect("reconfiguring an existing tank is accepted");
     assert_eq!(saved.id, Some(900));
-    assert!(!format!("{:?}", log(db)).contains("INSERT"), "reconfiguring must update, not insert");
+    assert!(
+        !format!("{:?}", log(db)).contains("INSERT"),
+        "reconfiguring must update, not insert"
+    );
 }
 
 #[tokio::test]
@@ -5105,9 +5364,12 @@ async fn reading_an_unconfigured_tank_is_reported_distinctly() {
     let db = mock()
         .append_query_results([Vec::<entity::internal_tank_entity::Model>::new()])
         .into_connection();
-    let err = run_with_user(Some(owner(42)), internal_tank_use_case(&db).get_current(Some(42)))
-        .await
-        .expect_err("an unconfigured tank is reported, not defaulted");
+    let err = run_with_user(
+        Some(owner(42)),
+        internal_tank_use_case(&db).get_current(Some(42)),
+    )
+    .await
+    .expect_err("an unconfigured tank is reported, not defaulted");
     assert_eq!(err.message, INTERNAL_TANK_NOT_CONFIGURED);
 }
 
@@ -5142,8 +5404,16 @@ impl FuelProvider for FakeFuelProvider {
     }
 }
 
-fn fuel_sync_use_case(db: &DatabaseConnection, provider: FakeFuelProvider) -> FuelSyncUseCase<FakeFuelProvider> {
-    FuelSyncUseCase::new(provider, FuelEntryGateway::new(db.clone()), VehicleGateway::new(db.clone()), business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()))
+fn fuel_sync_use_case(
+    db: &DatabaseConnection,
+    provider: FakeFuelProvider,
+) -> FuelSyncUseCase<FakeFuelProvider> {
+    FuelSyncUseCase::new(
+        provider,
+        FuelEntryGateway::new(db.clone()),
+        VehicleGateway::new(db.clone()),
+        business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()),
+    )
 }
 
 fn provider_transaction(external_id: &str, fleet_prefix: Option<&str>) -> ProviderFuelTransaction {
@@ -5171,13 +5441,19 @@ async fn a_transaction_with_no_matching_vehicle_is_reported_pending() {
         .append_query_results([Vec::<entity::vehicle_entity::Model>::new()]) // find_by_prefix: none
         .into_connection();
 
-    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
-        .await
-        .expect("a sync with an unmatched transaction still succeeds overall");
+    let outcome = run_with_user(
+        Some(owner(42)),
+        fuel_sync_use_case(&db, provider).sync(Some(42)),
+    )
+    .await
+    .expect("a sync with an unmatched transaction still succeeds overall");
     assert_eq!(outcome.fetched, 1);
     assert_eq!(outcome.unmatched, 1);
     assert_eq!(outcome.imported, 0);
-    assert!(!format!("{:?}", log(db)).contains("INSERT"), "an unmatched transaction is never written");
+    assert!(
+        !format!("{:?}", log(db)).contains("INSERT"),
+        "an unmatched transaction is never written"
+    );
 }
 
 /// `TRM-511`/`514`: a transaction naming an unseen `externo_id` is imported
@@ -5197,9 +5473,12 @@ async fn a_new_transaction_for_a_matched_vehicle_is_imported() {
         .append_query_results([[fuel_entry_row(900, 42, 10)]])
         .into_connection();
 
-    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
-        .await
-        .expect("a valid sync succeeds");
+    let outcome = run_with_user(
+        Some(owner(42)),
+        fuel_sync_use_case(&db, provider).sync(Some(42)),
+    )
+    .await
+    .expect("a valid sync succeeds");
     assert_eq!(outcome.imported, 1);
     assert_eq!(outcome.unmatched, 0);
 }
@@ -5222,9 +5501,12 @@ async fn a_resent_transaction_with_a_changed_field_is_corrected_in_place() {
         .append_query_results([[fuel_entry_row(900, 42, 10)]])
         .into_connection();
 
-    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
-        .await
-        .expect("a correction succeeds");
+    let outcome = run_with_user(
+        Some(owner(42)),
+        fuel_sync_use_case(&db, provider).sync(Some(42)),
+    )
+    .await
+    .expect("a correction succeeds");
     assert_eq!(outcome.updated, 1);
     assert_eq!(outcome.imported, 0);
 }
@@ -5243,27 +5525,35 @@ async fn a_resent_transaction_with_no_actual_change_writes_nothing() {
         .append_query_results([[fuel_entry_row(900, 42, 10)]]) // identical to the incoming transaction
         .into_connection();
 
-    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
-        .await
-        .expect("a no-op correction still succeeds");
+    let outcome = run_with_user(
+        Some(owner(42)),
+        fuel_sync_use_case(&db, provider).sync(Some(42)),
+    )
+    .await
+    .expect("a no-op correction still succeeds");
     assert_eq!(outcome.updated, 0);
     assert_eq!(outcome.imported, 0);
-    assert!(!format!("{:?}", log(db)).contains("UPDATE"), "nothing changed, so nothing is written");
+    assert!(
+        !format!("{:?}", log(db)).contains("UPDATE"),
+        "nothing changed, so nothing is written"
+    );
 }
 
 // ------------------------------------------------------- EPIC-MT-07-S02 preventive work order
-use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::gateway::preventive_plan_gateway::{PreventivePlanDatabaseGateway, PreventivePlanGateway};
 use business::use_cases::preventive_plan_use_case::{PLAN_NOT_DUE, PreventivePlanUseCase};
 
 fn preventive_plan_use_case(db: &DatabaseConnection) -> PreventivePlanUseCase {
-    PreventivePlanUseCase::new(
+    PreventivePlanUseCase::new(PreventivePlanDatabaseGateway::new(
         PreventivePlanGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
         business::gateway::work_order_gateway::WorkOrderGateway::new(db.clone()),
         business::gateway::work_order_item_gateway::WorkOrderItemGateway::new(db.clone()),
-        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(db.clone()),
+        business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway::new(
+            db.clone(),
+        ),
         business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()),
-    )
+    ))
 }
 
 fn preventive_plan_row() -> entity::preventive_plan_entity::Model {
@@ -5301,9 +5591,12 @@ async fn a_plan_that_is_not_due_opens_no_work_order() {
         .append_query_results([[vehicle_at_km(51_000.0)]])
         .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
         .into_connection();
-    let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
-        .await
-        .expect_err("a plan that is not due generates nothing");
+    let err = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).generate_work_order(UUID.into()),
+    )
+    .await
+    .expect_err("a plan that is not due generates nothing");
     assert_eq!(err.message, PLAN_NOT_DUE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -5316,10 +5609,12 @@ async fn a_due_plan_with_an_open_work_order_returns_it_instead_of_a_duplicate() 
         .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
         .append_query_results([[work_order_row(97, 42, 10)]])
         .into_connection();
-    let (work_order, created) =
-        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
-            .await
-            .expect("an existing open order is returned");
+    let (work_order, created) = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).generate_work_order(UUID.into()),
+    )
+    .await
+    .expect("an existing open order is returned");
     assert!(!created);
     assert_eq!(work_order.id, Some(97));
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
@@ -5336,14 +5631,19 @@ async fn a_due_plan_with_no_open_work_order_opens_a_preventive_one() {
         .append_exec_results([inserted(98)])
         .append_query_results([[work_order_row(98, 42, 10)]])
         .into_connection();
-    let (work_order, created) =
-        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).generate_work_order(UUID.into()))
-            .await
-            .expect("a due plan opens a work order");
+    let (work_order, created) = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).generate_work_order(UUID.into()),
+    )
+    .await
+    .expect("a due plan opens a work order");
     assert!(created);
     assert_eq!(work_order.id, Some(98));
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("INSERT") && sql.contains("Preventive"), "{sql}");
+    assert!(
+        sql.contains("INSERT") && sql.contains("Preventive"),
+        "{sql}"
+    );
 }
 
 #[tokio::test]
@@ -5371,9 +5671,15 @@ async fn concluding_a_preventive_work_order_renews_its_plan_and_cancels_the_othe
     let concluded = run_with_user(Some(owner(42)), work_order_use_case(&db).conclude(97))
         .await
         .expect("conclude succeeds");
-    assert_eq!(concluded.status, business::domain::enums::WorkOrderStatus::Concluded);
+    assert_eq!(
+        concluded.status,
+        business::domain::enums::WorkOrderStatus::Concluded
+    );
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"), "{sql}");
+    assert!(
+        sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"),
+        "{sql}"
+    );
     assert!(sql.contains("Cancelled"), "{sql}");
 }
 
@@ -5403,7 +5709,10 @@ async fn a_resolved_item_linked_to_a_plan_renews_that_plan_when_the_order_is_con
         .await
         .expect("conclude succeeds");
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"), "{sql}");
+    assert!(
+        sql.contains("UPDATE `preventive_plan`") && sql.contains("61000"),
+        "{sql}"
+    );
 }
 
 #[tokio::test]
@@ -5423,7 +5732,10 @@ async fn an_item_cannot_name_another_vehicles_preventive_plan() {
     let err = run_with_user(Some(owner(42)), work_order_use_case(&db).add_item(96, item))
         .await
         .expect_err("a plan of another vehicle is refused");
-    assert_eq!(err.message, business::use_cases::work_order_use_case::PLAN_NOT_ON_THIS_VEHICLE);
+    assert_eq!(
+        err.message,
+        business::use_cases::work_order_use_case::PLAN_NOT_ON_THIS_VEHICLE
+    );
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
 
@@ -5475,13 +5787,22 @@ async fn an_extension_resolves_the_item_records_an_entry_and_leaves_the_order_pa
         .into_connection();
     let entry = run_with_user(
         Some(owner(42)),
-        preventive_plan_use_case(&db).extend(UUID.into(), UUID.into(), None, 5_000.0, "Oil still clean".into()),
+        preventive_plan_use_case(&db).extend(
+            UUID.into(),
+            UUID.into(),
+            None,
+            5_000.0,
+            "Oil still clean".into(),
+        ),
     )
     .await
     .expect("extension succeeds");
     assert_eq!(entry.resulting_limit_km, 63_000.0);
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("preventive_plan_extension") && sql.contains("PartiallyResolved"), "{sql}");
+    assert!(
+        sql.contains("preventive_plan_extension") && sql.contains("PartiallyResolved"),
+        "{sql}"
+    );
     assert!(sql.contains("Resolved") && sql.contains("63000"), "{sql}");
 }
 
@@ -5505,7 +5826,10 @@ async fn an_extension_is_refused_for_an_item_not_linked_to_the_plan() {
     )
     .await
     .expect_err("unlinked item refused");
-    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::EXTENSION_ITEM_NOT_LINKED);
+    assert_eq!(
+        err.message,
+        business::use_cases::preventive_plan_use_case::EXTENSION_ITEM_NOT_LINKED
+    );
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
 
@@ -5523,7 +5847,10 @@ async fn an_extension_grant_above_the_maximum_is_refused_before_any_write() {
     )
     .await
     .expect_err("over the maximum");
-    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::EXTENSION_GRANT_INVALID);
+    assert_eq!(
+        err.message,
+        business::use_cases::preventive_plan_use_case::EXTENSION_GRANT_INVALID
+    );
 }
 
 #[tokio::test]
@@ -5568,19 +5895,30 @@ async fn editing_a_plans_base_ends_its_active_extension_but_editing_an_interval_
     };
     for (edited, expect_cleared) in [
         (edited_plan(Some(60_000.0)), true), // base moved: new cycle
-        (business::domain::preventive_plan::PreventivePlan { interval_km: Some(8_000.0), ..edited_plan(Some(50_000.0)) }, false),
+        (
+            business::domain::preventive_plan::PreventivePlan {
+                interval_km: Some(8_000.0),
+                ..edited_plan(Some(50_000.0))
+            },
+            false,
+        ),
     ] {
         let db = mock()
             .append_query_results([[extended()]]) // current plan
             .append_query_results([[vehicle_at_km(58_000.0)]]) // its status
-        .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
+            .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
             .append_exec_results([inserted(7)])
             .append_query_results([[preventive_plan_row()]])
             .into_connection();
-        run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(business::domain::preventive_plan::PreventivePlan {
-            uuid: Some(UUID.into()),
-            ..edited
-        }))
+        run_with_user(
+            Some(owner(42)),
+            preventive_plan_use_case(&db).update(
+                business::domain::preventive_plan::PreventivePlan {
+                    uuid: Some(UUID.into()),
+                    ..edited
+                },
+            ),
+        )
         .await
         .expect("update succeeds");
         let sql = format!("{:?}", log(db));
@@ -5603,7 +5941,10 @@ async fn editing_a_plan_still_requires_the_interval_its_control_type_needs() {
     let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(bad))
         .await
         .expect_err("missing interval");
-    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::INTERVAL_REQUIRED);
+    assert_eq!(
+        err.message,
+        business::use_cases::preventive_plan_use_case::INTERVAL_REQUIRED
+    );
 }
 
 #[tokio::test]
@@ -5619,10 +5960,16 @@ async fn a_new_cycle_may_name_its_originating_order_only_if_it_is_on_the_plans_v
         .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
         .append_query_results([[work_order_row(97, 42, 11)]]) // another vehicle's order
         .into_connection();
-    let err = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(edited(97)))
-        .await
-        .expect_err("another vehicle's order refused");
-    assert_eq!(err.message, business::use_cases::preventive_plan_use_case::ORIGIN_ORDER_NOT_ON_VEHICLE);
+    let err = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).update(edited(97)),
+    )
+    .await
+    .expect_err("another vehicle's order refused");
+    assert_eq!(
+        err.message,
+        business::use_cases::preventive_plan_use_case::ORIGIN_ORDER_NOT_ON_VEHICLE
+    );
 
     let db = mock()
         .append_query_results([[preventive_plan_row()]])
@@ -5635,9 +5982,12 @@ async fn a_new_cycle_may_name_its_originating_order_only_if_it_is_on_the_plans_v
             ..preventive_plan_row()
         }]])
         .into_connection();
-    let saved = run_with_user(Some(owner(42)), preventive_plan_use_case(&db).update(edited(97)))
-        .await
-        .expect("a same-vehicle order is accepted");
+    let saved = run_with_user(
+        Some(owner(42)),
+        preventive_plan_use_case(&db).update(edited(97)),
+    )
+    .await
+    .expect("a same-vehicle order is accepted");
     assert_eq!(saved.last_work_order_id, Some(97));
 }
 
@@ -5648,7 +5998,7 @@ use business::use_cases::technical_inspection_use_case::TechnicalInspectionUseCa
 
 fn technical_inspection_use_case(db: &DatabaseConnection) -> TechnicalInspectionUseCase {
     use business::gateway::*;
-    TechnicalInspectionUseCase::new(
+    TechnicalInspectionUseCase::new(business::gateway::technical_inspection_workflow_gateway::TechnicalInspectionDatabaseGateway::new(
         technical_inspection_gateway::TechnicalInspectionGateway::new(db.clone()),
         technical_inspection_item_gateway::TechnicalInspectionItemGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
@@ -5657,7 +6007,7 @@ fn technical_inspection_use_case(db: &DatabaseConnection) -> TechnicalInspection
         PreventivePlanGateway::new(db.clone()),
         preventive_plan_alert_gateway::PreventivePlanAlertGateway::new(db.clone()),
         inspection_model_gateway::InspectionModelGateway::new(db.clone()),
-    )
+    ))
 }
 
 fn inspection_row() -> entity::technical_inspection_entity::Model {
@@ -5677,7 +6027,10 @@ fn inspection_row() -> entity::technical_inspection_entity::Model {
     }
 }
 
-fn inspection_item_row(id: i64, description: &str) -> entity::technical_inspection_item_entity::Model {
+fn inspection_item_row(
+    id: i64,
+    description: &str,
+) -> entity::technical_inspection_item_entity::Model {
     entity::technical_inspection_item_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -5747,7 +6100,8 @@ async fn a_non_conformity_matching_a_pending_item_of_an_open_order_opens_no_new_
         .into_connection();
     let (_, items, opened) = run_with_user(
         Some(owner(42)),
-        technical_inspection_use_case(&db).submit(new_inspection(), vec![nonconforming("troca oleo")]),
+        technical_inspection_use_case(&db)
+            .submit(new_inspection(), vec![nonconforming("troca oleo")]),
     )
     .await
     .expect("the inspection is recorded");
@@ -5776,18 +6130,34 @@ async fn an_unmatched_non_conformity_opens_one_inspection_order() {
         .append_query_results([[inspection_item_row(1, "Freio dianteiro")]])
         .append_query_results([[inspection_item_row(2, "Freio traseiro")]])
         .append_query_results([Vec::<entity::preventive_plan_entity::Model>::new()])
-        .append_exec_results([inserted(5), inserted(98), inserted(61), inserted(62), inserted(1), inserted(2)])
+        .append_exec_results([
+            inserted(5),
+            inserted(98),
+            inserted(61),
+            inserted(62),
+            inserted(1),
+            inserted(2),
+        ])
         .into_connection();
     let (_, _, opened) = run_with_user(
         Some(owner(42)),
-        technical_inspection_use_case(&db)
-            .submit(new_inspection(), vec![nonconforming("Freio dianteiro"), nonconforming("Freio traseiro")]),
+        technical_inspection_use_case(&db).submit(
+            new_inspection(),
+            vec![
+                nonconforming("Freio dianteiro"),
+                nonconforming("Freio traseiro"),
+            ],
+        ),
     )
     .await
     .expect("the inspection is recorded");
     assert!(opened);
     let sql = format!("{:?}", log(db));
-    assert_eq!(sql.matches("INSERT INTO `work_order` ").count(), 1, "one order, not one per item: {sql}");
+    assert_eq!(
+        sql.matches("INSERT INTO `work_order` ").count(),
+        1,
+        "one order, not one per item: {sql}"
+    );
     assert!(sql.contains("Inspection"), "{sql}");
 }
 
@@ -5817,13 +6187,17 @@ async fn a_model_that_generates_no_work_order_opens_and_links_nothing() {
         .into_connection();
     let (_, _, opened) = run_with_user(
         Some(owner(42)),
-        technical_inspection_use_case(&db).submit(new_inspection(), vec![nonconforming("Freio dianteiro")]),
+        technical_inspection_use_case(&db)
+            .submit(new_inspection(), vec![nonconforming("Freio dianteiro")]),
     )
     .await
     .expect("the inspection is recorded");
     assert!(!opened);
     let sql = format!("{:?}", log(db));
-    assert!(!sql.contains("`work_order`"), "no order is read or written: {sql}");
+    assert!(
+        !sql.contains("`work_order`"),
+        "no order is read or written: {sql}"
+    );
 }
 
 #[tokio::test]
@@ -5836,13 +6210,18 @@ async fn a_configured_tank_with_no_fuelling_record_at_all_shows_no_stock() {
     let (_, stock) = run_with_user(Some(owner(42)), internal_tank_use_case(&db).stock(Some(42)))
         .await
         .expect("the tank exists");
-    assert_eq!(stock.current_stock_liters, None, "no full tank computed from an empty list");
+    assert_eq!(
+        stock.current_stock_liters, None,
+        "no full tank computed from an empty list"
+    );
     assert!(!stock.delivery_alert);
     assert!(stock.suppressed.is_some());
 }
 
 // ------------------------------------------------------- EPIC-FU-03-S01 driver receipt
-use business::use_cases::fuel_receipt_use_case::{FuelReceipt, FuelReceiptUseCase, ODOMETER_OUTSIDE_WINDOW, PREFIX_MISMATCH};
+use business::use_cases::fuel_receipt_use_case::{
+    FuelReceipt, FuelReceiptUseCase, ODOMETER_OUTSIDE_WINDOW, PREFIX_MISMATCH,
+};
 
 fn fuel_receipt_use_case(db: &DatabaseConnection) -> FuelReceiptUseCase {
     FuelReceiptUseCase::new(
@@ -5871,7 +6250,10 @@ fn a_receipt(odometer_km: Option<f64>, override_odometer: bool) -> FuelReceipt {
 }
 
 fn receipt_vehicle() -> vehicle_entity::Model {
-    vehicle_entity::Model { prefix: Some("2642".into()), ..vehicle_row(10, 42, "ABC1D23", "Active") }
+    vehicle_entity::Model {
+        prefix: Some("2642".into()),
+        ..vehicle_row(10, 42, "ABC1D23", "Active")
+    }
 }
 
 fn a_driver() -> entity::user_entity::Model {
@@ -5880,10 +6262,15 @@ fn a_driver() -> entity::user_entity::Model {
 
 #[tokio::test]
 async fn a_receipt_whose_prefix_does_not_match_the_vehicle_is_refused() {
-    let db = mock().append_query_results([[a_driver()]]).append_query_results([[receipt_vehicle()]]).into_connection();
+    let db = mock()
+        .append_query_results([[a_driver()]])
+        .append_query_results([[receipt_vehicle()]])
+        .into_connection();
     let mut receipt = a_receipt(None, false);
     receipt.confirmed_prefix = "9999".into();
-    let err = run_with_user(Some(owner(42)), fuel_receipt_use_case(&db).record(receipt)).await.expect_err("refused");
+    let err = run_with_user(Some(owner(42)), fuel_receipt_use_case(&db).record(receipt))
+        .await
+        .expect_err("refused");
     assert_eq!(err.message, PREFIX_MISMATCH);
 }
 
@@ -5895,9 +6282,12 @@ async fn a_resubmitted_fuelling_answers_with_the_existing_record() {
         .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
         .append_query_results([[fuel_entry_row(900, 42, 10)]]) // 50 l within 10 minutes
         .into_connection();
-    let (entry, created) = run_with_user(Some(owner(42)), fuel_receipt_use_case(&db).record(a_receipt(None, false)))
-        .await
-        .expect("answered");
+    let (entry, created) = run_with_user(
+        Some(owner(42)),
+        fuel_receipt_use_case(&db).record(a_receipt(None, false)),
+    )
+    .await
+    .expect("answered");
     assert!(!created);
     assert_eq!(entry.id, Some(900));
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
@@ -5914,21 +6304,41 @@ async fn a_divergent_odometer_is_refused_unless_the_driver_overrides_and_then_it
             .append_query_results([[km_evolution_row(2, 42, 10, 2_000.0, "Manual")]]) // after
     };
     let db = queue(mock()).into_connection();
-    let err = run_with_user(Some(owner(42)), fuel_receipt_use_case(&db).record(a_receipt(Some(900.0), false)))
-        .await
-        .expect_err("refused");
-    assert!(err.message.starts_with(ODOMETER_OUTSIDE_WINDOW), "{}", err.message);
-    assert!(err.message.contains("[1000, 2000]"), "the bounds are reported: {}", err.message);
+    let err = run_with_user(
+        Some(owner(42)),
+        fuel_receipt_use_case(&db).record(a_receipt(Some(900.0), false)),
+    )
+    .await
+    .expect_err("refused");
+    assert!(
+        err.message.starts_with(ODOMETER_OUTSIDE_WINDOW),
+        "{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("[1000, 2000]"),
+        "the bounds are reported: {}",
+        err.message
+    );
 
     let mut saved = fuel_entry_row(901, 42, 10);
     saved.odometer_override_note = Some("noted".into());
-    let db = queue(mock()).append_exec_results([inserted(901)]).append_query_results([[saved]]).into_connection();
-    let (_, created) = run_with_user(Some(owner(42)), fuel_receipt_use_case(&db).record(a_receipt(Some(900.0), true)))
-        .await
-        .expect("recorded with the override");
+    let db = queue(mock())
+        .append_exec_results([inserted(901)])
+        .append_query_results([[saved]])
+        .into_connection();
+    let (_, created) = run_with_user(
+        Some(owner(42)),
+        fuel_receipt_use_case(&db).record(a_receipt(Some(900.0), true)),
+    )
+    .await
+    .expect("recorded with the override");
     assert!(created);
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("DriverPhoto") && sql.contains("overridden by the driver"), "{sql}");
+    assert!(
+        sql.contains("DriverPhoto") && sql.contains("overridden by the driver"),
+        "{sql}"
+    );
 }
 
 /// `TRM-545`/`548`/`549`: a provider transaction that matches a driver-reported
@@ -5959,34 +6369,71 @@ async fn a_provider_transaction_matching_a_driver_fuelling_adopts_it_instead_of_
         .append_exec_results([inserted(800)])
         .append_query_results([[adopted]])
         .into_connection();
-    let outcome = run_with_user(Some(owner(42)), fuel_sync_use_case(&db, provider).sync(Some(42)))
-        .await
-        .expect("a valid sync succeeds");
+    let outcome = run_with_user(
+        Some(owner(42)),
+        fuel_sync_use_case(&db, provider).sync(Some(42)),
+    )
+    .await
+    .expect("a valid sync succeeds");
     assert_eq!((outcome.reconciled, outcome.imported), (1, 0));
     let sql = format!("{:?}", log(db));
-    assert!(!sql.contains("INSERT INTO `fuel_entry`"), "no second row: {sql}");
-    assert!(sql.contains("UPDATE `fuel_entry`") && sql.contains("DriverPhoto"), "{sql}");
+    assert!(
+        !sql.contains("INSERT INTO `fuel_entry`"),
+        "no second row: {sql}"
+    );
+    assert!(
+        sql.contains("UPDATE `fuel_entry`") && sql.contains("DriverPhoto"),
+        "{sql}"
+    );
 }
 
 #[test]
 fn the_closest_candidate_within_tolerance_is_chosen_and_a_far_volume_is_not() {
     use business::use_cases::fuel_sync_use_case::pick_candidate;
     let at_naive = at().naive_utc();
-    let candidate = |id: i64, hours: i64, liters: f64| entity::fuel_entry_entity::Model {
-        recorded_at: at() + chrono::Duration::hours(hours),
+    let candidate = |id: i64, hours: i64, liters: f64| FuelEntry {
+        id: Some(id),
+        recorded_at: (at() + chrono::Duration::hours(hours)).naive_utc(),
         volume_liters: liters,
-        ..fuel_entry_row(id, 42, 10)
+        ..new_fuel_entry(Some(42))
     };
-    let picked = pick_candidate(at_naive, 100.0, vec![candidate(1, 30, 100.0), candidate(2, -2, 102.5), candidate(3, 1, 120.0)], &Default::default());
+    let picked = pick_candidate(
+        at_naive,
+        100.0,
+        vec![
+            candidate(1, 30, 100.0),
+            candidate(2, -2, 102.5),
+            candidate(3, 1, 120.0),
+        ],
+        &Default::default(),
+    );
     // 3 % of 100 l is 3 l: #2 fits and is closest among those that fit; #3 is 20 l off.
-    assert_eq!(picked.map(|c| c.id), Some(2));
+    assert_eq!(picked.map(|candidate| candidate.id), Some(Some(2)));
     // Small volumes use the absolute 1 l tolerance.
-    assert!(pick_candidate(at_naive, 10.0, vec![candidate(4, 0, 10.9)], &Default::default()).is_some());
-    assert!(pick_candidate(at_naive, 10.0, vec![candidate(5, 0, 11.5)], &Default::default()).is_none());
+    assert!(
+        pick_candidate(
+            at_naive,
+            10.0,
+            vec![candidate(4, 0, 10.9)],
+            &Default::default()
+        )
+        .is_some()
+    );
+    assert!(
+        pick_candidate(
+            at_naive,
+            10.0,
+            vec![candidate(5, 0, 11.5)],
+            &Default::default()
+        )
+        .is_none()
+    );
 }
 
 // ------------------------------------------------------- EPIC-FU-04-S02 soft delete, restore, unify
-fn fuel_ledger_use_case(db: &DatabaseConnection) -> business::use_cases::fuel_entry_use_case::FuelEntryUseCase {
+fn fuel_ledger_use_case(
+    db: &DatabaseConnection,
+) -> business::use_cases::fuel_entry_use_case::FuelEntryUseCase {
     business::use_cases::fuel_entry_use_case::FuelEntryUseCase::new(
         business::gateway::fuel_entry_gateway::FuelEntryGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
@@ -5996,7 +6443,11 @@ fn fuel_ledger_use_case(db: &DatabaseConnection) -> business::use_cases::fuel_en
 
 #[tokio::test]
 async fn unifying_two_fuellings_of_one_day_sums_them_and_soft_deletes_the_absorbed_one() {
-    let target = entity::fuel_entry_entity::Model { odometer_km: None, full_tank: false, ..fuel_entry_row(1, 42, 10) };
+    let target = entity::fuel_entry_entity::Model {
+        odometer_km: None,
+        full_tank: false,
+        ..fuel_entry_row(1, 42, 10)
+    };
     let source = entity::fuel_entry_entity::Model {
         id: 2,
         volume_liters: 30.0,
@@ -6012,15 +6463,24 @@ async fn unifying_two_fuellings_of_one_day_sums_them_and_soft_deletes_the_absorb
         .append_query_results([[target.clone()]]) // read-backs after each update
         .append_query_results([[source.clone()]])
         .into_connection();
-    let keeper = run_with_user(Some(owner(42)), fuel_ledger_use_case(&db).unify("t".into(), "s".into()))
-        .await
-        .expect("unified");
+    let keeper = run_with_user(
+        Some(owner(42)),
+        fuel_ledger_use_case(&db).unify("t".into(), "s".into()),
+    )
+    .await
+    .expect("unified");
     assert_eq!(keeper.id, Some(1));
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("Unified with"), "the keeper is annotated: {sql}");
+    assert!(
+        sql.contains("Unified with"),
+        "the keeper is annotated: {sql}"
+    );
     assert!(sql.matches("UPDATE `fuel_entry`").count() == 2, "{sql}");
     // The summed figures and the adopted odometer travel in the keeper's update.
-    assert!(sql.contains("80.0") && sql.contains("48000") && sql.contains("777.0"), "{sql}");
+    assert!(
+        sql.contains("80.0") && sql.contains("48000") && sql.contains("777.0"),
+        "{sql}"
+    );
 }
 
 #[tokio::test]
@@ -6030,11 +6490,20 @@ async fn fuellings_of_different_days_cannot_be_unified() {
         recorded_at: at() + chrono::Duration::days(1),
         ..fuel_entry_row(2, 42, 10)
     };
-    let db = mock().append_query_results([[target]]).append_query_results([[source]]).into_connection();
-    let err = run_with_user(Some(owner(42)), fuel_ledger_use_case(&db).unify("t".into(), "s".into()))
-        .await
-        .expect_err("refused");
-    assert_eq!(err.message, business::use_cases::fuel_entry_use_case::UNIFY_DIFFERENT_DAYS);
+    let db = mock()
+        .append_query_results([[target]])
+        .append_query_results([[source]])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        fuel_ledger_use_case(&db).unify("t".into(), "s".into()),
+    )
+    .await
+    .expect_err("refused");
+    assert_eq!(
+        err.message,
+        business::use_cases::fuel_entry_use_case::UNIFY_DIFFERENT_DAYS
+    );
     assert!(!format!("{:?}", log(db)).contains("UPDATE"));
 }
 
@@ -6045,17 +6514,32 @@ async fn deleting_a_fuelling_only_stamps_it_and_nothing_is_removed() {
         .append_exec_results([inserted(1)])
         .append_query_results([[fuel_entry_row(1, 42, 10)]])
         .into_connection();
-    run_with_user(Some(owner(42)), fuel_ledger_use_case(&db).soft_delete("u".into())).await.expect("deleted");
+    run_with_user(
+        Some(owner(42)),
+        fuel_ledger_use_case(&db).soft_delete("u".into()),
+    )
+    .await
+    .expect("deleted");
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("UPDATE `fuel_entry`") && !sql.contains("DELETE"), "{sql}");
+    assert!(
+        sql.contains("UPDATE `fuel_entry`") && !sql.contains("DELETE"),
+        "{sql}"
+    );
 }
 
 // ------------------------------------------------------- EPIC-FU-06-S03 tenant gauge settings
 use business::domain::fuel_gauge_setting::FuelGaugeSetting;
-use business::use_cases::fuel_gauge_setting_use_case::{FuelGaugeSettingUseCase, RATIO_INVALID, SUSPECT_MARGIN_INVALID};
+use business::use_cases::fuel_gauge_setting_use_case::{
+    FuelGaugeSettingUseCase, RATIO_INVALID, SUSPECT_MARGIN_INVALID,
+};
 
-fn gauge_setting_use_case(db: &DatabaseConnection) -> FuelGaugeSettingUseCase {
-    FuelGaugeSettingUseCase::new(business::gateway::fuel_gauge_setting_gateway::FuelGaugeSettingGateway::new(db.clone()))
+fn gauge_setting_use_case(
+    db: &DatabaseConnection,
+) -> FuelGaugeSettingUseCase<business::gateway::fuel_gauge_setting_gateway::FuelGaugeSettingGateway>
+{
+    FuelGaugeSettingUseCase::new(
+        business::gateway::fuel_gauge_setting_gateway::FuelGaugeSettingGateway::new(db.clone()),
+    )
 }
 
 fn a_setting(suspect: f64, ratio: f64) -> FuelGaugeSetting {
@@ -6077,9 +6561,19 @@ fn a_setting(suspect: f64, ratio: f64) -> FuelGaugeSetting {
 #[tokio::test]
 async fn gauge_thresholds_outside_their_sense_are_refused_before_any_write() {
     let db = mock().into_connection();
-    let err = run_with_user(Some(owner(42)), gauge_setting_use_case(&db).configure(a_setting(0.9, 0.5))).await.expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        gauge_setting_use_case(&db).configure(a_setting(0.9, 0.5)),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, SUSPECT_MARGIN_INVALID);
-    let err = run_with_user(Some(owner(42)), gauge_setting_use_case(&db).configure(a_setting(1.05, 1.5))).await.expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        gauge_setting_use_case(&db).configure(a_setting(1.05, 1.5)),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, RATIO_INVALID);
     assert!(log(db).is_empty());
 }
@@ -6087,8 +6581,15 @@ async fn gauge_thresholds_outside_their_sense_are_refused_before_any_write() {
 #[tokio::test]
 async fn a_tenant_with_no_settings_row_gets_the_platform_defaults_and_its_own_once_set() {
     let defaults = business::use_cases::fuel_gauge_use_case::GaugeSettings::default();
-    let db = mock().append_query_results([Vec::<entity::fuel_gauge_setting_entity::Model>::new()]).into_connection();
-    let got = run_with_user(Some(owner(42)), gauge_setting_use_case(&db).current(Some(42))).await.expect("read");
+    let db = mock()
+        .append_query_results([Vec::<entity::fuel_gauge_setting_entity::Model>::new()])
+        .into_connection();
+    let got = run_with_user(
+        Some(owner(42)),
+        gauge_setting_use_case(&db).current(Some(42)),
+    )
+    .await
+    .expect("read");
     assert_eq!(got, defaults);
 
     let row = entity::fuel_gauge_setting_entity::Model {
@@ -6105,7 +6606,12 @@ async fn a_tenant_with_no_settings_row_gets_the_platform_defaults_and_its_own_on
         updated_by: None,
     };
     let db = mock().append_query_results([[row]]).into_connection();
-    let got = run_with_user(Some(owner(42)), gauge_setting_use_case(&db).current(Some(42))).await.expect("read");
+    let got = run_with_user(
+        Some(owner(42)),
+        gauge_setting_use_case(&db).current(Some(42)),
+    )
+    .await
+    .expect("read");
     assert_eq!((got.suspect_margin_ratio, got.set_aside_ratio), (1.2, 0.3));
 }
 
@@ -6113,23 +6619,42 @@ async fn a_tenant_with_no_settings_row_gets_the_platform_defaults_and_its_own_on
 fn a_tenants_reconciliation_tolerance_decides_what_counts_as_the_same_fuelling() {
     use business::domain::tenant_rule_setting::RuleSettings;
     use business::use_cases::fuel_sync_use_case::pick_candidate;
-    let candidate = entity::fuel_entry_entity::Model { volume_liters: 105.0, ..fuel_entry_row(1, 42, 10) };
+    let candidate = FuelEntry {
+        volume_liters: 105.0,
+        ..new_fuel_entry(Some(42))
+    };
     // 5 l off a 100 l posting: outside the default max(1 l, 3 %) ...
-    assert!(pick_candidate(at().naive_utc(), 100.0, vec![candidate.clone()], &RuleSettings::default()).is_none());
+    assert!(
+        pick_candidate(
+            at().naive_utc(),
+            100.0,
+            vec![candidate.clone()],
+            &RuleSettings::default()
+        )
+        .is_none()
+    );
     // ... inside a tenant's own 6 % tolerance.
-    let loose = RuleSettings { reconciliation_volume_tolerance_ratio: 0.06, ..RuleSettings::default() };
+    let loose = RuleSettings {
+        reconciliation_volume_tolerance_ratio: 0.06,
+        ..RuleSettings::default()
+    };
     assert!(pick_candidate(at().naive_utc(), 100.0, vec![candidate], &loose).is_some());
 }
-
 
 // ------------------------------------------------------- EPIC-GA-01-S01 garage service catalogue
 use business::domain::enums::GarageServiceGroup;
 use business::domain::garage_service_model::{GarageServiceApplicability, GarageServiceModel};
 use business::use_cases::garage_service_model_use_case::{
-    DUPLICATE_NAME, GarageServiceModelUseCase, INVALID_APPLICABILITY, NAME_REQUIRED as GARAGE_NAME_REQUIRED,
+    DUPLICATE_NAME, GarageServiceModelUseCase, INVALID_APPLICABILITY,
+    NAME_REQUIRED as GARAGE_NAME_REQUIRED,
 };
 
-fn garage_catalogue(db: &DatabaseConnection) -> GarageServiceModelUseCase {
+fn garage_catalogue(
+    db: &DatabaseConnection,
+) -> GarageServiceModelUseCase<
+    business::gateway::garage_service_model_gateway::GarageServiceModelGateway,
+    VehicleGateway,
+> {
     GarageServiceModelUseCase::new(
         business::gateway::garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
         business::gateway::vehicle_gateway::VehicleGateway::new(db.clone()),
@@ -6156,7 +6681,11 @@ fn garage_service(name: &str) -> GarageServiceModel {
     }
 }
 
-fn garage_service_row(id: i64, name: &str, key: &str) -> entity::garage_service_model_entity::Model {
+fn garage_service_row(
+    id: i64,
+    name: &str,
+    key: &str,
+) -> entity::garage_service_model_entity::Model {
     entity::garage_service_model_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -6179,26 +6708,42 @@ fn garage_service_row(id: i64, name: &str, key: &str) -> entity::garage_service_
 #[tokio::test]
 async fn a_blank_name_is_refused_and_a_name_equal_after_normalisation_is_a_duplicate() {
     let db = mock().into_connection();
-    let err = run_with_user(Some(owner(42)), garage_catalogue(&db).create(garage_service("  . "))).await.expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_catalogue(&db).create(garage_service("  . ")),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, GARAGE_NAME_REQUIRED);
 
     // "Lavagem  Externa" and the stored "lavagem externa" are one name (TRM-433).
-    let db = mock().append_query_results([[garage_service_row(1, "lavagem externa", "lavagem externa")]]).into_connection();
-    let err = run_with_user(Some(owner(42)), garage_catalogue(&db).create(garage_service("Lavagem  Externa")))
-        .await
-        .expect_err("duplicate");
+    let db = mock()
+        .append_query_results([[garage_service_row(1, "lavagem externa", "lavagem externa")]])
+        .into_connection();
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_catalogue(&db).create(garage_service("Lavagem  Externa")),
+    )
+    .await
+    .expect_err("duplicate");
     assert_eq!(err.message, DUPLICATE_NAME);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
 
 #[tokio::test]
-async fn a_new_service_is_stored_under_its_normalised_key_and_renaming_to_its_own_key_is_not_a_duplicate() {
+async fn a_new_service_is_stored_under_its_normalised_key_and_renaming_to_its_own_key_is_not_a_duplicate()
+ {
     let db = mock()
         .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
         .append_exec_results([inserted(1)])
         .append_query_results([[garage_service_row(1, "Higienização WC", "higienizacao wc")]])
         .into_connection();
-    run_with_user(Some(owner(42)), garage_catalogue(&db).create(garage_service("Higienização WC"))).await.expect("created");
+    run_with_user(
+        Some(owner(42)),
+        garage_catalogue(&db).create(garage_service("Higienização WC")),
+    )
+    .await
+    .expect("created");
     assert!(format!("{:?}", log(db)).contains("higienizacao wc"));
 
     // Editing the service whose key it already is: the lookup finds itself, which is not a clash.
@@ -6208,15 +6753,24 @@ async fn a_new_service_is_stored_under_its_normalised_key_and_renaming_to_its_ow
         .append_exec_results([inserted(1)])
         .append_query_results([[garage_service_row(1, "Higienização wc", "higienizacao wc")]])
         .into_connection();
-    let edited = GarageServiceModel { uuid: Some(UUID.into()), ..garage_service("Higienização wc") };
-    run_with_user(Some(owner(42)), garage_catalogue(&db).update(edited)).await.expect("renamed to its own key");
+    let edited = GarageServiceModel {
+        uuid: Some(UUID.into()),
+        ..garage_service("Higienização wc")
+    };
+    run_with_user(Some(owner(42)), garage_catalogue(&db).update(edited))
+        .await
+        .expect("renamed to its own key");
 }
 
 #[tokio::test]
 async fn a_service_applicability_is_persisted_and_returned() {
-    let applicability = GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into(), "onibus".into()]);
+    let applicability =
+        GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into(), "onibus".into()]);
     let mut persisted = garage_service_row(1, "Higienização WC", "higienizacao wc");
-    persisted.applicability = serde_json::to_string(&GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()]))
+    persisted.applicability =
+        serde_json::to_string(&GarageServiceApplicability::VehicleTypes(vec![
+            "Ônibus".into(),
+        ]))
         .expect("serializable applicability");
     let db = mock()
         .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
@@ -6231,7 +6785,10 @@ async fn a_service_applicability_is_persisted_and_returned() {
     let created = run_with_user(Some(owner(42)), garage_catalogue(&db).create(service))
         .await
         .expect("service created");
-    assert_eq!(created.applicability, GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()]));
+    assert_eq!(
+        created.applicability,
+        GarageServiceApplicability::VehicleTypes(vec!["Ônibus".into()])
+    );
     assert!(format!("{:?}", log(db)).contains("vehicleTypes"));
 }
 
@@ -6277,16 +6834,20 @@ use business::use_cases::garage_attendance_use_case::{
 
 fn garage_attendance_use_case(db: &DatabaseConnection) -> GarageAttendanceUseCase {
     use business::gateway::*;
-    GarageAttendanceUseCase::new(
+    GarageAttendanceUseCase::new(business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway::new(
         garage_attendance_gateway::GarageAttendanceGateway::new(db.clone()),
         garage_service_gateway::GarageServiceGateway::new(db.clone()),
         garage_service_log_gateway::GarageServiceLogGateway::new(db.clone()),
         garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
-    )
+    ))
 }
 
-fn attendance_row(id: i64, status: &str, active: Option<i32>) -> entity::garage_attendance_entity::Model {
+fn attendance_row(
+    id: i64,
+    status: &str,
+    active: Option<i32>,
+) -> entity::garage_attendance_entity::Model {
     entity::garage_attendance_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -6332,9 +6893,12 @@ async fn a_vehicle_with_an_active_triage_cannot_have_a_second_and_an_empty_catal
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([[attendance_row(1, "Open", Some(1))]])
         .into_connection();
-    let err = run_with_user(Some(owner(42)), garage_attendance_use_case(&db).open(Some(42), 10, None, GarageAttendanceOrigin::Manual))
-        .await
-        .expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_attendance_use_case(&db).open(Some(42), 10, None, GarageAttendanceOrigin::Manual),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, ALREADY_ACTIVE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 
@@ -6343,9 +6907,12 @@ async fn a_vehicle_with_an_active_triage_cannot_have_a_second_and_an_empty_catal
         .append_query_results([Vec::<entity::garage_attendance_entity::Model>::new()])
         .append_query_results([Vec::<entity::garage_service_model_entity::Model>::new()])
         .into_connection();
-    let err = run_with_user(Some(owner(42)), garage_attendance_use_case(&db).open(Some(42), 10, None, GarageAttendanceOrigin::Manual))
-        .await
-        .expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_attendance_use_case(&db).open(Some(42), 10, None, GarageAttendanceOrigin::Manual),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, NO_SERVICES);
 }
 
@@ -6355,21 +6922,33 @@ async fn opening_a_triage_creates_one_pending_record_per_active_catalogue_entry(
     let db = mock()
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
         .append_query_results([Vec::<entity::garage_attendance_entity::Model>::new()])
-        .append_query_results([[garage_service_row(1, "Diesel", "diesel"), garage_service_row(2, "WC", "wc")]])
+        .append_query_results([[
+            garage_service_row(1, "Diesel", "diesel"),
+            garage_service_row(2, "WC", "wc"),
+        ]])
         .append_exec_results([inserted(1), inserted(1), inserted(2)])
         .append_query_results([[attendance_row(1, "Open", Some(1))]])
         .append_query_results([[service_record_row(1, "diesel", "Pending")]])
         .append_query_results([[service_record_row(2, "wc", "Pending")]])
         .into_connection();
-    let (attendance, services) =
-        run_with_user(Some(owner(42)), garage_attendance_use_case(&db).open(Some(42), 10, Some(3), GarageAttendanceOrigin::Manual))
-            .await
-            .expect("opened");
+    let (attendance, services) = run_with_user(
+        Some(owner(42)),
+        garage_attendance_use_case(&db).open(Some(42), 10, Some(3), GarageAttendanceOrigin::Manual),
+    )
+    .await
+    .expect("opened");
     assert_eq!(attendance.manual_priority, Some(3));
     assert_eq!(services.len(), 2);
     let sql = format!("{:?}", log(db));
-    assert_eq!(sql.matches("INSERT INTO `garage_service` ").count(), 2, "{sql}");
-    assert!(sql.contains("\"diesel\"") && sql.contains("\"wc\""), "each record is keyed by its normalised name: {sql}");
+    assert_eq!(
+        sql.matches("INSERT INTO `garage_service` ").count(),
+        2,
+        "{sql}"
+    );
+    assert!(
+        sql.contains("\"diesel\"") && sql.contains("\"wc\""),
+        "each record is keyed by its normalised name: {sql}"
+    );
 }
 
 #[tokio::test]
@@ -6400,13 +6979,24 @@ async fn marking_a_service_stamps_its_own_instant_and_writes_an_independent_audi
         .into_connection();
     run_with_user(
         Some(owner(42)),
-        garage_attendance_use_case(&db).mark_service(UUID.into(), UUID.into(), GarageServiceState::Performed, Some(2)),
+        garage_attendance_use_case(&db).mark_service(
+            UUID.into(),
+            UUID.into(),
+            GarageServiceState::Performed,
+            Some(2),
+        ),
     )
     .await
     .expect("marked");
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("UPDATE `garage_service`") && sql.contains("Performed"), "{sql}");
-    assert!(sql.contains("INSERT INTO `garage_service_log`"), "the audit row is written with the marking: {sql}");
+    assert!(
+        sql.contains("UPDATE `garage_service`") && sql.contains("Performed"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("INSERT INTO `garage_service_log`"),
+        "the audit row is written with the marking: {sql}"
+    );
 }
 
 #[tokio::test]
@@ -6420,13 +7010,23 @@ async fn a_closed_triage_cannot_be_marked_or_checked_out_again() {
     let db = closed();
     let err = run_with_user(
         Some(owner(42)),
-        garage_attendance_use_case(&db).mark_service(UUID.into(), UUID.into(), GarageServiceState::NotDone, None),
+        garage_attendance_use_case(&db).mark_service(
+            UUID.into(),
+            UUID.into(),
+            GarageServiceState::NotDone,
+            None,
+        ),
     )
     .await
     .expect_err("closed");
     assert_eq!(err.message, ATTENDANCE_CLOSED);
     let db = closed();
-    let err = run_with_user(Some(owner(42)), garage_attendance_use_case(&db).checkout(UUID.into())).await.expect_err("closed");
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_attendance_use_case(&db).checkout(UUID.into()),
+    )
+    .await
+    .expect_err("closed");
     assert_eq!(err.message, ATTENDANCE_CLOSED);
 }
 
@@ -6436,27 +7036,46 @@ async fn checking_out_closes_the_triage_frees_its_slot_and_zeroes_the_priority()
         .append_query_results([[attendance_row(1, "Open", Some(1))]])
         .append_query_results([[service_record_row(1, "diesel", "Performed")]])
         .append_exec_results([inserted(1)])
-        .append_query_results([[entity::garage_attendance_entity::Model { manual_priority: None, ..attendance_row(1, "Finished", None) }]])
+        .append_query_results([[entity::garage_attendance_entity::Model {
+            manual_priority: None,
+            ..attendance_row(1, "Finished", None)
+        }]])
         .into_connection();
-    let closed = run_with_user(Some(owner(42)), garage_attendance_use_case(&db).checkout(UUID.into())).await.expect("closed");
+    let closed = run_with_user(
+        Some(owner(42)),
+        garage_attendance_use_case(&db).checkout(UUID.into()),
+    )
+    .await
+    .expect("closed");
     assert_eq!(closed.manual_priority, None);
     assert_eq!(closed.active_marker, None);
     let sql = format!("{:?}", log(db));
-    assert!(sql.contains("UPDATE `garage_attendance`") && sql.contains("Finished"), "{sql}");
+    assert!(
+        sql.contains("UPDATE `garage_attendance`") && sql.contains("Finished"),
+        "{sql}"
+    );
 }
 
 // ------------------------------------------------------- EPIC-GA-03 presence stamps
 use business::domain::enums::{PresenceEventKind, PresenceSource};
-use business::use_cases::vehicle_presence_use_case::{ESTIMATE_CANNOT_STAMP, VehiclePresenceUseCase};
+use business::use_cases::vehicle_presence_use_case::{
+    ESTIMATE_CANNOT_STAMP, VehiclePresenceUseCase,
+};
 
 fn presence_use_case(db: &DatabaseConnection) -> VehiclePresenceUseCase {
     VehiclePresenceUseCase::new(
-        business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
+        business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(
+            db.clone(),
+        ),
         VehicleGateway::new(db.clone()),
     )
 }
 
-fn presence_row(id: i64, kind: &str, hours_ago: i64) -> entity::vehicle_presence_event_entity::Model {
+fn presence_row(
+    id: i64,
+    kind: &str,
+    hours_ago: i64,
+) -> entity::vehicle_presence_event_entity::Model {
     entity::vehicle_presence_event_entity::Model {
         id,
         uuid: string_to_bytes(UUID),
@@ -6500,7 +7119,13 @@ async fn a_second_departure_with_no_arrival_between_leaves_the_stamp_untouched()
         .into_connection();
     let (recorded, snapshot) = run_with_user(
         Some(owner(42)),
-        presence_use_case(&db).record(Some(42), 10, PresenceEventKind::Departure, chrono::Utc::now().naive_utc(), PresenceSource::Tracker),
+        presence_use_case(&db).record(
+            Some(42),
+            10,
+            PresenceEventKind::Departure,
+            chrono::Utc::now().naive_utc(),
+            PresenceSource::Tracker,
+        ),
     )
     .await
     .expect("answered");
@@ -6520,7 +7145,13 @@ async fn an_arrival_after_a_departure_is_recorded_and_the_vehicle_is_no_longer_a
         .into_connection();
     let (recorded, snapshot) = run_with_user(
         Some(owner(42)),
-        presence_use_case(&db).record(Some(42), 10, PresenceEventKind::Arrival, chrono::Utc::now().naive_utc(), PresenceSource::Tracker),
+        presence_use_case(&db).record(
+            Some(42),
+            10,
+            PresenceEventKind::Arrival,
+            chrono::Utc::now().naive_utc(),
+            PresenceSource::Tracker,
+        ),
     )
     .await
     .expect("recorded");
@@ -6534,7 +7165,9 @@ use business::use_cases::garage_call_use_case::{GarageCallUseCase, NOT_AWAY};
 fn garage_call_use_case(db: &DatabaseConnection) -> GarageCallUseCase {
     GarageCallUseCase::new(
         business::gateway::garage_call_gateway::GarageCallGateway::new(db.clone()),
-        business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(db.clone()),
+        business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway::new(
+            db.clone(),
+        ),
         VehicleGateway::new(db.clone()),
     )
 }
@@ -6562,7 +7195,12 @@ async fn only_a_vehicle_away_from_base_can_be_called() {
         .append_query_results([[presence_row(1, "Arrival", 2)]]) // last arrival: it is at base
         .append_query_results([Vec::<entity::vehicle_presence_event_entity::Model>::new()]) // never departed
         .into_connection();
-    let err = run_with_user(Some(owner(42)), garage_call_use_case(&db).call(Some(42), 10, Some(2))).await.expect_err("refused");
+    let err = run_with_user(
+        Some(owner(42)),
+        garage_call_use_case(&db).call(Some(42), 10, Some(2)),
+    )
+    .await
+    .expect_err("refused");
     assert_eq!(err.message, NOT_AWAY);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -6580,7 +7218,12 @@ async fn a_call_to_an_away_vehicle_is_stamped_and_an_existing_call_is_not_stampe
         .append_exec_results([inserted(5)])
         .append_query_results([[call_row(5, 0, false)]])
         .into_connection();
-    let (_, created) = run_with_user(Some(owner(42)), garage_call_use_case(&db).call(Some(42), 10, Some(2))).await.expect("called");
+    let (_, created) = run_with_user(
+        Some(owner(42)),
+        garage_call_use_case(&db).call(Some(42), 10, Some(2)),
+    )
+    .await
+    .expect("called");
     assert!(created);
     assert!(format!("{:?}", log(db)).contains("INSERT INTO `garage_call`"));
 
@@ -6588,7 +7231,12 @@ async fn a_call_to_an_away_vehicle_is_stamped_and_an_existing_call_is_not_stampe
         .append_query_results([[call_row(5, 30, false)]]) // a call already in force
         .append_query_results([[presence_row(1, "Arrival", 9)]]) // its arrival check: earlier than the call
         .into_connection();
-    let (existing, created) = run_with_user(Some(owner(42)), garage_call_use_case(&db).call(Some(42), 10, Some(2))).await.expect("answered");
+    let (existing, created) = run_with_user(
+        Some(owner(42)),
+        garage_call_use_case(&db).call(Some(42), 10, Some(2)),
+    )
+    .await
+    .expect("answered");
     assert!(!created && existing.id == Some(5));
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -6599,26 +7247,52 @@ async fn a_vehicles_arrival_after_the_call_ends_it_without_anyone_unmarking_it()
         .append_query_results([[call_row(5, 120, false)]]) // called 2 h ago
         .append_query_results([[presence_row(3, "Arrival", 1)]]) // arrived 1 h ago, after the call
         .into_connection();
-    assert!(run_with_user(Some(owner(42)), garage_call_use_case(&db).active(10)).await.expect("read").is_none());
+    assert!(
+        run_with_user(Some(owner(42)), garage_call_use_case(&db).active(10))
+            .await
+            .expect("read")
+            .is_none()
+    );
 }
 
 // ------------------------------------------------------- EPIC-SC-04-S01 demand kind and days of week
 #[tokio::test]
 async fn a_stated_kind_needs_the_field_that_makes_it_a_days_work_and_unreadable_days_are_refused() {
     use business::domain::enums::DemandKind;
-    use business::use_cases::transport_demand_use_case::{DAYS_OF_WEEK_UNREADABLE, KIND_NEEDS_ITS_DAYS};
+    use business::use_cases::transport_demand_use_case::{
+        DAYS_OF_WEEK_UNREADABLE, KIND_NEEDS_ITS_DAYS,
+    };
     let db = mock().into_connection(); // every refusal happens before any query
     let refused = |demand: TransportDemand| {
         let db = db.clone();
-        async move { run_with_user(Some(owner(42)), demand_use_case(&db).create(demand)).await.expect_err("refused").message }
+        async move {
+            run_with_user(Some(owner(42)), demand_use_case(&db).create(demand))
+                .await
+                .expect_err("refused")
+                .message
+        }
     };
     let line = |days: Option<&str>| TransportDemand {
         demand_kind: Some(DemandKind::Line),
         days_of_week: days.map(str::to_string),
         ..new_demand(Some(42))
     };
-    assert_eq!(refused(line(Some("Mon,Funday"))).await, DAYS_OF_WEEK_UNREADABLE);
-    assert_eq!(refused(line(None)).await, KIND_NEEDS_ITS_DAYS, "a line without its days");
-    let trip = TransportDemand { demand_kind: Some(DemandKind::OneOffTrip), ..new_demand(Some(42)) };
-    assert_eq!(refused(trip).await, KIND_NEEDS_ITS_DAYS, "a one-off trip without its date");
+    assert_eq!(
+        refused(line(Some("Mon,Funday"))).await,
+        DAYS_OF_WEEK_UNREADABLE
+    );
+    assert_eq!(
+        refused(line(None)).await,
+        KIND_NEEDS_ITS_DAYS,
+        "a line without its days"
+    );
+    let trip = TransportDemand {
+        demand_kind: Some(DemandKind::OneOffTrip),
+        ..new_demand(Some(42))
+    };
+    assert_eq!(
+        refused(trip).await,
+        KIND_NEEDS_ITS_DAYS,
+        "a one-off trip without its date"
+    );
 }

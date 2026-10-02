@@ -26,7 +26,7 @@ use business::gateway::work_order_gateway::WorkOrderGateway;
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::domain::user::User;
 use business::gateway::checklist_answer_gateway::ChecklistAnswerGateway;
-use business::gateway::checklist_run_gateway::ChecklistRunGateway;
+use business::gateway::checklist_run_gateway::{ChecklistRunDatabaseGateway, ChecklistRunGateway};
 use business::gateway::checklist_template_gateway::ChecklistTemplateGateway;
 use business::gateway::checklist_template_item_gateway::ChecklistTemplateItemGateway;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
@@ -42,17 +42,16 @@ use std::str::FromStr;
 
 fn use_case(state: &AppState) -> ChecklistRunUseCase {
     let db = state.conn.as_ref().clone();
-    ChecklistRunUseCase::new(
+    ChecklistRunUseCase::new(ChecklistRunDatabaseGateway::new(
         ChecklistRunGateway::new(db.clone()),
         ChecklistTemplateGateway::new(db.clone()),
         ChecklistTemplateItemGateway::new(db.clone()),
         ChecklistAnswerGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
         UserGateway::new(db.clone()),
-        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())),
         WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db),
-    )
+        WorkOrderItemGateway::new(db.clone()),
+    ), KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {

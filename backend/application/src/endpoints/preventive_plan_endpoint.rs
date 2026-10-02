@@ -7,7 +7,8 @@ use crate::endpoints::json::error_response_json::{
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::preventive_plan_json::{
-    PreventiveAlertJson, PreventiveExtensionJson, PreventiveExtensionRequestJson, PreventivePlanJson, PreventiveWorkOrderJson,
+    PreventiveAlertJson, PreventiveExtensionJson, PreventiveExtensionRequestJson,
+    PreventivePlanJson, PreventiveWorkOrderJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -18,45 +19,56 @@ use business::commons::gateway::Gateway;
 use business::domain::authorization::{can_create_preventive_plan, can_read_preventive_plan};
 use business::domain::enums::{PreventiveControlType, PreventiveStatus};
 use business::domain::preventive_plan::PreventivePlan;
+use business::domain::preventive_plan_alert::PreventivePlanAlert;
 use business::domain::user::User;
 use business::gateway::preventive_plan_alert_gateway::PreventivePlanAlertGateway;
-use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
+use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use business::gateway::preventive_plan_gateway::{
+    PreventivePlanDatabaseGateway, PreventivePlanGateway,
+};
+use business::gateway::vehicle_gateway::VehicleGateway;
+use business::gateway::work_order_gateway::WorkOrderGateway;
+use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::preventive_plan_alert_use_case::{
     ALERT_INVALID, ALERT_NOT_FOUND, ALERT_NOT_PENDING, DUPLICATE_ALERT, PreventivePlanAlertUseCase,
 };
-use business::domain::preventive_plan_alert::PreventivePlanAlert;
-use business::gateway::vehicle_gateway::VehicleGateway;
-use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
-use business::gateway::work_order_gateway::WorkOrderGateway;
-use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::preventive_plan_use_case::{
-    DUPLICATE_PLAN, EXTENSION_DESCRIPTION_REQUIRED, EXTENSION_GRANT_INVALID, EXTENSION_ITEM_NOT_FOUND,
-    EXTENSION_ITEM_NOT_LINKED, EXTENSION_ITEM_NOT_PENDING, INTERVAL_REQUIRED, ORIGIN_ORDER_NOT_ON_VEHICLE, PLAN_NAME_REQUIRED, PLAN_NOT_DUE, PREVENTIVE_PLAN_NOT_FOUND,
-    PreventivePlanUseCase, VEHICLE_NOT_FOUND,
+    DUPLICATE_PLAN, EXTENSION_DESCRIPTION_REQUIRED, EXTENSION_GRANT_INVALID,
+    EXTENSION_ITEM_NOT_FOUND, EXTENSION_ITEM_NOT_LINKED, EXTENSION_ITEM_NOT_PENDING,
+    INTERVAL_REQUIRED, ORIGIN_ORDER_NOT_ON_VEHICLE, PLAN_NAME_REQUIRED, PLAN_NOT_DUE,
+    PREVENTIVE_PLAN_NOT_FOUND, PreventivePlanUseCase, VEHICLE_NOT_FOUND,
 };
 use std::str::FromStr;
 
 fn use_case(state: &AppState) -> PreventivePlanUseCase {
     let db = state.conn.as_ref().clone();
-    PreventivePlanUseCase::new(
+    PreventivePlanUseCase::new(PreventivePlanDatabaseGateway::new(
         PreventivePlanGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
         PreventivePlanExtensionGateway::new(db.clone()),
         business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
-    )
+    ))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         DUPLICATE_PLAN => ExceptionResponse::BadRequest(locale, ErrorKey::DuplicatePreventivePlan),
-        EXTENSION_ITEM_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound),
-        ORIGIN_ORDER_NOT_ON_VEHICLE | EXTENSION_GRANT_INVALID | EXTENSION_DESCRIPTION_REQUIRED | EXTENSION_ITEM_NOT_LINKED | EXTENSION_ITEM_NOT_PENDING => {
+        EXTENSION_ITEM_NOT_FOUND => {
+            ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound)
+        }
+        ORIGIN_ORDER_NOT_ON_VEHICLE
+        | EXTENSION_GRANT_INVALID
+        | EXTENSION_DESCRIPTION_REQUIRED
+        | EXTENSION_ITEM_NOT_LINKED
+        | EXTENSION_ITEM_NOT_PENDING => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
         PLAN_NOT_DUE => ExceptionResponse::BadRequest(locale, ErrorKey::PreventivePlanNotDue),
-        PREVENTIVE_PLAN_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound),
+        PREVENTIVE_PLAN_NOT_FOUND => {
+            ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound)
+        }
         VEHICLE_NOT_FOUND | PLAN_NAME_REQUIRED | INTERVAL_REQUIRED => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
@@ -64,7 +76,11 @@ fn error(locale: Locale, message: &str) -> ExceptionResponse {
     }
 }
 
-async fn json(state: &AppState, plan: PreventivePlan, status: PreventiveStatus) -> PreventivePlanJson {
+async fn json(
+    state: &AppState,
+    plan: PreventivePlan,
+    status: PreventiveStatus,
+) -> PreventivePlanJson {
     let vehicle_uuid = VehicleGateway::new(state.conn.as_ref().clone())
         .find_by_id(plan.vehicle_id)
         .await
@@ -120,7 +136,10 @@ pub async fn add(
     Json(payload): Json<PreventivePlanJson>,
 ) -> HttpResponse<(StatusCode, Json<PreventivePlanJson>)> {
     if !can_create_preventive_plan(&current_user, payload.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
 
     let mut tenant_id = payload.tenant_id;
@@ -184,12 +203,14 @@ pub async fn get_by_uuid(
     Extension(current_user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<PreventivePlanJson>> {
-    let (plan, status) = use_case(&state)
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+    let (plan, status) = use_case(&state).find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+    })?;
     if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     Ok(Json(json(&state, plan, status).await))
 }
@@ -253,17 +274,29 @@ pub async fn generate_work_order(
     let (plan, _) = use_case(&state)
         .find_by_uuid(uuid.clone())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     if !can_create_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
 
     match use_case(&state).generate_work_order(uuid).await {
         Ok((work_order, created)) => {
-            let status = if created { StatusCode::CREATED } else { StatusCode::OK };
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
             Ok((
                 status,
                 Json(PreventiveWorkOrderJson {
@@ -303,16 +336,30 @@ pub async fn extend(
     let (plan, _) = use_case(&state)
         .find_by_uuid(uuid.clone())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     if !can_create_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
 
     match use_case(&state)
-        .extend(uuid, payload.work_order_item_uuid, payload.inspection_km, payload.granted_km, payload.description)
+        .extend(
+            uuid,
+            payload.work_order_item_uuid,
+            payload.inspection_km,
+            payload.granted_km,
+            payload.description,
+        )
         .await
     {
         Ok(entry) => Ok((
@@ -355,21 +402,33 @@ pub async fn update(
     let (current, _) = use_case(&state)
         .find_by_uuid(uuid.clone())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, current.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     if !can_create_preventive_plan(&current_user, current.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
 
     let last_work_order_id = match payload.last_work_order_uuid {
         Some(order_uuid) => WorkOrderGateway::new(state.conn.as_ref().clone())
             .find_by_uuid(order_uuid)
             .await
-            .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?
+            .map_err(|_| {
+                ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+            })?
             .map(|m| m.id)
-            .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?
+            .ok_or_else(|| {
+                ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound)
+            })?
             .into(),
         None => None,
     };
@@ -405,13 +464,20 @@ fn alert_use_case(state: &AppState) -> PreventivePlanAlertUseCase {
 }
 
 fn alert_json(a: PreventivePlanAlert) -> PreventiveAlertJson {
-    PreventiveAlertJson { uuid: a.uuid, at_km: a.at_km, title: a.title, inspection_model: a.inspection_model }
+    PreventiveAlertJson {
+        uuid: a.uuid,
+        at_km: a.at_km,
+        title: a.title,
+        inspection_model: a.inspection_model,
+    }
 }
 
 fn alert_error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         ALERT_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventiveAlertNotFound),
-        PREVENTIVE_PLAN_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound),
+        PREVENTIVE_PLAN_NOT_FOUND => {
+            ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound)
+        }
         ALERT_INVALID | DUPLICATE_ALERT | ALERT_NOT_PENDING => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
@@ -445,14 +511,25 @@ pub async fn add_alert(
     let (plan, _) = use_case(&state)
         .find_by_uuid(uuid.clone())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     if !can_create_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
-    match alert_use_case(&state).add(uuid, payload.at_km, payload.title, payload.inspection_model).await {
+    match alert_use_case(&state)
+        .add(uuid, payload.at_km, payload.title, payload.inspection_model)
+        .await
+    {
         Ok(a) => Ok((StatusCode::CREATED, Json(alert_json(a)))),
         Err(e) => Err(alert_error(locale, &e.message)),
     }
@@ -480,9 +557,14 @@ pub async fn pending_alerts(
     let (plan, _) = use_case(&state)
         .find_by_uuid(uuid.clone())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+        .map_err(|_| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventivePlanNotFound,
+        ));
     }
     match alert_use_case(&state).pending(uuid).await {
         Ok(alerts) => Ok(Json(alerts.into_iter().map(alert_json).collect())),
@@ -516,12 +598,20 @@ pub async fn discharge_alert(
         .await
         .ok()
         .flatten()
-        .ok_or_else(|| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventiveAlertNotFound))?;
+        .ok_or_else(|| {
+            ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventiveAlertNotFound)
+        })?;
     if !can_read_preventive_plan(&current_user, alert.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventiveAlertNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::PreventiveAlertNotFound,
+        ));
     }
     if !can_create_preventive_plan(&current_user, alert.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PreventivePlanForbidden,
+        ));
     }
     match alert_use_case(&state).discharge(uuid).await {
         Ok(a) => Ok(Json(alert_json(a))),

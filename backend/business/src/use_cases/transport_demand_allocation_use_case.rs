@@ -1,14 +1,9 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
-use crate::domain::transport_demand_allocation::{
-    TransportDemandAllocation, TransportDemandAllocationEntityMapper,
-};
-use crate::gateway::transport_demand_allocation_gateway::TransportDemandAllocationGateway;
-use crate::gateway::user_gateway::UserGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use sea_orm::DbErr;
+use crate::domain::transport_demand_allocation::TransportDemandAllocation;
+use crate::gateway::transport_demand_allocation_gateway::TransportDemandAllocationStore;
+use crate::gateway::user_gateway::UserLookupStore;
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
 
 /// `HRMS-604`: `driver_id` does not name an active `Driver` of the
 /// allocation's own tenant. Same shape `transport_demand_use_case`/
@@ -16,25 +11,27 @@ use sea_orm::DbErr;
 pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this tenant";
 /// `vehicle_id` does not name a vehicle of the allocation's own tenant.
 /// `TRM-003`: an allocation's own days of the week, when given, must be readable.
-pub const DAYS_OF_WEEK_UNREADABLE: &str = "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
+pub const DAYS_OF_WEEK_UNREADABLE: &str =
+    "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 
 pub struct TransportDemandAllocationUseCase {
-    gateway: TransportDemandAllocationGateway,
-    users: UserGateway,
-    vehicles: VehicleGateway,
+    gateway: Box<dyn TransportDemandAllocationStore>,
+    users: Box<dyn UserLookupStore>,
+    vehicles: Box<dyn VehicleLookupStore>,
 }
 
 impl TransportDemandAllocationUseCase {
-    pub fn new(
-        gateway: TransportDemandAllocationGateway,
-        users: UserGateway,
-        vehicles: VehicleGateway,
-    ) -> Self {
+    pub fn new<G, U, V>(gateway: G, users: U, vehicles: V) -> Self
+    where
+        G: TransportDemandAllocationStore + 'static,
+        U: UserLookupStore + 'static,
+        V: VehicleLookupStore + 'static,
+    {
         Self {
-            gateway,
-            users,
-            vehicles,
+            gateway: Box::new(gateway),
+            users: Box::new(users),
+            vehicles: Box::new(vehicles),
         }
     }
 
@@ -46,12 +43,7 @@ impl TransportDemandAllocationUseCase {
         allocation: TransportDemandAllocation,
     ) -> Result<TransportDemandAllocation, BusinessError> {
         let allocation = self.validated(allocation).await?;
-        let entity = self
-            .gateway
-            .persist(allocation)
-            .await
-            .map_err(database_error)?;
-        Ok(TransportDemandAllocationEntityMapper::from_active_model(entity))
+        self.gateway.save(allocation).await
     }
 
     pub async fn update(
@@ -73,12 +65,7 @@ impl TransportDemandAllocationUseCase {
             ..allocation
         };
 
-        let entity = self
-            .gateway
-            .persist(updated)
-            .await
-            .map_err(database_error)?;
-        Ok(TransportDemandAllocationEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await
     }
 
     /// `driver_id` must be an active `Driver` of the allocation's own
@@ -88,33 +75,23 @@ impl TransportDemandAllocationUseCase {
         &self,
         allocation: TransportDemandAllocation,
     ) -> Result<TransportDemandAllocation, BusinessError> {
-        if allocation
-            .days_of_week
-            .as_deref()
-            .is_some_and(|d| !d.trim().is_empty() && crate::use_cases::effective_schedule::parse_days_of_week(d).is_none())
-        {
+        if allocation.days_of_week.as_deref().is_some_and(|d| {
+            !d.trim().is_empty()
+                && crate::use_cases::effective_schedule::parse_days_of_week(d).is_none()
+        }) {
             return Err(BusinessError::new(DAYS_OF_WEEK_UNREADABLE.to_string()));
         }
-        let driver = self
-            .users
-            .find_by_id(allocation.driver_id)
-            .await
-            .map_err(database_error)?;
+        let driver = self.users.get_by_id(allocation.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {
-            user.role == Role::Driver.to_string()
-                && user.enabled
-                && user.tenant_id == allocation.tenant_id
+            user.role == Role::Driver && user.enabled && user.tenant_id == allocation.tenant_id
         });
         if !is_valid_driver {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));
         }
 
-        let vehicle = self
-            .vehicles
-            .find_by_id(allocation.vehicle_id)
-            .await
-            .map_err(database_error)?;
-        let belongs_to_tenant = vehicle.is_some_and(|v| v.tenant_id == allocation.tenant_id);
+        let vehicle = self.vehicles.get_by_id(allocation.vehicle_id).await?;
+        let belongs_to_tenant =
+            vehicle.is_some_and(|vehicle| vehicle.tenant_id == allocation.tenant_id);
         if !belongs_to_tenant {
             return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
         }
@@ -123,23 +100,20 @@ impl TransportDemandAllocationUseCase {
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<TransportDemandAllocation, BusinessError> {
-        let entity = self.gateway.find_by_id(id).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(TransportDemandAllocationEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Allocation not found".to_string())),
-        }
+        self.gateway
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| BusinessError::new("Allocation not found".to_string()))
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<TransportDemandAllocation, BusinessError> {
-        let entity = self
-            .gateway
-            .find_by_uuid(uuid)
-            .await
-            .map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(TransportDemandAllocationEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Allocation not found".to_string())),
-        }
+    pub async fn find_by_uuid(
+        &self,
+        uuid: String,
+    ) -> Result<TransportDemandAllocation, BusinessError> {
+        self.gateway
+            .get_by_uuid(uuid)
+            .await?
+            .ok_or_else(|| BusinessError::new("Allocation not found".to_string()))
     }
 
     pub async fn history(
@@ -148,17 +122,8 @@ impl TransportDemandAllocationUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<TransportDemandAllocation>, u64), BusinessError> {
-        let (rows, total) = self
-            .gateway
-            .find_page_by_demand(demand_id, page, page_size)
+        self.gateway
+            .list_by_demand(demand_id, page, page_size)
             .await
-            .map_err(database_error)?;
-        Ok((TransportDemandAllocationEntityMapper::from_models(rows), total))
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[TransportDemandAllocationUseCase] {}", msg);
-    BusinessError::new(msg)
 }

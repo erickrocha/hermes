@@ -15,7 +15,7 @@ use business::gateway::fuel_gauge_setting_gateway::FuelGaugeSettingGateway;
 use business::use_cases::fuel_gauge_setting_use_case::FuelGaugeSettingUseCase;
 use business::use_cases::fuel_gauge_use_case::GaugeSettings;
 
-fn use_case(state: &AppState) -> FuelGaugeSettingUseCase {
+fn use_case(state: &AppState) -> FuelGaugeSettingUseCase<FuelGaugeSettingGateway> {
     FuelGaugeSettingUseCase::new(FuelGaugeSettingGateway::new(state.conn.as_ref().clone()))
 }
 

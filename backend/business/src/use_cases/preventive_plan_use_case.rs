@@ -1,55 +1,43 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::{PreventiveControlType, PreventiveStatus};
-use crate::domain::preventive_plan::{PreventivePlan, PreventivePlanEntityMapper};
-use crate::gateway::preventive_plan_gateway::PreventivePlanGateway;
-use crate::domain::enums::{WorkOrderOrigin, WorkOrderStatus};
-use crate::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
 use crate::domain::enums::WorkOrderItemStatus;
-use crate::domain::preventive_plan_extension::{PreventivePlanExtension, PreventivePlanExtensionEntityMapper};
-use crate::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
-use crate::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
+use crate::domain::enums::{PreventiveControlType, PreventiveStatus};
+use crate::domain::enums::{WorkOrderOrigin, WorkOrderStatus};
+use crate::domain::preventive_plan::PreventivePlan;
+use crate::domain::preventive_plan_extension::PreventivePlanExtension;
 use crate::domain::tenant_rule_setting::RuleSettings;
-use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::gateway::work_order_item_gateway::WorkOrderItemGateway;
-use crate::gateway::work_order_gateway::WorkOrderGateway;
+use crate::domain::work_order::WorkOrder;
+use crate::domain::work_order_item::WorkOrderItem;
+use crate::gateway::preventive_plan_gateway::PreventivePlanStore;
 use chrono::Duration;
-use sea_orm::DbErr;
 
 pub const PLAN_NAME_REQUIRED: &str = "A preventive plan needs a name";
-pub const INTERVAL_REQUIRED: &str = "The control type needs its matching interval (kilometres, days, or both)";
+pub const INTERVAL_REQUIRED: &str =
+    "The control type needs its matching interval (kilometres, days, or both)";
 pub const VEHICLE_NOT_FOUND: &str = "Vehicle not found";
 pub const DUPLICATE_PLAN: &str = "This vehicle already has a preventive plan with this name";
 pub const PREVENTIVE_PLAN_NOT_FOUND: &str = "Preventive plan not found";
-pub const EXTENSION_GRANT_INVALID: &str = "The granted kilometres must be positive and within the maximum extension";
-pub const EXTENSION_DESCRIPTION_REQUIRED: &str = "An extension needs a description of what was inspected";
-pub const EXTENSION_ITEM_NOT_LINKED: &str = "The work-order item is not linked to this preventive plan";
-pub const EXTENSION_ITEM_NOT_PENDING: &str = "Only a pending work-order item can be resolved by an extension";
+pub const EXTENSION_GRANT_INVALID: &str =
+    "The granted kilometres must be positive and within the maximum extension";
+pub const EXTENSION_DESCRIPTION_REQUIRED: &str =
+    "An extension needs a description of what was inspected";
+pub const EXTENSION_ITEM_NOT_LINKED: &str =
+    "The work-order item is not linked to this preventive plan";
+pub const EXTENSION_ITEM_NOT_PENDING: &str =
+    "Only a pending work-order item can be resolved by an extension";
 pub const EXTENSION_ITEM_NOT_FOUND: &str = "Work order item not found";
-pub const ORIGIN_ORDER_NOT_ON_VEHICLE: &str = "The originating work order does not belong to this plan's vehicle";
+pub const ORIGIN_ORDER_NOT_ON_VEHICLE: &str =
+    "The originating work order does not belong to this plan's vehicle";
 pub const PLAN_NOT_DUE: &str = "This preventive plan is not yet due";
 
 pub struct PreventivePlanUseCase {
-    gateway: PreventivePlanGateway,
-    vehicles: VehicleGateway,
-    work_orders: WorkOrderGateway,
-    items: WorkOrderItemGateway,
-    extensions: PreventivePlanExtensionGateway,
-    rules: TenantRuleSettingGateway,
+    store: Box<dyn PreventivePlanStore>,
 }
 
 impl PreventivePlanUseCase {
-    pub fn new(
-        gateway: PreventivePlanGateway,
-        vehicles: VehicleGateway,
-        work_orders: WorkOrderGateway,
-        items: WorkOrderItemGateway,
-        extensions: PreventivePlanExtensionGateway,
-        rules: TenantRuleSettingGateway,
-    ) -> Self {
-        Self { gateway, vehicles, work_orders, items, extensions, rules }
+    pub fn new<S: PreventivePlanStore + 'static>(store: S) -> Self {
+        Self {
+            store: Box::new(store),
+        }
     }
 
     /// `TRM-330`: edits a plan's control type, intervals and base (last
@@ -66,23 +54,30 @@ impl PreventivePlanUseCase {
         let new_cycle = edited.last_service_km != current.last_service_km
             || edited.last_service_date != current.last_service_date;
         if new_cycle && let Some(order_id) = edited.last_work_order_id {
-            let order = self.work_orders.find_by_id(order_id).await.map_err(database_error)?;
-            if !order.is_some_and(|o| o.vehicle_id == current.vehicle_id) {
+            let order = self.store.find_work_order(order_id).await?;
+            if !order.is_some_and(|order| order.vehicle_id == current.vehicle_id) {
                 return Err(BusinessError::new(ORIGIN_ORDER_NOT_ON_VEHICLE.to_string()));
             }
         }
         let plan = PreventivePlan {
-            last_work_order_id: if new_cycle { edited.last_work_order_id } else { current.last_work_order_id },
+            last_work_order_id: if new_cycle {
+                edited.last_work_order_id
+            } else {
+                current.last_work_order_id
+            },
             control_type: edited.control_type,
             interval_km: edited.interval_km,
             interval_days: edited.interval_days,
             last_service_km: edited.last_service_km,
             last_service_date: edited.last_service_date,
-            extension_limit_km: if new_cycle { None } else { current.extension_limit_km },
+            extension_limit_km: if new_cycle {
+                None
+            } else {
+                current.extension_limit_km
+            },
             ..current
         };
-        let entity = self.gateway.persist(plan).await.map_err(database_error)?;
-        Ok(PreventivePlanEntityMapper::from_active_model(entity))
+        self.store.save_plan(plan).await
     }
 
     /// `TRM-312…320`: extends a plan after a technical inspection, granting
@@ -103,28 +98,27 @@ impl PreventivePlanUseCase {
     ) -> Result<PreventivePlanExtension, BusinessError> {
         let description = description.trim().to_string();
         if description.is_empty() {
-            return Err(BusinessError::new(EXTENSION_DESCRIPTION_REQUIRED.to_string()));
+            return Err(BusinessError::new(
+                EXTENSION_DESCRIPTION_REQUIRED.to_string(),
+            ));
         }
 
         let (plan, _) = self.find_by_uuid(plan_uuid).await?;
-        let rules = self.rules.settings_for(plan.tenant_id).await.map_err(database_error)?;
-        if granted_km.is_nan() || granted_km <= 0.0 || granted_km > rules.preventive_max_extension_km {
+        let rules = self.store.rules(plan.tenant_id).await?;
+        if granted_km.is_nan()
+            || granted_km <= 0.0
+            || granted_km > rules.preventive_max_extension_km
+        {
             return Err(BusinessError::new(EXTENSION_GRANT_INVALID.to_string()));
         }
         let item = self
-            .items
-            .find_by_uuid(item_uuid)
-            .await
-            .map_err(database_error)?
-            .map(WorkOrderItemEntityMapper::from_model)
+            .store
+            .find_work_order_item(item_uuid)
+            .await?
             .ok_or_else(|| BusinessError::new(EXTENSION_ITEM_NOT_FOUND.to_string()))?;
         // `TRM-315`: linked to this plan, and the order is the plan's vehicle's.
-        let order = self
-            .work_orders
-            .find_by_id(item.work_order_id)
-            .await
-            .map_err(database_error)?;
-        let Some(order) = order.filter(|o| o.vehicle_id == plan.vehicle_id) else {
+        let order = self.store.find_work_order(item.work_order_id).await?;
+        let Some(order) = order.filter(|order| order.vehicle_id == plan.vehicle_id) else {
             return Err(BusinessError::new(EXTENSION_ITEM_NOT_LINKED.to_string()));
         };
         if item.preventive_plan_id != plan.id {
@@ -137,10 +131,9 @@ impl PreventivePlanUseCase {
         let inspection_km = match inspection_km {
             Some(km) => km,
             None => self
-                .vehicles
-                .find_by_id(plan.vehicle_id)
-                .await
-                .map_err(database_error)?
+                .store
+                .find_vehicle(plan.vehicle_id)
+                .await?
                 .and_then(|v| v.odometer_km)
                 .unwrap_or(order.odometer_km),
         };
@@ -166,15 +159,17 @@ impl PreventivePlanUseCase {
             updated_at: None,
             updated_by: None,
         };
-        let saved = self.extensions.persist(entry).await.map_err(database_error)?;
+        let saved = self.store.save_extension(entry).await?;
 
-        self.gateway
-            .persist(PreventivePlan { extension_limit_km: Some(limit), ..plan })
-            .await
-            .map_err(database_error)?;
+        self.store
+            .save_plan(PreventivePlan {
+                extension_limit_km: Some(limit),
+                ..plan
+            })
+            .await?;
 
-        self.items
-            .persist(WorkOrderItem {
+        self.store
+            .save_work_order_item(WorkOrderItem {
                 status: WorkOrderItemStatus::Resolved,
                 resolved_at: Some(chrono::Utc::now().naive_utc()),
                 resolution_description: Some(format!(
@@ -182,17 +177,20 @@ impl PreventivePlanUseCase {
                 )),
                 ..item
             })
-            .await
-            .map_err(database_error)?;
+            .await?;
 
-        let order = WorkOrderEntityMapper::from_model(order);
-        if !matches!(order.status, WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled) {
-            self.work_orders
-                .persist(WorkOrder { status: WorkOrderStatus::PartiallyResolved, ..order })
-                .await
-                .map_err(database_error)?;
+        if !matches!(
+            order.status,
+            WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled
+        ) {
+            self.store
+                .save_work_order(WorkOrder {
+                    status: WorkOrderStatus::PartiallyResolved,
+                    ..order
+                })
+                .await?;
         }
-        Ok(PreventivePlanExtensionEntityMapper::from_active_model(saved))
+        Ok(saved)
     }
 
     /// `TRM-306`: opens a work order for a plan that is overdue or needs
@@ -203,27 +201,25 @@ impl PreventivePlanUseCase {
     /// write a second odometer reading -- the same reason
     /// `ChecklistRunUseCase` bypasses it). The odometer is the vehicle's
     /// current one, `0.0` if none was ever recorded.
-    pub async fn generate_work_order(&self, uuid: String) -> Result<(WorkOrder, bool), BusinessError> {
+    pub async fn generate_work_order(
+        &self,
+        uuid: String,
+    ) -> Result<(WorkOrder, bool), BusinessError> {
         let (plan, status) = self.find_by_uuid(uuid).await?;
         if status == PreventiveStatus::Ok {
             return Err(BusinessError::new(PLAN_NOT_DUE.to_string()));
         }
         let plan_id = plan.id.unwrap_or_default();
 
-        let active = self
-            .work_orders
-            .find_active_by_preventive_plan(plan_id)
-            .await
-            .map_err(database_error)?;
+        let active = self.store.active_work_orders(plan_id).await?;
         if let Some(existing) = active.into_iter().next() {
-            return Ok((WorkOrderEntityMapper::from_model(existing), false));
+            return Ok((existing, false));
         }
 
         let odometer_km = self
-            .vehicles
-            .find_by_id(plan.vehicle_id)
-            .await
-            .map_err(database_error)?
+            .store
+            .find_vehicle(plan.vehicle_id)
+            .await?
             .and_then(|v| v.odometer_km)
             .unwrap_or(0.0);
         let work_order = WorkOrder {
@@ -253,14 +249,12 @@ impl PreventivePlanUseCase {
             updated_at: None,
             updated_by: None,
         };
-        let entity = self.work_orders.persist(work_order).await.map_err(database_error)?;
-        Ok((WorkOrderEntityMapper::from_active_model(entity), true))
+        Ok((self.store.save_work_order(work_order).await?, true))
     }
 
     pub async fn create(&self, plan: PreventivePlan) -> Result<PreventivePlan, BusinessError> {
         let plan = self.validated(plan).await?;
-        let entity = self.gateway.persist(plan).await.map_err(database_error)?;
-        Ok(PreventivePlanEntityMapper::from_active_model(entity))
+        self.store.save_plan(plan).await
     }
 
     async fn validated(&self, plan: PreventivePlan) -> Result<PreventivePlan, BusinessError> {
@@ -271,20 +265,15 @@ impl PreventivePlanUseCase {
 
         check_intervals(&plan)?;
 
-        let vehicle = self
-            .vehicles
-            .find_by_id(plan.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.store.find_vehicle(plan.vehicle_id).await?;
         if !vehicle.is_some_and(|v| v.tenant_id == plan.tenant_id) {
             return Err(BusinessError::new(VEHICLE_NOT_FOUND.to_string()));
         }
 
         let existing = self
-            .gateway
-            .find_by_vehicle_and_name(plan.vehicle_id, &plan_name)
-            .await
-            .map_err(database_error)?;
+            .store
+            .find_plan_by_vehicle_and_name(plan.vehicle_id, &plan_name)
+            .await?;
         if existing.is_some() {
             return Err(BusinessError::new(DUPLICATE_PLAN.to_string()));
         }
@@ -292,10 +281,12 @@ impl PreventivePlanUseCase {
         Ok(PreventivePlan { plan_name, ..plan })
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<(PreventivePlan, PreventiveStatus), BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        let plan = match entity {
-            Some(model) => PreventivePlanEntityMapper::from_model(model),
+    pub async fn find_by_uuid(
+        &self,
+        uuid: String,
+    ) -> Result<(PreventivePlan, PreventiveStatus), BusinessError> {
+        let plan = match self.store.find_plan(uuid).await? {
+            Some(plan) => plan,
             None => return Err(BusinessError::new(PREVENTIVE_PLAN_NOT_FOUND.to_string())),
         };
         let status = self.status_of(&plan).await?;
@@ -307,9 +298,9 @@ impl PreventivePlanUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<(PreventivePlan, PreventiveStatus)>, u64), BusinessError> {
-        let (rows, total) = self.gateway.find_page(page, page_size).await.map_err(database_error)?;
+        let (rows, total) = self.store.list_plans(page, page_size).await?;
         let mut plans = Vec::with_capacity(rows.len());
-        for plan in PreventivePlanEntityMapper::from_models(rows) {
+        for plan in rows {
             let status = self.status_of(&plan).await?;
             plans.push((plan, status));
         }
@@ -322,14 +313,15 @@ impl PreventivePlanUseCase {
     /// Missing data on one axis (no last service recorded yet) contributes no
     /// warning on that axis rather than a false "overdue."
     async fn status_of(&self, plan: &PreventivePlan) -> Result<PreventiveStatus, BusinessError> {
-        let vehicle = self
-            .vehicles
-            .find_by_id(plan.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.store.find_vehicle(plan.vehicle_id).await?;
         let current_km = vehicle.and_then(|v| v.odometer_km);
-        let rules = self.rules.settings_for(plan.tenant_id).await.map_err(database_error)?;
-        Ok(compute_status(plan, current_km, chrono::Utc::now().date_naive(), &rules))
+        let rules = self.store.rules(plan.tenant_id).await?;
+        Ok(compute_status(
+            plan,
+            current_km,
+            chrono::Utc::now().date_naive(),
+            &rules,
+        ))
     }
 }
 
@@ -341,34 +333,48 @@ fn compute_status(
 ) -> PreventiveStatus {
     let mut status = PreventiveStatus::Ok;
 
-    if matches!(plan.control_type, PreventiveControlType::Kilometers | PreventiveControlType::Both) {
+    if matches!(
+        plan.control_type,
+        PreventiveControlType::Kilometers | PreventiveControlType::Both
+    ) {
         // `TRM-316`: an active extension's limit replaces last + interval.
-        let next = plan.extension_limit_km.or(match (plan.last_service_km, plan.interval_km) {
-            (Some(last), Some(interval)) => Some(last + interval),
-            _ => None,
-        });
-        if let (Some(next), Some(current)) = (next, current_km) {
-            status = worse(status, if current >= next {
-                PreventiveStatus::Overdue
-            } else if current >= next - rules.preventive_attention_km_margin {
-                PreventiveStatus::Attention
-            } else {
-                PreventiveStatus::Ok
+        let next = plan
+            .extension_limit_km
+            .or(match (plan.last_service_km, plan.interval_km) {
+                (Some(last), Some(interval)) => Some(last + interval),
+                _ => None,
             });
+        if let (Some(next), Some(current)) = (next, current_km) {
+            status = worse(
+                status,
+                if current >= next {
+                    PreventiveStatus::Overdue
+                } else if current >= next - rules.preventive_attention_km_margin {
+                    PreventiveStatus::Attention
+                } else {
+                    PreventiveStatus::Ok
+                },
+            );
         }
     }
 
-    if matches!(plan.control_type, PreventiveControlType::Days | PreventiveControlType::Both)
-        && let (Some(last), Some(interval)) = (plan.last_service_date, plan.interval_days)
+    if matches!(
+        plan.control_type,
+        PreventiveControlType::Days | PreventiveControlType::Both
+    ) && let (Some(last), Some(interval)) = (plan.last_service_date, plan.interval_days)
     {
         let next = last + Duration::days(interval as i64);
-        status = worse(status, if today >= next {
-            PreventiveStatus::Overdue
-        } else if today >= next - Duration::days(rules.preventive_attention_days_margin as i64) {
-            PreventiveStatus::Attention
-        } else {
-            PreventiveStatus::Ok
-        });
+        status = worse(
+            status,
+            if today >= next {
+                PreventiveStatus::Overdue
+            } else if today >= next - Duration::days(rules.preventive_attention_days_margin as i64)
+            {
+                PreventiveStatus::Attention
+            } else {
+                PreventiveStatus::Ok
+            },
+        );
     }
 
     status
@@ -383,7 +389,11 @@ fn check_intervals(plan: &PreventivePlan) -> Result<(), BusinessError> {
         PreventiveControlType::Days => has_days,
         PreventiveControlType::Both => has_km && has_days,
     };
-    if satisfied { Ok(()) } else { Err(BusinessError::new(INTERVAL_REQUIRED.to_string())) }
+    if satisfied {
+        Ok(())
+    } else {
+        Err(BusinessError::new(INTERVAL_REQUIRED.to_string()))
+    }
 }
 
 /// `TRM-301`: a plan controlled by both counts as overdue if *either* axis
@@ -397,12 +407,6 @@ fn worse(a: PreventiveStatus, b: PreventiveStatus) -> PreventiveStatus {
         }
     }
     if rank(&b) > rank(&a) { b } else { a }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[PreventivePlanUseCase] {}", msg);
-    BusinessError::new(msg)
 }
 
 #[cfg(test)]
@@ -438,24 +442,48 @@ mod tests {
     #[test]
     fn kilometre_plan_goes_ok_then_attention_then_overdue() {
         let p = plan(PreventiveControlType::Kilometers);
-        assert_eq!(compute_status(&p, Some(55_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, Some(59_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, Some(60_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(
+            compute_status(&p, Some(55_000.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
+        assert_eq!(
+            compute_status(&p, Some(59_000.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Attention
+        );
+        assert_eq!(
+            compute_status(&p, Some(60_000.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
     }
 
     #[test]
     fn date_plan_goes_ok_then_attention_then_overdue() {
         let p = plan(PreventiveControlType::Days); // next = 2026-04-01
-        assert_eq!(compute_status(&p, None, day(2, 1), &RuleSettings::default()), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, None, day(3, 20), &RuleSettings::default()), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, None, day(4, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(
+            compute_status(&p, None, day(2, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
+        assert_eq!(
+            compute_status(&p, None, day(3, 20), &RuleSettings::default()),
+            PreventiveStatus::Attention
+        );
+        assert_eq!(
+            compute_status(&p, None, day(4, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
     }
 
     #[test]
     fn a_plan_controlled_by_both_takes_the_worse_axis() {
         let p = plan(PreventiveControlType::Both);
-        assert_eq!(compute_status(&p, Some(55_000.0), day(4, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
-        assert_eq!(compute_status(&p, Some(60_000.0), day(2, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(
+            compute_status(&p, Some(55_000.0), day(4, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
+        assert_eq!(
+            compute_status(&p, Some(60_000.0), day(2, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
     }
 
     #[test]
@@ -463,26 +491,53 @@ mod tests {
         let mut p = plan(PreventiveControlType::Both);
         p.last_service_km = None;
         p.last_service_date = None;
-        assert_eq!(compute_status(&p, Some(999_999.0), day(12, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        assert_eq!(
+            compute_status(&p, Some(999_999.0), day(12, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
         let p = plan(PreventiveControlType::Kilometers);
-        assert_eq!(compute_status(&p, None, day(12, 1), &RuleSettings::default()), PreventiveStatus::Ok);
+        assert_eq!(
+            compute_status(&p, None, day(12, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
     }
 
     #[test]
     fn an_active_extension_limit_replaces_last_plus_interval() {
         let mut p = plan(PreventiveControlType::Kilometers); // due at 60,000
-        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(
+            compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
         p.extension_limit_km = Some(65_000.0);
-        assert_eq!(compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
-        assert_eq!(compute_status(&p, Some(64_500.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Attention);
-        assert_eq!(compute_status(&p, Some(65_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Overdue);
+        assert_eq!(
+            compute_status(&p, Some(60_500.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
+        assert_eq!(
+            compute_status(&p, Some(64_500.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Attention
+        );
+        assert_eq!(
+            compute_status(&p, Some(65_000.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Overdue
+        );
     }
 
     #[test]
     fn a_tenant_can_widen_the_attention_margin() {
         let p = plan(PreventiveControlType::Kilometers); // due at 60,000
-        assert_eq!(compute_status(&p, Some(56_000.0), day(9, 1), &RuleSettings::default()), PreventiveStatus::Ok);
-        let cautious = RuleSettings { preventive_attention_km_margin: 5_000.0, ..RuleSettings::default() };
-        assert_eq!(compute_status(&p, Some(56_000.0), day(9, 1), &cautious), PreventiveStatus::Attention);
+        assert_eq!(
+            compute_status(&p, Some(56_000.0), day(9, 1), &RuleSettings::default()),
+            PreventiveStatus::Ok
+        );
+        let cautious = RuleSettings {
+            preventive_attention_km_margin: 5_000.0,
+            ..RuleSettings::default()
+        };
+        assert_eq!(
+            compute_status(&p, Some(56_000.0), day(9, 1), &cautious),
+            PreventiveStatus::Attention
+        );
     }
 }

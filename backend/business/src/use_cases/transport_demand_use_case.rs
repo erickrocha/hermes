@@ -1,13 +1,10 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::{DemandKind, Role};
+use crate::domain::transport_demand::TransportDemand;
+use crate::gateway::transport_demand_gateway::TransportDemandStore;
+use crate::gateway::user_gateway::UserLookupStore;
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
 use crate::use_cases::effective_schedule::parse_days_of_week;
-use crate::domain::transport_demand::{TransportDemand, TransportDemandEntityMapper};
-use crate::gateway::transport_demand_gateway::TransportDemandGateway;
-use crate::gateway::user_gateway::UserGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use sea_orm::DbErr;
 
 /// `HRMS-603`: `specific_driver_id` does not name an active `Driver` of the
 /// demand's own tenant. Same shape `vehicle_assignment_use_case::NOT_A_DRIVER`
@@ -16,29 +13,35 @@ pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this
 /// `specific_vehicle_id` does not name a vehicle of the demand's own tenant.
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 /// `TRM-003`: the days of the week must be readable.
-pub const DAYS_OF_WEEK_UNREADABLE: &str = "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
+pub const DAYS_OF_WEEK_UNREADABLE: &str =
+    "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
 /// A stated kind needs the field that makes it a day's work.
-pub const KIND_NEEDS_ITS_DAYS: &str = "A line needs its days of the week; a one-off trip needs its specific date";
+pub const KIND_NEEDS_ITS_DAYS: &str =
+    "A line needs its days of the week; a one-off trip needs its specific date";
 
 pub struct TransportDemandUseCase {
-    gateway: TransportDemandGateway,
-    users: UserGateway,
-    vehicles: VehicleGateway,
+    gateway: Box<dyn TransportDemandStore>,
+    users: Box<dyn UserLookupStore>,
+    vehicles: Box<dyn VehicleLookupStore>,
 }
 
 impl TransportDemandUseCase {
-    pub fn new(gateway: TransportDemandGateway, users: UserGateway, vehicles: VehicleGateway) -> Self {
+    pub fn new<G, U, V>(gateway: G, users: U, vehicles: V) -> Self
+    where
+        G: TransportDemandStore + 'static,
+        U: UserLookupStore + 'static,
+        V: VehicleLookupStore + 'static,
+    {
         Self {
-            gateway,
-            users,
-            vehicles,
+            gateway: Box::new(gateway),
+            users: Box::new(users),
+            vehicles: Box::new(vehicles),
         }
     }
 
     pub async fn create(&self, demand: TransportDemand) -> Result<TransportDemand, BusinessError> {
         let demand = self.validated(demand).await?;
-        let entity = self.gateway.persist(demand).await.map_err(database_error)?;
-        Ok(TransportDemandEntityMapper::from_active_model(entity))
+        self.gateway.save(demand).await
     }
 
     pub async fn update(
@@ -59,12 +62,7 @@ impl TransportDemandUseCase {
             ..demand
         };
 
-        let entity = self
-            .gateway
-            .persist(updated)
-            .await
-            .map_err(database_error)?;
-        Ok(TransportDemandEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await
     }
 
     /// A demand without a type is not a usable record. `specific_driver_id`
@@ -80,13 +78,18 @@ impl TransportDemandUseCase {
             return Err(BusinessError::new(msg));
         }
 
-        if demand.days_of_week.as_deref().is_some_and(|d| !d.trim().is_empty() && parse_days_of_week(d).is_none()) {
+        if demand
+            .days_of_week
+            .as_deref()
+            .is_some_and(|d| !d.trim().is_empty() && parse_days_of_week(d).is_none())
+        {
             return Err(BusinessError::new(DAYS_OF_WEEK_UNREADABLE.to_string()));
         }
         let needs_its_field = match demand.demand_kind {
-            Some(DemandKind::Line) | Some(DemandKind::ExtraLine) => {
-                !demand.days_of_week.as_deref().is_some_and(|d| parse_days_of_week(d).is_some())
-            }
+            Some(DemandKind::Line) | Some(DemandKind::ExtraLine) => !demand
+                .days_of_week
+                .as_deref()
+                .is_some_and(|d| parse_days_of_week(d).is_some()),
             Some(DemandKind::OneOffTrip) => demand.specific_date.is_none(),
             None => false,
         };
@@ -95,15 +98,9 @@ impl TransportDemandUseCase {
         }
 
         if let Some(driver_id) = demand.specific_driver_id {
-            let driver = self
-                .users
-                .find_by_id(driver_id)
-                .await
-                .map_err(database_error)?;
+            let driver = self.users.get_by_id(driver_id).await?;
             let is_valid_driver = driver.is_some_and(|user| {
-                user.role == Role::Driver.to_string()
-                    && user.enabled
-                    && user.tenant_id == demand.tenant_id
+                user.role == Role::Driver && user.enabled && user.tenant_id == demand.tenant_id
             });
             if !is_valid_driver {
                 return Err(BusinessError::new(NOT_A_DRIVER.to_string()));
@@ -111,13 +108,9 @@ impl TransportDemandUseCase {
         }
 
         if let Some(vehicle_id) = demand.specific_vehicle_id {
-            let vehicle = self
-                .vehicles
-                .find_by_id(vehicle_id)
-                .await
-                .map_err(database_error)?;
+            let vehicle = self.vehicles.get_by_id(vehicle_id).await?;
             let belongs_to_tenant =
-                vehicle.is_some_and(|v| v.tenant_id == demand.tenant_id);
+                vehicle.is_some_and(|vehicle| vehicle.tenant_id == demand.tenant_id);
             if !belongs_to_tenant {
                 return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
             }
@@ -130,23 +123,17 @@ impl TransportDemandUseCase {
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<TransportDemand, BusinessError> {
-        let entity = self.gateway.find_by_id(id).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(TransportDemandEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Transport demand not found".to_string())),
-        }
+        self.gateway
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| BusinessError::new("Transport demand not found".to_string()))
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<TransportDemand, BusinessError> {
-        let entity = self
-            .gateway
-            .find_by_uuid(uuid)
-            .await
-            .map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(TransportDemandEntityMapper::from_model(model)),
-            None => Err(BusinessError::new("Transport demand not found".to_string())),
-        }
+        self.gateway
+            .get_by_uuid(uuid)
+            .await?
+            .ok_or_else(|| BusinessError::new("Transport demand not found".to_string()))
     }
 
     pub async fn find_page(
@@ -155,17 +142,6 @@ impl TransportDemandUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<TransportDemand>, u64), BusinessError> {
-        let (entities, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(database_error)?;
-        Ok((TransportDemandEntityMapper::from_models(entities), total))
+        self.gateway.list_page(page, page_size, search).await
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[TransportDemandUseCase] {}", msg);
-    BusinessError::new(msg)
 }

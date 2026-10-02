@@ -1,13 +1,38 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::checklist_template::{ChecklistTemplate, ChecklistTemplateEntityMapper};
+use crate::domain::checklist_template_item::{
+    ChecklistTemplateItem, ChecklistTemplateItemEntityMapper,
+};
+use crate::gateway::checklist_template_item_gateway::ChecklistTemplateItemGateway;
 use entity::checklist_template_entity;
 use entity::prelude::ChecklistTemplateEntity as ChecklistTemplateQuery;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    TransactionTrait,
 };
+
+#[async_trait]
+pub trait ChecklistTemplateStore: Send + Sync {
+    async fn create(
+        &self,
+        template: ChecklistTemplate,
+        items: Vec<ChecklistTemplateItem>,
+    ) -> Result<(ChecklistTemplate, Vec<ChecklistTemplateItem>), BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ChecklistTemplate>, BusinessError>;
+    async fn list_items(
+        &self,
+        template_id: i64,
+    ) -> Result<Vec<ChecklistTemplateItem>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ChecklistTemplate>, u64), BusinessError>;
+}
 
 /// `HRMS-651` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -27,9 +52,104 @@ impl ChecklistTemplateGateway {
     }
 }
 
+pub struct ChecklistTemplateDatabaseGateway {
+    templates: ChecklistTemplateGateway,
+    items: ChecklistTemplateItemGateway,
+}
+
+impl ChecklistTemplateDatabaseGateway {
+    pub fn new(templates: ChecklistTemplateGateway, items: ChecklistTemplateItemGateway) -> Self {
+        Self { templates, items }
+    }
+}
+
 #[async_trait]
-impl Gateway<ChecklistTemplate, checklist_template_entity::Model, checklist_template_entity::ActiveModel>
-    for ChecklistTemplateGateway
+impl ChecklistTemplateStore for ChecklistTemplateDatabaseGateway {
+    async fn create(
+        &self,
+        template: ChecklistTemplate,
+        items: Vec<ChecklistTemplateItem>,
+    ) -> Result<(ChecklistTemplate, Vec<ChecklistTemplateItem>), BusinessError> {
+        let transaction = self.templates.db().begin().await.map_err(database_error)?;
+        let active = match ChecklistTemplateEntityMapper::build_active_model(template)
+            .save(&transaction)
+            .await
+        {
+            Ok(active) => active,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(database_error(error));
+            }
+        };
+        let template = ChecklistTemplateEntityMapper::from_active_model(active);
+        let mut saved_items = Vec::with_capacity(items.len());
+        for mut item in items {
+            item.checklist_template_id = template.id.unwrap_or_default();
+            match ChecklistTemplateItemEntityMapper::build_active_model(item)
+                .save(&transaction)
+                .await
+            {
+                Ok(active) => {
+                    saved_items.push(ChecklistTemplateItemEntityMapper::from_active_model(active))
+                }
+                Err(error) => {
+                    let _ = transaction.rollback().await;
+                    return Err(database_error(error));
+                }
+            }
+        }
+        transaction.commit().await.map_err(database_error)?;
+        Ok((template, saved_items))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ChecklistTemplate>, BusinessError> {
+        <ChecklistTemplateGateway as Gateway<
+            ChecklistTemplate,
+            checklist_template_entity::Model,
+            checklist_template_entity::ActiveModel,
+        >>::find_by_uuid(&self.templates, uuid)
+        .await
+        .map(|model| model.map(ChecklistTemplateEntityMapper::from_model))
+        .map_err(database_error)
+    }
+
+    async fn list_items(
+        &self,
+        template_id: i64,
+    ) -> Result<Vec<ChecklistTemplateItem>, BusinessError> {
+        self.items
+            .find_by_template(template_id)
+            .await
+            .map(ChecklistTemplateItemEntityMapper::from_models)
+            .map_err(database_error)
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ChecklistTemplate>, u64), BusinessError> {
+        self.templates
+            .find_page(page, page_size)
+            .await
+            .map(|(models, total)| (ChecklistTemplateEntityMapper::from_models(models), total))
+            .map_err(database_error)
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Database error: {error}");
+    log::error!("[ChecklistTemplateGateway] {message}");
+    BusinessError::new(message)
+}
+
+#[async_trait]
+impl
+    Gateway<
+        ChecklistTemplate,
+        checklist_template_entity::Model,
+        checklist_template_entity::ActiveModel,
+    > for ChecklistTemplateGateway
 {
     async fn persist(
         &self,
@@ -42,37 +162,44 @@ impl Gateway<ChecklistTemplate, checklist_template_entity::Model, checklist_temp
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
         tenant_delete(
-            ChecklistTemplateQuery::delete_many().filter(checklist_template_entity::Column::Id.eq(id)),
+            ChecklistTemplateQuery::delete_many()
+                .filter(checklist_template_entity::Column::Id.eq(id)),
             checklist_template_entity::Column::TenantId,
         )
         .exec(&self.db)
         .await
     }
 
-    async fn find_by_id(
-        &self,
-        id: i64,
-    ) -> Result<Option<checklist_template_entity::Model>, DbErr> {
-        tenant_select(ChecklistTemplateQuery::find(), checklist_template_entity::Column::TenantId)
-            .filter(checklist_template_entity::Column::Id.eq(id))
-            .one(&self.db)
-            .await
+    async fn find_by_id(&self, id: i64) -> Result<Option<checklist_template_entity::Model>, DbErr> {
+        tenant_select(
+            ChecklistTemplateQuery::find(),
+            checklist_template_entity::Column::TenantId,
+        )
+        .filter(checklist_template_entity::Column::Id.eq(id))
+        .one(&self.db)
+        .await
     }
 
     async fn find_by_uuid(
         &self,
         uuid: String,
     ) -> Result<Option<checklist_template_entity::Model>, DbErr> {
-        tenant_select(ChecklistTemplateQuery::find(), checklist_template_entity::Column::TenantId)
-            .filter(checklist_template_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
-            .one(&self.db)
-            .await
+        tenant_select(
+            ChecklistTemplateQuery::find(),
+            checklist_template_entity::Column::TenantId,
+        )
+        .filter(checklist_template_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+        .one(&self.db)
+        .await
     }
 
     async fn find_all(&self) -> Result<Vec<checklist_template_entity::Model>, DbErr> {
-        tenant_select(ChecklistTemplateQuery::find(), checklist_template_entity::Column::TenantId)
-            .all(&self.db)
-            .await
+        tenant_select(
+            ChecklistTemplateQuery::find(),
+            checklist_template_entity::Column::TenantId,
+        )
+        .all(&self.db)
+        .await
     }
 }
 
@@ -85,8 +212,11 @@ impl ChecklistTemplateGateway {
         page_size: u64,
     ) -> Result<(Vec<checklist_template_entity::Model>, u64), DbErr> {
         use sea_orm::QueryOrder;
-        let query = tenant_select(ChecklistTemplateQuery::find(), checklist_template_entity::Column::TenantId)
-            .order_by_desc(checklist_template_entity::Column::Id);
+        let query = tenant_select(
+            ChecklistTemplateQuery::find(),
+            checklist_template_entity::Column::TenantId,
+        )
+        .order_by_desc(checklist_template_entity::Column::Id);
         fetch_page(query, &self.db, page, page_size).await
     }
 }

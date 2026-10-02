@@ -16,13 +16,15 @@ use std::collections::HashMap;
 pub fn schedule_use_case(state: &AppState) -> EffectiveScheduleUseCase {
     let db = state.conn.as_ref().clone();
     EffectiveScheduleUseCase::new(
-        transport_demand_gateway::TransportDemandGateway::new(db.clone()),
-        transport_demand_allocation_gateway::TransportDemandAllocationGateway::new(db.clone()),
-        daily_schedule_gateway::DailyScheduleGateway::new(db.clone()),
-        schedule_exception_gateway::ScheduleExceptionGateway::new(db.clone()),
-        holiday_gateway::HolidayGateway::new(db.clone()),
-        customer_day_off_gateway::CustomerDayOffGateway::new(db.clone()),
-        extra_trip_gateway::ExtraTripGateway::new(db),
+        effective_schedule_gateway::EffectiveScheduleDatabaseGateway::new(
+            transport_demand_gateway::TransportDemandGateway::new(db.clone()),
+            transport_demand_allocation_gateway::TransportDemandAllocationGateway::new(db.clone()),
+            daily_schedule_gateway::DailyScheduleGateway::new(db.clone()),
+            schedule_exception_gateway::ScheduleExceptionGateway::new(db.clone()),
+            holiday_gateway::HolidayGateway::new(db.clone()),
+            customer_day_off_gateway::CustomerDayOffGateway::new(db.clone()),
+            extra_trip_gateway::ExtraTripGateway::new(db),
+        ),
     )
 }
 
@@ -58,13 +60,14 @@ pub async fn effective(
 
     // The schedule names demands, drivers and vehicles by id; the API names them by uuid.
     let db = state.conn.as_ref().clone();
-    let demands: HashMap<i64, String> = transport_demand_gateway::TransportDemandGateway::new(db.clone())
-        .find_all()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|d| (d.id, bytes_para_string(d.uuid)))
-        .collect();
+    let demands: HashMap<i64, String> =
+        transport_demand_gateway::TransportDemandGateway::new(db.clone())
+            .find_all()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| (d.id, bytes_para_string(d.uuid)))
+            .collect();
     let vehicles: HashMap<i64, String> = vehicle_gateway::VehicleGateway::new(db.clone())
         .find_all()
         .await
@@ -109,11 +112,13 @@ pub async fn effective(
             alerts: i
                 .alerts
                 .into_iter()
-                .map(|a| match a {
-                    ScheduleAlert::MissingDriver => "MissingDriver",
-                    ScheduleAlert::MissingVehicle => "MissingVehicle",
-                }
-                .to_string())
+                .map(|a| {
+                    match a {
+                        ScheduleAlert::MissingDriver => "MissingDriver",
+                        ScheduleAlert::MissingVehicle => "MissingVehicle",
+                    }
+                    .to_string()
+                })
                 .collect(),
         })
         .collect();

@@ -1,9 +1,29 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::transport_demand_allocation::{
     TransportDemandAllocation, TransportDemandAllocationEntityMapper,
 };
+
+#[async_trait]
+pub trait TransportDemandAllocationStore: Send + Sync {
+    async fn save(
+        &self,
+        allocation: TransportDemandAllocation,
+    ) -> Result<TransportDemandAllocation, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<TransportDemandAllocation>, BusinessError>;
+    async fn get_by_uuid(
+        &self,
+        uuid: String,
+    ) -> Result<Option<TransportDemandAllocation>, BusinessError>;
+    async fn list_by_demand(
+        &self,
+        demand_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<TransportDemandAllocation>, u64), BusinessError>;
+}
 use entity::prelude::TransportDemandAllocationEntity as AllocationQuery;
 use entity::transport_demand_allocation_entity;
 use sea_orm::prelude::async_trait::async_trait;
@@ -22,6 +42,71 @@ impl TransportDemandAllocationGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl TransportDemandAllocationStore for TransportDemandAllocationGateway {
+    async fn save(
+        &self,
+        allocation: TransportDemandAllocation,
+    ) -> Result<TransportDemandAllocation, BusinessError> {
+        let active_model = <Self as Gateway<
+            TransportDemandAllocation,
+            transport_demand_allocation_entity::Model,
+            transport_demand_allocation_entity::ActiveModel,
+        >>::persist(self, allocation)
+        .await
+        .map_err(database_error)?;
+        Ok(TransportDemandAllocationEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<TransportDemandAllocation>, BusinessError> {
+        let model = <Self as Gateway<
+            TransportDemandAllocation,
+            transport_demand_allocation_entity::Model,
+            transport_demand_allocation_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(TransportDemandAllocationEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(
+        &self,
+        uuid: String,
+    ) -> Result<Option<TransportDemandAllocation>, BusinessError> {
+        let model = <Self as Gateway<
+            TransportDemandAllocation,
+            transport_demand_allocation_entity::Model,
+            transport_demand_allocation_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(TransportDemandAllocationEntityMapper::from_model))
+    }
+
+    async fn list_by_demand(
+        &self,
+        demand_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<TransportDemandAllocation>, u64), BusinessError> {
+        let (models, total) = TransportDemandAllocationGateway::find_page_by_demand(
+            self,
+            demand_id,
+            page,
+            page_size,
+        )
+        .await
+        .map_err(database_error)?;
+        Ok((TransportDemandAllocationEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Transport allocation database error: {error}");
+    log::error!("[TransportDemandAllocationGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

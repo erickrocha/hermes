@@ -1,15 +1,14 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
-use crate::domain::extra_trip::{ExtraTrip, ExtraTripEntityMapper};
-use crate::gateway::customer_gateway::CustomerGateway;
-use crate::gateway::extra_trip_gateway::ExtraTripGateway;
-use crate::gateway::user_gateway::UserGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::use_cases::extra_trip_import::{ExtraTripImportError, TripImportRejection, TripRejectionReason};
+use crate::domain::extra_trip::ExtraTrip;
+use crate::gateway::customer_gateway::CustomerStore;
+use crate::gateway::extra_trip_gateway::{ExtraTripStore, ExtraTripStoreError};
+use crate::gateway::user_gateway::UserLookupStore;
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
+use crate::use_cases::extra_trip_import::{
+    ExtraTripImportError, TripImportRejection, TripRejectionReason,
+};
 use crate::use_cases::reference_import::{ImportOutcome, find_duplicate_keys};
-use sea_orm::{ActiveModelTrait, DbErr, SqlErr, TransactionTrait};
 
 /// `HRMS-607`/`D-24(d)`: this tenant already has a trip recorded with that
 /// order code on that date (`uq_extra_trip_tenant_code_date`). Answered 409.
@@ -23,24 +22,25 @@ pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to thi
 pub const NOT_A_TENANT_CUSTOMER: &str = "The customer named does not belong to this tenant";
 
 pub struct ExtraTripUseCase {
-    gateway: ExtraTripGateway,
-    users: UserGateway,
-    vehicles: VehicleGateway,
-    customers: CustomerGateway,
+    gateway: Box<dyn ExtraTripStore>,
+    users: Box<dyn UserLookupStore>,
+    vehicles: Box<dyn VehicleLookupStore>,
+    customers: Box<dyn CustomerStore>,
 }
 
 impl ExtraTripUseCase {
-    pub fn new(
-        gateway: ExtraTripGateway,
-        users: UserGateway,
-        vehicles: VehicleGateway,
-        customers: CustomerGateway,
-    ) -> Self {
+    pub fn new<G, U, V, C>(gateway: G, users: U, vehicles: V, customers: C) -> Self
+    where
+        G: ExtraTripStore + 'static,
+        U: UserLookupStore + 'static,
+        V: VehicleLookupStore + 'static,
+        C: CustomerStore + 'static,
+    {
         Self {
-            gateway,
-            users,
-            vehicles,
-            customers,
+            gateway: Box::new(gateway),
+            users: Box::new(users),
+            vehicles: Box::new(vehicles),
+            customers: Box::new(customers),
         }
     }
 
@@ -48,21 +48,19 @@ impl ExtraTripUseCase {
         let trip = self.validated(trip).await?;
         self.reject_duplicate(&trip.order_code, trip.trip_date, trip.tenant_id, None)
             .await?;
-        let entity = self.gateway.persist(trip).await.map_err(|e| {
-            if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                BusinessError::new(DUPLICATE_TRIP.to_string())
-            } else {
-                database_error(e)
-            }
-        })?;
-        Ok(ExtraTripEntityMapper::from_active_model(entity))
+        self.gateway.save(trip).await.map_err(store_error)
     }
 
     pub async fn update(&self, id: i64, trip: ExtraTrip) -> Result<ExtraTrip, BusinessError> {
         let existing = self.find_by_id(id).await?;
         let trip = self.validated(trip).await?;
-        self.reject_duplicate(&trip.order_code, trip.trip_date, existing.tenant_id, Some(id))
-            .await?;
+        self.reject_duplicate(
+            &trip.order_code,
+            trip.trip_date,
+            existing.tenant_id,
+            Some(id),
+        )
+        .await?;
 
         let updated = ExtraTrip {
             id: Some(id),
@@ -74,14 +72,7 @@ impl ExtraTripUseCase {
             ..trip
         };
 
-        let entity = self.gateway.persist(updated).await.map_err(|e| {
-            if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                BusinessError::new(DUPLICATE_TRIP.to_string())
-            } else {
-                database_error(e)
-            }
-        })?;
-        Ok(ExtraTripEntityMapper::from_active_model(entity))
+        self.gateway.save(updated).await.map_err(store_error)
     }
 
     /// The order code is required; every relation (`customer_id`,
@@ -97,21 +88,20 @@ impl ExtraTripUseCase {
         }
 
         if let Some(customer_id) = trip.customer_id {
-            let customer = self
-                .customers
-                .find_by_id(customer_id)
-                .await
-                .map_err(database_error)?;
+            let customer = self.customers.get_by_id(customer_id).await?;
             let belongs = customer.is_some_and(|c| c.tenant_id == trip.tenant_id);
             if !belongs {
                 return Err(BusinessError::new(NOT_A_TENANT_CUSTOMER.to_string()));
             }
         }
 
-        for driver_id in [trip.driver_id, trip.second_driver_id].into_iter().flatten() {
-            let driver = self.users.find_by_id(driver_id).await.map_err(database_error)?;
+        for driver_id in [trip.driver_id, trip.second_driver_id]
+            .into_iter()
+            .flatten()
+        {
+            let driver = self.users.get_by_id(driver_id).await?;
             let is_valid_driver = driver.is_some_and(|user| {
-                user.role == Role::Driver.to_string() && user.enabled && user.tenant_id == trip.tenant_id
+                user.role == Role::Driver && user.enabled && user.tenant_id == trip.tenant_id
             });
             if !is_valid_driver {
                 return Err(BusinessError::new(NOT_A_DRIVER.to_string()));
@@ -119,21 +109,14 @@ impl ExtraTripUseCase {
         }
 
         if let Some(vehicle_id) = trip.vehicle_id {
-            let vehicle = self
-                .vehicles
-                .find_by_id(vehicle_id)
-                .await
-                .map_err(database_error)?;
+            let vehicle = self.vehicles.get_by_id(vehicle_id).await?;
             let belongs = vehicle.is_some_and(|v| v.tenant_id == trip.tenant_id);
             if !belongs {
                 return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
             }
         }
 
-        Ok(ExtraTrip {
-            order_code,
-            ..trip
-        })
+        Ok(ExtraTrip { order_code, ..trip })
     }
 
     async fn reject_duplicate(
@@ -146,26 +129,23 @@ impl ExtraTripUseCase {
         let existing = self
             .gateway
             .find_by_code_and_date(order_code, trip_date, tenant_id)
-            .await
-            .map_err(database_error)?;
+            .await?;
         match existing {
-            Some(model) if Some(model.id) != editing => Err(BusinessError::new(DUPLICATE_TRIP.to_string())),
+            Some(trip) if trip.id != editing => Err(BusinessError::new(DUPLICATE_TRIP.to_string())),
             _ => Ok(()),
         }
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<ExtraTrip, BusinessError> {
-        let entity = self.gateway.find_by_id(id).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(ExtraTripEntityMapper::from_model(model)),
+        match self.gateway.find_by_id(id).await? {
+            Some(trip) => Ok(trip),
             None => Err(BusinessError::new("Trip not found".to_string())),
         }
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<ExtraTrip, BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(ExtraTripEntityMapper::from_model(model)),
+        match self.gateway.find_by_uuid(uuid).await? {
+            Some(trip) => Ok(trip),
             None => Err(BusinessError::new("Trip not found".to_string())),
         }
     }
@@ -176,12 +156,7 @@ impl ExtraTripUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<ExtraTrip>, u64), BusinessError> {
-        let (entities, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(database_error)?;
-        Ok((ExtraTripEntityMapper::from_models(entities), total))
+        self.gateway.find_page(page, page_size, search).await
     }
 
     /// `EPIC-SC-03-S02` (`HRMS-608`, `PD-027`): tudo ou nada -- see
@@ -189,13 +164,19 @@ impl ExtraTripUseCase {
     /// `create` runs (`validated`), so a driver, vehicle or customer outside
     /// the row's own tenant is rejected the same way whether the trip
     /// arrives one at a time or by the hundred.
-    pub async fn import(&self, rows: Vec<ExtraTrip>) -> Result<ImportOutcome, ExtraTripImportError> {
+    pub async fn import(
+        &self,
+        rows: Vec<ExtraTrip>,
+    ) -> Result<ImportOutcome, ExtraTripImportError> {
         let mut prepared = Vec::with_capacity(rows.len());
         let mut rejections = Vec::new();
 
         for (index, row) in rows.into_iter().enumerate() {
             if row.order_code.trim().is_empty() {
-                rejections.push(TripImportRejection::new(index, TripRejectionReason::OrderCodeRequired));
+                rejections.push(TripImportRejection::new(
+                    index,
+                    TripRejectionReason::OrderCodeRequired,
+                ));
                 continue;
             }
             match self.validated(row).await {
@@ -205,7 +186,12 @@ impl ExtraTripUseCase {
                         NOT_A_DRIVER => TripRejectionReason::NotADriver,
                         NOT_A_TENANT_VEHICLE => TripRejectionReason::NotATenantVehicle,
                         NOT_A_TENANT_CUSTOMER => TripRejectionReason::NotATenantCustomer,
-                        _ => return Err(ExtraTripImportError::unavailable("ExtraTripUseCase::import", e.message)),
+                        _ => {
+                            return Err(ExtraTripImportError::unavailable(
+                                "ExtraTripUseCase::import",
+                                e.message,
+                            ));
+                        }
                     };
                     rejections.push(TripImportRejection::new(index, reason));
                 }
@@ -232,47 +218,17 @@ impl ExtraTripUseCase {
         // PD-027 all-or-nothing: validation alone cannot promise it, so the
         // write itself is one transaction -- `CityUseCase::import`'s own
         // reasoning.
-        let transaction = self
-            .gateway
-            .db()
-            .begin()
-            .await
-            .map_err(|e| ExtraTripImportError::unavailable("ExtraTripUseCase::import", e))?;
-
-        let mut outcome = ImportOutcome::default();
-        for (_, mut row) in prepared {
-            // D-24(d): existing by order code + date, not code alone.
-            let existing = self
-                .gateway
-                .find_by_code_and_date(&row.order_code, row.trip_date, row.tenant_id)
-                .await
-                .map_err(|e| ExtraTripImportError::unavailable("ExtraTripUseCase::import", e))?;
-            match existing {
-                Some(found) => {
-                    row.id = Some(found.id);
-                    outcome.updated += 1;
-                }
-                None => outcome.created += 1,
-            }
-            if let Err(e) = ExtraTripEntityMapper::build_active_model(row)
-                .save(&transaction)
-                .await
-            {
-                let _ = transaction.rollback().await;
-                return Err(ExtraTripImportError::unavailable("ExtraTripUseCase::import", e));
-            }
-        }
-
-        transaction
-            .commit()
-            .await
-            .map_err(|e| ExtraTripImportError::unavailable("ExtraTripUseCase::import", e))?;
-        Ok(outcome)
+        let rows = prepared.into_iter().map(|(_, trip)| trip).collect();
+        let (created, updated) = self.gateway.import(rows).await.map_err(|error| {
+            ExtraTripImportError::unavailable("ExtraTripUseCase::import", error.message)
+        })?;
+        Ok(ImportOutcome { created, updated })
     }
 }
 
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[ExtraTripUseCase] {}", msg);
-    BusinessError::new(msg)
+fn store_error(error: ExtraTripStoreError) -> BusinessError {
+    match error {
+        ExtraTripStoreError::Duplicate => BusinessError::new(DUPLICATE_TRIP.to_string()),
+        ExtraTripStoreError::Storage(error) => error,
+    }
 }

@@ -1,44 +1,49 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::bytes_para_string;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::tenant_rule_setting::{RuleSettings, TenantRuleSetting, TenantRuleSettingEntityMapper};
-use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
-use sea_orm::DbErr;
+use crate::domain::tenant_rule_setting::RuleSettings;
+use crate::domain::tenant_rule_setting::TenantRuleSetting;
+use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingStore;
 
 pub const SETTING_INVALID: &str = "A rule threshold is outside its sensible range";
 
 /// `HRMS-954`: a tenant's rule thresholds.
-pub struct TenantRuleSettingUseCase {
-    gateway: TenantRuleSettingGateway,
+pub struct TenantRuleSettingUseCase<G: TenantRuleSettingStore> {
+    gateway: G,
 }
 
-impl TenantRuleSettingUseCase {
-    pub fn new(gateway: TenantRuleSettingGateway) -> Self {
+impl<G: TenantRuleSettingStore> TenantRuleSettingUseCase<G> {
+    pub fn new(gateway: G) -> Self {
         Self { gateway }
     }
 
     /// The tenant's own thresholds, or the legacy defaults when it has set none.
-    pub async fn current(&self, target_tenant_id: Option<i64>) -> Result<RuleSettings, BusinessError> {
-        self.gateway.settings_for(target_tenant_id).await.map_err(database_error)
+    pub async fn current(
+        &self,
+        target_tenant_id: Option<i64>,
+    ) -> Result<RuleSettings, BusinessError> {
+        let setting = self.gateway.get_current(target_tenant_id).await?;
+        Ok(setting
+            .map(|setting| setting.settings())
+            .unwrap_or_default())
     }
 
     /// Upserts the tenant's single row.
-    pub async fn configure(&self, setting: TenantRuleSetting) -> Result<TenantRuleSetting, BusinessError> {
+    pub async fn configure(
+        &self,
+        setting: TenantRuleSetting,
+    ) -> Result<TenantRuleSetting, BusinessError> {
         if !is_sensible(&setting.settings()) {
             return Err(BusinessError::new(SETTING_INVALID.to_string()));
         }
-        let existing = self.gateway.find_current(setting.tenant_id).await.map_err(database_error)?;
+        let existing = self.gateway.get_current(setting.tenant_id).await?;
         let setting = match existing {
-            Some(model) => TenantRuleSetting {
-                id: Some(model.id),
-                uuid: Some(bytes_para_string(model.uuid)),
+            Some(existing) => TenantRuleSetting {
+                id: existing.id,
+                uuid: existing.uuid,
                 ..setting
             },
             None => setting,
         };
-        let saved = self.gateway.persist(setting).await.map_err(database_error)?;
-        Ok(TenantRuleSettingEntityMapper::from_active_model(saved))
+        self.gateway.save(setting).await
     }
 }
 
@@ -85,12 +90,6 @@ pub fn is_sensible(s: &RuleSettings) -> bool {
         && s.garage_monitor_matrix_columns > 0
         && s.garage_fuelling_freshness_hours > 0
         && s.garage_utc_offset_minutes.abs() <= 14 * 60
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[TenantRuleSettingUseCase] {}", msg);
-    BusinessError::new(msg)
 }
 
 #[cfg(test)]

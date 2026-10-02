@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::fuel_entry::{FuelEntry, FuelEntryEntityMapper};
 use entity::fuel_entry_entity;
 use entity::prelude::FuelEntryEntity as FuelEntryQuery;
@@ -9,6 +10,57 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait FuelEntryReadStore: Send + Sync {
+    async fn has_entries(&self) -> Result<bool, BusinessError>;
+    async fn reports_from(
+        &self,
+        from: chrono::NaiveDateTime,
+    ) -> Result<Vec<FuelEntry>, BusinessError>;
+}
+
+#[async_trait]
+pub trait FuelGaugeFuelStore: Send + Sync {
+    async fn entries_for_vehicle(&self, vehicle_id: i64) -> Result<Vec<FuelEntry>, BusinessError>;
+}
+
+#[async_trait]
+pub trait FuelEntryStore: Send + Sync {
+    async fn save(&self, entry: FuelEntry) -> Result<FuelEntry, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<FuelEntry>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<FuelEntry>, u64), BusinessError>;
+    async fn find_report(
+        &self,
+        from: Option<chrono::NaiveDateTime>,
+        to: Option<chrono::NaiveDateTime>,
+        vehicle_id: Option<i64>,
+        station: Option<String>,
+    ) -> Result<Vec<FuelEntry>, BusinessError>;
+    async fn get_last_deleted_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<FuelEntry>, BusinessError>;
+}
+
+#[async_trait]
+pub trait FuelSyncStore: FuelEntryStore {
+    async fn get_by_id(&self, id: i64) -> Result<Option<FuelEntry>, BusinessError>;
+    async fn get_by_provider_transaction_id(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<FuelEntry>, BusinessError>;
+    async fn find_unreconciled_driver_entries(
+        &self,
+        vehicle_id: i64,
+        from: chrono::NaiveDateTime,
+        to: chrono::NaiveDateTime,
+    ) -> Result<Vec<FuelEntry>, BusinessError>;
+}
 
 /// `HRMS-942` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +72,137 @@ impl FuelEntryGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl FuelEntryStore for FuelEntryGateway {
+    async fn save(&self, entry: FuelEntry) -> Result<FuelEntry, BusinessError> {
+        let active_model = <Self as Gateway<
+            FuelEntry,
+            fuel_entry_entity::Model,
+            fuel_entry_entity::ActiveModel,
+        >>::persist(self, entry)
+        .await
+        .map_err(database_error)?;
+        Ok(FuelEntryEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<FuelEntry>, BusinessError> {
+        let model = <Self as Gateway<
+            FuelEntry,
+            fuel_entry_entity::Model,
+            fuel_entry_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(FuelEntryEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<FuelEntry>, u64), BusinessError> {
+        let (models, total) = FuelEntryGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((FuelEntryEntityMapper::from_models(models), total))
+    }
+
+    async fn find_report(
+        &self,
+        from: Option<chrono::NaiveDateTime>,
+        to: Option<chrono::NaiveDateTime>,
+        vehicle_id: Option<i64>,
+        station: Option<String>,
+    ) -> Result<Vec<FuelEntry>, BusinessError> {
+        let models = FuelEntryGateway::find_report(self, from, to, vehicle_id, station)
+            .await
+            .map_err(database_error)?;
+        Ok(FuelEntryEntityMapper::from_models(models))
+    }
+
+    async fn get_last_deleted_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<FuelEntry>, BusinessError> {
+        let model = FuelEntryGateway::find_last_deleted_by_vehicle(self, vehicle_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(FuelEntryEntityMapper::from_model))
+    }
+}
+
+#[async_trait]
+impl FuelSyncStore for FuelEntryGateway {
+    async fn get_by_id(&self, id: i64) -> Result<Option<FuelEntry>, BusinessError> {
+        let model = <Self as Gateway<
+            FuelEntry,
+            fuel_entry_entity::Model,
+            fuel_entry_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(FuelEntryEntityMapper::from_model))
+    }
+
+    async fn get_by_provider_transaction_id(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<FuelEntry>, BusinessError> {
+        let model = FuelEntryGateway::find_by_provider_transaction_id(self, transaction_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(FuelEntryEntityMapper::from_model))
+    }
+
+    async fn find_unreconciled_driver_entries(
+        &self,
+        vehicle_id: i64,
+        from: chrono::NaiveDateTime,
+        to: chrono::NaiveDateTime,
+    ) -> Result<Vec<FuelEntry>, BusinessError> {
+        let models = FuelEntryGateway::find_unreconciled_driver_entries(self, vehicle_id, from, to)
+            .await
+            .map_err(database_error)?;
+        Ok(FuelEntryEntityMapper::from_models(models))
+    }
+}
+
+#[async_trait]
+impl FuelEntryReadStore for FuelEntryGateway {
+    async fn has_entries(&self) -> Result<bool, BusinessError> {
+        self.find_page(0, 1)
+            .await
+            .map(|(_, total)| total > 0)
+            .map_err(database_error)
+    }
+
+    async fn reports_from(
+        &self,
+        from: chrono::NaiveDateTime,
+    ) -> Result<Vec<FuelEntry>, BusinessError> {
+        self.find_report(Some(from), None, None, None)
+            .await
+            .map(FuelEntryEntityMapper::from_models)
+            .map_err(database_error)
+    }
+}
+
+#[async_trait]
+impl FuelGaugeFuelStore for FuelEntryGateway {
+    async fn entries_for_vehicle(&self, vehicle_id: i64) -> Result<Vec<FuelEntry>, BusinessError> {
+        self.find_report(None, None, Some(vehicle_id), None)
+            .await
+            .map(FuelEntryEntityMapper::from_models)
+            .map_err(database_error)
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Fuel entry database error: {error}");
+    log::error!("[FuelEntryGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

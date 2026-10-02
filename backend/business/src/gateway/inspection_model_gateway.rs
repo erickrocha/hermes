@@ -1,11 +1,28 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::inspection_model::{InspectionModel, InspectionModelEntityMapper};
 use entity::prelude::InspectionModelEntity as Query;
 use entity::inspection_model_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
+
+#[async_trait]
+pub trait InspectionModelStore: Send + Sync {
+    async fn save(&self, model: InspectionModel) -> Result<InspectionModel, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<InspectionModel>, BusinessError>;
+    async fn find_by_name(
+        &self,
+        name: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<InspectionModel>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<InspectionModel>, u64), BusinessError>;
+}
 
 /// `HRMS-715` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`.
@@ -33,6 +50,59 @@ impl InspectionModelGateway {
             .one(&self.db)
             .await
     }
+}
+
+#[async_trait]
+impl InspectionModelStore for InspectionModelGateway {
+    async fn save(&self, model: InspectionModel) -> Result<InspectionModel, BusinessError> {
+        let active_model = <Self as Gateway<
+            InspectionModel,
+            inspection_model_entity::Model,
+            inspection_model_entity::ActiveModel,
+        >>::persist(self, model)
+        .await
+        .map_err(database_error)?;
+        Ok(InspectionModelEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<InspectionModel>, BusinessError> {
+        let model = <Self as Gateway<
+            InspectionModel,
+            inspection_model_entity::Model,
+            inspection_model_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(InspectionModelEntityMapper::from_model))
+    }
+
+    async fn find_by_name(
+        &self,
+        name: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<InspectionModel>, BusinessError> {
+        let model = InspectionModelGateway::find_by_name(self, name, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(InspectionModelEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<InspectionModel>, u64), BusinessError> {
+        let (models, total) = InspectionModelGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((InspectionModelEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Inspection model database error: {error}");
+    log::error!("[InspectionModelGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

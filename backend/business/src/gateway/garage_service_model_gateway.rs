@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::garage_service_model::{GarageServiceModel, GarageServiceModelEntityMapper};
 use entity::prelude::GarageServiceModelEntity as GarageServiceModelQuery;
 use entity::garage_service_model_entity;
@@ -9,6 +10,23 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait GarageServiceModelStore: Send + Sync {
+    async fn save(&self, model: GarageServiceModel) -> Result<GarageServiceModel, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<GarageServiceModel>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<GarageServiceModel>, BusinessError>;
+    async fn find_by_key(
+        &self,
+        name_key: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<GarageServiceModel>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<GarageServiceModel>, u64), BusinessError>;
+}
 
 /// `HRMS-956` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +38,70 @@ impl GarageServiceModelGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl GarageServiceModelStore for GarageServiceModelGateway {
+    async fn save(&self, model: GarageServiceModel) -> Result<GarageServiceModel, BusinessError> {
+        let active_model = <Self as Gateway<
+            GarageServiceModel,
+            garage_service_model_entity::Model,
+            garage_service_model_entity::ActiveModel,
+        >>::persist(self, model)
+        .await
+        .map_err(database_error)?;
+        Ok(GarageServiceModelEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<GarageServiceModel>, BusinessError> {
+        let model = <Self as Gateway<
+            GarageServiceModel,
+            garage_service_model_entity::Model,
+            garage_service_model_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(GarageServiceModelEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<GarageServiceModel>, BusinessError> {
+        let model = <Self as Gateway<
+            GarageServiceModel,
+            garage_service_model_entity::Model,
+            garage_service_model_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(GarageServiceModelEntityMapper::from_model))
+    }
+
+    async fn find_by_key(
+        &self,
+        name_key: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<GarageServiceModel>, BusinessError> {
+        let model = GarageServiceModelGateway::find_by_key(self, name_key, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(GarageServiceModelEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<GarageServiceModel>, u64), BusinessError> {
+        let (models, total) = GarageServiceModelGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((GarageServiceModelEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Garage service database error: {error}");
+    log::error!("[GarageServiceModelGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

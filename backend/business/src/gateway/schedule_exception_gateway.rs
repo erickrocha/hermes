@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::schedule_exception::{ScheduleException, ScheduleExceptionEntityMapper};
 use entity::prelude::ScheduleExceptionEntity as ExceptionQuery;
 use entity::schedule_exception_entity;
@@ -9,6 +10,19 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait ScheduleExceptionStore: Send + Sync {
+    async fn save(&self, exception: ScheduleException) -> Result<ScheduleException, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ScheduleException>, BusinessError>;
+    async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError>;
+    async fn list_by_demand(
+        &self,
+        demand_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ScheduleException>, u64), BusinessError>;
+}
 
 /// `HRMS-606` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +34,65 @@ impl ScheduleExceptionGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl ScheduleExceptionStore for ScheduleExceptionGateway {
+    async fn save(&self, exception: ScheduleException) -> Result<ScheduleException, BusinessError> {
+        let active_model = <Self as Gateway<
+            ScheduleException,
+            schedule_exception_entity::Model,
+            schedule_exception_entity::ActiveModel,
+        >>::persist(self, exception)
+        .await
+        .map_err(database_error)?;
+        Ok(ScheduleExceptionEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ScheduleException>, BusinessError> {
+        let model = <Self as Gateway<
+            ScheduleException,
+            schedule_exception_entity::Model,
+            schedule_exception_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(ScheduleExceptionEntityMapper::from_model))
+    }
+
+    async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
+        <Self as Gateway<
+            ScheduleException,
+            schedule_exception_entity::Model,
+            schedule_exception_entity::ActiveModel,
+        >>::delete_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(())
+    }
+
+    async fn list_by_demand(
+        &self,
+        demand_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ScheduleException>, u64), BusinessError> {
+        let (models, total) = ScheduleExceptionGateway::find_page_by_demand(
+            self,
+            demand_id,
+            page,
+            page_size,
+        )
+        .await
+        .map_err(database_error)?;
+        Ok((ScheduleExceptionEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Schedule exception database error: {error}");
+    log::error!("[ScheduleExceptionGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

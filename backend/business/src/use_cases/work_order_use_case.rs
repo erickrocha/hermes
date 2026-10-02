@@ -1,54 +1,36 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::{KmOrigin, WorkOrderItemStatus, WorkOrderOrigin, WorkOrderStatus};
 use crate::domain::km_evolution::KmEvolution;
-use crate::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
-use crate::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
-use crate::domain::preventive_plan::{PreventivePlan, PreventivePlanEntityMapper};
-use crate::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
-use crate::gateway::preventive_plan_gateway::PreventivePlanGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::gateway::work_order_gateway::WorkOrderGateway;
-use crate::gateway::work_order_item_gateway::WorkOrderItemGateway;
+use crate::domain::preventive_plan::PreventivePlan;
+use crate::domain::work_order::WorkOrder;
+use crate::domain::work_order_item::WorkOrderItem;
+use crate::gateway::work_order_gateway::WorkOrderWorkflowStore;
 use crate::use_cases::km_evolution_use_case::KmEvolutionUseCase;
 use chrono::Utc;
-use sea_orm::DbErr;
 
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 pub const DESCRIPTION_REQUIRED: &str = "A work order needs a description";
 pub const NEGATIVE_ODOMETER: &str = "Odometer reading cannot be negative";
 pub const ITEM_DESCRIPTION_REQUIRED: &str = "A work order item needs a description";
 pub const WORK_ORDER_NOT_FOUND: &str = "Work order not found";
-pub const PLAN_NOT_ON_THIS_VEHICLE: &str = "The preventive plan does not belong to this work order's vehicle";
+pub const PLAN_NOT_ON_THIS_VEHICLE: &str =
+    "The preventive plan does not belong to this work order's vehicle";
 pub const ITEM_NOT_FOUND: &str = "Work order item not found";
 pub const ITEM_NOT_ON_THIS_WORK_ORDER: &str = "This item does not belong to the named work order";
 
 pub struct WorkOrderUseCase {
-    gateway: WorkOrderGateway,
-    items: WorkOrderItemGateway,
-    vehicles: VehicleGateway,
+    store: Box<dyn WorkOrderWorkflowStore>,
     km_evolution: KmEvolutionUseCase,
-    plans: PreventivePlanGateway,
-    extensions: PreventivePlanExtensionGateway,
 }
 
 impl WorkOrderUseCase {
-    pub fn new(
-        gateway: WorkOrderGateway,
-        items: WorkOrderItemGateway,
-        vehicles: VehicleGateway,
+    pub fn new<S: WorkOrderWorkflowStore + 'static>(
+        store: S,
         km_evolution: KmEvolutionUseCase,
-        plans: PreventivePlanGateway,
-        extensions: PreventivePlanExtensionGateway,
     ) -> Self {
         Self {
-            gateway,
-            items,
-            vehicles,
+            store: Box::new(store),
             km_evolution,
-            plans,
-            extensions,
         }
     }
 
@@ -59,8 +41,7 @@ impl WorkOrderUseCase {
     /// `KmOrigin::DriverChecklist`, here for `KmOrigin::WorkOrder`.
     pub async fn create(&self, work_order: WorkOrder) -> Result<WorkOrder, BusinessError> {
         let work_order = self.validated(work_order).await?;
-        let entity = self.gateway.persist(work_order).await.map_err(database_error)?;
-        let saved = WorkOrderEntityMapper::from_active_model(entity);
+        let saved = self.store.save_work_order(work_order).await?;
 
         let reading = KmEvolution {
             id: None,
@@ -93,11 +74,7 @@ impl WorkOrderUseCase {
             return Err(BusinessError::new(NEGATIVE_ODOMETER.to_string()));
         }
 
-        let vehicle = self
-            .vehicles
-            .find_by_id(work_order.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.store.find_vehicle(work_order.vehicle_id).await?;
         if !vehicle.is_some_and(|v| v.tenant_id == work_order.tenant_id) {
             return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
         }
@@ -114,17 +91,15 @@ impl WorkOrderUseCase {
         &self,
         uuid: String,
     ) -> Result<(WorkOrder, Vec<WorkOrderItem>), BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        let work_order = match entity {
-            Some(model) => WorkOrderEntityMapper::from_model(model),
+        let work_order = match self.store.find_work_order_by_uuid(uuid).await? {
+            Some(work_order) => work_order,
             None => return Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string())),
         };
         let items = self
-            .items
-            .find_by_work_order(work_order.id.unwrap_or_default())
-            .await
-            .map_err(database_error)?;
-        Ok((work_order, WorkOrderItemEntityMapper::from_models(items)))
+            .store
+            .list_work_order_items(work_order.id.unwrap_or_default())
+            .await?;
+        Ok((work_order, items))
     }
 
     /// `HRMS-701`/`TRM-203`: adding an item and recomputing the parent
@@ -141,14 +116,14 @@ impl WorkOrderUseCase {
             return Err(BusinessError::new(ITEM_DESCRIPTION_REQUIRED.to_string()));
         }
 
-        let existing = self.gateway.find_by_id(work_order_id).await.map_err(database_error)?;
+        let existing = self.store.find_work_order(work_order_id).await?;
         let Some(existing) = existing else {
             return Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string()));
         };
-        let work_order = WorkOrderEntityMapper::from_model(existing);
+        let work_order = existing;
 
         if let Some(plan_id) = item.preventive_plan_id {
-            let plan = self.plans.find_by_id(plan_id).await.map_err(database_error)?;
+            let plan = self.store.find_preventive_plan(plan_id).await?;
             if !plan.is_some_and(|p| p.vehicle_id == work_order.vehicle_id) {
                 return Err(BusinessError::new(PLAN_NOT_ON_THIS_VEHICLE.to_string()));
             }
@@ -160,29 +135,20 @@ impl WorkOrderUseCase {
             description,
             ..item
         };
-        let entity = self.items.persist(item).await.map_err(database_error)?;
-        let saved_item = WorkOrderItemEntityMapper::from_active_model(entity);
+        let saved_item = self.store.save_work_order_item(item).await?;
 
-        let all_items = self
-            .items
-            .find_by_work_order(work_order_id)
-            .await
-            .map_err(database_error)?;
-        let all_items = WorkOrderItemEntityMapper::from_models(all_items);
+        let all_items = self.store.list_work_order_items(work_order_id).await?;
 
         let new_status = Self::recompute_status(&work_order.status, &saved_item, &all_items);
         let updated_work_order = if new_status == work_order.status {
             work_order
         } else {
-            let entity = self
-                .gateway
-                .persist(WorkOrder {
+            self.store
+                .save_work_order(WorkOrder {
                     status: new_status,
                     ..work_order
                 })
-                .await
-                .map_err(database_error)?;
-            WorkOrderEntityMapper::from_active_model(entity)
+                .await?
         };
 
         Ok((updated_work_order, saved_item))
@@ -200,16 +166,26 @@ impl WorkOrderUseCase {
         new_item: &WorkOrderItem,
         items: &[WorkOrderItem],
     ) -> WorkOrderStatus {
-        let terminal = matches!(current, WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled);
+        let terminal = matches!(
+            current,
+            WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled
+        );
         if terminal && new_item.status != WorkOrderItemStatus::Pending {
             return current.clone();
         }
 
-        let any_awaiting_parts = items.iter().any(|i| i.status == WorkOrderItemStatus::AwaitingParts);
-        let any_pending = items.iter().any(|i| i.status == WorkOrderItemStatus::Pending);
-        let any_settled = items
+        let any_awaiting_parts = items
             .iter()
-            .any(|i| matches!(i.status, WorkOrderItemStatus::Resolved | WorkOrderItemStatus::Cancelled));
+            .any(|i| i.status == WorkOrderItemStatus::AwaitingParts);
+        let any_pending = items
+            .iter()
+            .any(|i| i.status == WorkOrderItemStatus::Pending);
+        let any_settled = items.iter().any(|i| {
+            matches!(
+                i.status,
+                WorkOrderItemStatus::Resolved | WorkOrderItemStatus::Cancelled
+            )
+        });
 
         if any_awaiting_parts {
             WorkOrderStatus::AwaitingParts
@@ -256,7 +232,10 @@ impl WorkOrderUseCase {
     /// work order's own status is recomputed, which is `TRM-649`'s "move
     /// from awaiting-part to in-execution" the moment no item still awaits
     /// one.
-    pub async fn resolve_purchase_pendency(&self, item_id: i64) -> Result<WorkOrder, BusinessError> {
+    pub async fn resolve_purchase_pendency(
+        &self,
+        item_id: i64,
+    ) -> Result<WorkOrder, BusinessError> {
         let item = self.loaded_item(item_id).await?;
         let work_order = self.loaded(item.work_order_id).await?;
 
@@ -277,17 +256,17 @@ impl WorkOrderUseCase {
     }
 
     async fn loaded(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
-        let existing = self.gateway.find_by_id(work_order_id).await.map_err(database_error)?;
+        let existing = self.store.find_work_order(work_order_id).await?;
         match existing {
-            Some(model) => Ok(WorkOrderEntityMapper::from_model(model)),
+            Some(work_order) => Ok(work_order),
             None => Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string())),
         }
     }
 
     async fn loaded_item(&self, item_id: i64) -> Result<WorkOrderItem, BusinessError> {
-        let existing = self.items.find_by_id(item_id).await.map_err(database_error)?;
+        let existing = self.store.find_work_order_item(item_id).await?;
         match existing {
-            Some(model) => Ok(WorkOrderItemEntityMapper::from_model(model)),
+            Some(item) => Ok(item),
             None => Err(BusinessError::new(ITEM_NOT_FOUND.to_string())),
         }
     }
@@ -301,29 +280,22 @@ impl WorkOrderUseCase {
         work_order: WorkOrder,
         item: WorkOrderItem,
     ) -> Result<WorkOrder, BusinessError> {
-        let entity = self.items.persist(item).await.map_err(database_error)?;
-        let saved_item = WorkOrderItemEntityMapper::from_active_model(entity);
-
+        let saved_item = self.store.save_work_order_item(item).await?;
         let all_items = self
-            .items
-            .find_by_work_order(work_order.id.unwrap_or_default())
-            .await
-            .map_err(database_error)?;
-        let all_items = WorkOrderItemEntityMapper::from_models(all_items);
+            .store
+            .list_work_order_items(work_order.id.unwrap_or_default())
+            .await?;
 
         let new_status = Self::recompute_status(&work_order.status, &saved_item, &all_items);
         if new_status == work_order.status {
             Ok(work_order)
         } else {
-            let entity = self
-                .gateway
-                .persist(WorkOrder {
+            self.store
+                .save_work_order(WorkOrder {
                     status: new_status,
                     ..work_order
                 })
                 .await
-                .map_err(database_error)?;
-            Ok(WorkOrderEntityMapper::from_active_model(entity))
         }
     }
 
@@ -332,8 +304,7 @@ impl WorkOrderUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<WorkOrder>, u64), BusinessError> {
-        let (rows, total) = self.gateway.find_page(page, page_size).await.map_err(database_error)?;
-        Ok((WorkOrderEntityMapper::from_models(rows), total))
+        self.store.list_work_orders(page, page_size).await
     }
 
     /// `TRM-208`/`TRM-214`: conclusion is a deliberate administrative act,
@@ -343,24 +314,20 @@ impl WorkOrderUseCase {
     /// to `PartiallyResolved`, leaving every item untouched. `TRM-215`: a
     /// work order already `Concluded`/`Cancelled` is left exactly as it is.
     pub async fn conclude(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
-        let existing = self.gateway.find_by_id(work_order_id).await.map_err(database_error)?;
-        let Some(existing) = existing else {
+        let Some(work_order) = self.store.find_work_order(work_order_id).await? else {
             return Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string()));
         };
-        let work_order = WorkOrderEntityMapper::from_model(existing);
         if Self::is_terminal(&work_order.status) {
             return Ok(work_order);
         }
 
-        let items = self
-            .items
-            .find_by_work_order(work_order_id)
-            .await
-            .map_err(database_error)?;
-        let items = WorkOrderItemEntityMapper::from_models(items);
-        let all_settled = items
-            .iter()
-            .all(|i| matches!(i.status, WorkOrderItemStatus::Resolved | WorkOrderItemStatus::Cancelled));
+        let items = self.store.list_work_order_items(work_order_id).await?;
+        let all_settled = items.iter().all(|i| {
+            matches!(
+                i.status,
+                WorkOrderItemStatus::Resolved | WorkOrderItemStatus::Cancelled
+            )
+        });
 
         let (status, concluded_at) = if all_settled {
             (WorkOrderStatus::Concluded, Some(Utc::now().date_naive()))
@@ -368,16 +335,14 @@ impl WorkOrderUseCase {
             (WorkOrderStatus::PartiallyResolved, work_order.concluded_at)
         };
 
-        let entity = self
-            .gateway
-            .persist(WorkOrder {
+        let concluded = self
+            .store
+            .save_work_order(WorkOrder {
                 status,
                 concluded_at,
                 ..work_order
             })
-            .await
-            .map_err(database_error)?;
-        let concluded = WorkOrderEntityMapper::from_active_model(entity);
+            .await?;
         if concluded.status == WorkOrderStatus::Concluded {
             self.renew_preventive_cycles(&concluded, &items).await?;
         }
@@ -402,13 +367,17 @@ impl WorkOrderUseCase {
         // extension item names that plan.
         let mut plan_ids: Vec<i64> = Vec::new();
         let mut extended_plans: Vec<i64> = Vec::new();
-        for item in items.iter().filter(|i| i.status == WorkOrderItemStatus::Resolved) {
-            let Some(plan_id) = item.preventive_plan_id else { continue };
+        for item in items
+            .iter()
+            .filter(|i| i.status == WorkOrderItemStatus::Resolved)
+        {
+            let Some(plan_id) = item.preventive_plan_id else {
+                continue;
+            };
             let extended = self
-                .extensions
-                .find_by_item(item.id.unwrap_or_default())
-                .await
-                .map_err(database_error)?
+                .store
+                .find_extension_by_item(item.id.unwrap_or_default())
+                .await?
                 .is_some();
             if extended {
                 extended_plans.push(plan_id);
@@ -427,14 +396,13 @@ impl WorkOrderUseCase {
         }
 
         let current_km = self
-            .vehicles
-            .find_by_id(work_order.vehicle_id)
-            .await
-            .map_err(database_error)?
-            .and_then(|v| v.odometer_km);
+            .store
+            .find_vehicle(work_order.vehicle_id)
+            .await?
+            .and_then(|vehicle| vehicle.odometer_km);
 
         for plan_id in plan_ids {
-            let Some(plan) = self.plans.find_by_id(plan_id).await.map_err(database_error)? else {
+            let Some(plan) = self.store.find_preventive_plan(plan_id).await? else {
                 continue;
             };
             let plan = PreventivePlan {
@@ -444,17 +412,15 @@ impl WorkOrderUseCase {
                 // extension entries themselves are kept.
                 extension_limit_km: None,
                 last_work_order_id: work_order.id,
-                ..PreventivePlanEntityMapper::from_model(plan)
+                ..plan
             };
-            self.plans.persist(plan).await.map_err(database_error)?;
+            self.store.save_preventive_plan(plan).await?;
 
-            let others = self
-                .gateway
-                .find_active_by_preventive_plan(plan_id)
-                .await
-                .map_err(database_error)?;
+            let others = self.store.find_active_work_orders_by_plan(plan_id).await?;
             for other in others {
-                self.cancel(other.id).await?;
+                if let Some(id) = other.id {
+                    self.cancel(id).await?;
+                }
             }
         }
         Ok(())
@@ -464,34 +430,26 @@ impl WorkOrderUseCase {
     /// items, because cancelling is the act of abandoning what is left.
     /// `TRM-215`: already-terminal is left untouched.
     pub async fn cancel(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
-        let existing = self.gateway.find_by_id(work_order_id).await.map_err(database_error)?;
-        let Some(existing) = existing else {
+        let Some(work_order) = self.store.find_work_order(work_order_id).await? else {
             return Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string()));
         };
-        let work_order = WorkOrderEntityMapper::from_model(existing);
         if Self::is_terminal(&work_order.status) {
             return Ok(work_order);
         }
 
-        let entity = self
-            .gateway
-            .persist(WorkOrder {
+        self.store
+            .save_work_order(WorkOrder {
                 status: WorkOrderStatus::Cancelled,
                 concluded_at: Some(Utc::now().date_naive()),
                 ..work_order
             })
             .await
-            .map_err(database_error)?;
-        Ok(WorkOrderEntityMapper::from_active_model(entity))
     }
 
     fn is_terminal(status: &WorkOrderStatus) -> bool {
-        matches!(status, WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled)
+        matches!(
+            status,
+            WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled
+        )
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[WorkOrderUseCase] {}", msg);
-    BusinessError::new(msg)
 }

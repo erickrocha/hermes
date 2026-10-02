@@ -1,36 +1,32 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::city::{City, CityEntityMapper};
-use crate::gateway::city_gateway::CityGateway;
+use crate::domain::city::City;
+use crate::gateway::city_gateway::CityStore;
 use crate::use_cases::reference_import::{
     ImportOutcome, ImportRejection, ReferenceDataError, RejectionReason, find_duplicate_keys,
     fold_key,
 };
-use sea_orm::{ActiveModelTrait, TransactionTrait};
+use std::collections::HashSet;
 
 /// `city.name` is `varchar(255)` (migration `m20260916_000007`).
 const NAME_MAX: usize = 255;
 
 pub struct CityUseCase {
-    gateway: CityGateway,
+    gateway: Box<dyn CityStore>,
 }
 
 impl CityUseCase {
-    pub fn new(gateway: CityGateway) -> Self {
-        Self { gateway }
+    pub fn new<G: CityStore + 'static>(gateway: G) -> Self {
+        Self {
+            gateway: Box::new(gateway),
+        }
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<City, BusinessError> {
         log::info!("[CityUseCase::find_by_id] Executing for id: {}", id);
-        let model = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[CityUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let city = self.gateway.find_by_id(id).await?;
 
-        match model {
-            Some(val) => Ok(CityEntityMapper::from_model(val)),
+        match city {
+            Some(city) => Ok(city),
             None => {
                 let msg = format!("City not found with id: {}", id);
                 log::error!("[CityUseCase::find_by_id] {}", msg);
@@ -41,14 +37,10 @@ impl CityUseCase {
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<City, BusinessError> {
         log::info!("[CityUseCase::find_by_uuid] Executing for uuid: {}", uuid);
-        let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[CityUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let city = self.gateway.find_by_uuid(uuid.clone()).await?;
 
-        match model {
-            Some(val) => Ok(CityEntityMapper::from_model(val)),
+        match city {
+            Some(city) => Ok(city),
             None => {
                 let msg = format!("City not found with uuid: {}", uuid);
                 log::error!("[CityUseCase::find_by_uuid] {}", msg);
@@ -93,11 +85,12 @@ impl CityUseCase {
             ));
         }
 
-        if let Ok(Some(existing)) = self
+        if let Some(existing) = self
             .gateway
             .find_by_name(city.province_id, &city.name)
             .await
-            && Some(existing.id) != city.id
+            .map_err(|error| ReferenceDataError::unavailable("CityUseCase::save", error))?
+            && existing.id != city.id
         {
             return Err(ReferenceDataError::one(
                 0,
@@ -105,11 +98,10 @@ impl CityUseCase {
             ));
         }
 
-        let saved = CityEntityMapper::build_active_model(city)
-            .save(self.gateway.db())
+        self.gateway
+            .save(city)
             .await
-            .map_err(|e| ReferenceDataError::unavailable("CityUseCase::save", e))?;
-        Ok(CityEntityMapper::from_active_model(saved))
+            .map_err(|error| ReferenceDataError::unavailable("CityUseCase::save", error))
     }
 
     /// PD-027: tudo ou nada — ver `reference_import`.
@@ -147,7 +139,7 @@ impl CityUseCase {
         // already rejected is not going to be written either way.
         if rejections.is_empty() {
             let referenced: Vec<i64> = prepared.iter().map(|(_, c)| c.province_id).collect();
-            let known = self
+            let known: HashSet<i64> = self
                 .gateway
                 .existing_province_ids(&referenced)
                 .await
@@ -170,41 +162,13 @@ impl CityUseCase {
         // PD-027 all-or-nothing. Validation alone cannot promise it: a write
         // can still fail (a lost connection, a column limit nobody modelled),
         // and without a transaction the rows before it stayed (DEF-RD-01).
-        let transaction = self
+        let (_, rows): (Vec<usize>, Vec<City>) = prepared.into_iter().unzip();
+        let (created, updated) = self
             .gateway
-            .db()
-            .begin()
+            .import(rows)
             .await
-            .map_err(|e| ReferenceDataError::unavailable("CityUseCase::import", e))?;
-
-        let mut outcome = ImportOutcome::default();
-        for (_, mut row) in prepared {
-            let existing = self
-                .gateway
-                .find_by_name(row.province_id, &row.name)
-                .await
-                .map_err(|e| ReferenceDataError::unavailable("CityUseCase::import", e))?;
-            match existing {
-                Some(found) => {
-                    row.id = Some(found.id);
-                    outcome.updated += 1;
-                }
-                None => outcome.created += 1,
-            }
-            if let Err(e) = CityEntityMapper::build_active_model(row)
-                .save(&transaction)
-                .await
-            {
-                let _ = transaction.rollback().await;
-                return Err(ReferenceDataError::unavailable("CityUseCase::import", e));
-            }
-        }
-
-        transaction
-            .commit()
-            .await
-            .map_err(|e| ReferenceDataError::unavailable("CityUseCase::import", e))?;
-        Ok(outcome)
+            .map_err(|error| ReferenceDataError::unavailable("CityUseCase::import", error))?;
+        Ok(ImportOutcome { created, updated })
     }
 
     /// PD-028: a lista de cidades é a maior do sistema — é a que mais precisa
@@ -215,27 +179,12 @@ impl CityUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<City>, u64), BusinessError> {
-        let (models, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CityUseCase::find_page] {}", msg);
-                BusinessError::new(msg)
-            })?;
-        Ok((CityEntityMapper::from_models(models), total))
+        self.gateway.find_page(page, page_size, search).await
     }
 
     pub async fn find_all(&self) -> Result<Vec<City>, BusinessError> {
         log::info!("[CityUseCase::find_all] Executing find_all");
-        let models = self.gateway.find_all().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[CityUseCase::find_all] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(CityEntityMapper::from_models(models))
+        self.gateway.find_all().await
     }
 
     pub async fn find_by_province_id(&self, province_id: i32) -> Result<Vec<City>, BusinessError> {
@@ -243,17 +192,7 @@ impl CityUseCase {
             "[CityUseCase::find_by_province_id] Executing for province_id: {}",
             province_id
         );
-        let models = self
-            .gateway
-            .find_by_province_id(province_id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CityUseCase::find_by_province_id] {}", msg);
-                BusinessError::new(msg)
-            })?;
-
-        Ok(CityEntityMapper::from_models(models))
+        self.gateway.find_by_province_id(province_id).await
     }
 }
 

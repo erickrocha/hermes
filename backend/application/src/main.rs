@@ -374,10 +374,10 @@ async fn start() -> anyhow::Result<()> {
     // D-05: o seed roda fora de qualquer requisição. Com deny-by-default isso
     // é `Denied`, então o alcance de plataforma passa a ser pedido aqui,
     // explicitamente, em vez de herdado por omissão.
-    entity::audit::run_as_platform(
-        business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection),
-    )
-    .await?;
+    let sysadmin_use_case = business::use_cases::user_use_case::UserUseCase::new(
+        business::gateway::user_gateway::UserGateway::new(connection.clone()),
+    );
+    entity::audit::run_as_platform(sysadmin_use_case.seed_sysadmin()).await?;
 
     let state = AppState {
         conn: Arc::new(connection),

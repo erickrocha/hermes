@@ -1,22 +1,21 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::commons::password;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
 use crate::domain::password_policy;
-use crate::domain::user::{User, UserEntityMapper};
-use crate::gateway::user_gateway::UserGateway;
+use crate::domain::user::User;
+use crate::gateway::user_gateway::UserStore;
 use chrono::Utc;
-use sea_orm::DbConn;
 use std::env;
 
 pub struct UserUseCase {
-    gateway: UserGateway,
+    gateway: Box<dyn UserStore>,
 }
 
 impl UserUseCase {
-    pub fn new(gateway: UserGateway) -> Self {
-        Self { gateway }
+    pub fn new<G: UserStore + 'static>(gateway: G) -> Self {
+        Self {
+            gateway: Box::new(gateway),
+        }
     }
 
     pub async fn create(&self, user: User) -> Result<User, BusinessError> {
@@ -48,13 +47,7 @@ impl UserUseCase {
             ..user
         };
 
-        let entity = self.gateway.persist(user_to_save).await.map_err(|e| {
-            let msg = format!("Failed to persist user: {}", e);
-            log::error!("[UserUseCase::create] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(UserEntityMapper::from_active_model(entity))
+        self.gateway.save(user_to_save).await
     }
 
     pub async fn update(&self, id: i64, user: User) -> Result<User, BusinessError> {
@@ -104,13 +97,7 @@ impl UserUseCase {
             updated_by: user.updated_by,
         };
 
-        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
-            let msg = format!("Failed to update user: {}", e);
-            log::error!("[UserUseCase::update] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(UserEntityMapper::from_active_model(entity))
+        self.gateway.save(updated_user).await
     }
 
     pub async fn change_password(
@@ -151,26 +138,14 @@ impl UserUseCase {
             ..existing
         };
 
-        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
-            let msg = format!("Failed to update password: {}", e);
-            log::error!("[UserUseCase::change_password] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(UserEntityMapper::from_active_model(entity))
+        self.gateway.save(updated_user).await
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::find_by_id] Executing for id: {}", id);
 
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(model) => Ok(UserEntityMapper::from_model(model)),
+        match self.gateway.get_by_id(id).await? {
+            Some(user) => Ok(user),
             None => {
                 let msg = format!("User not found with id: {}", id);
                 log::error!("[UserUseCase::find_by_id] {}", msg);
@@ -186,14 +161,8 @@ impl UserUseCase {
     pub async fn find_by_uuid(&self, uuid: String) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::find_by_uuid] Executing for uuid: {}", uuid);
 
-        let entity = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(model) => Ok(UserEntityMapper::from_model(model)),
+        match self.gateway.get_by_uuid(uuid.clone()).await? {
+            Some(user) => Ok(user),
             None => {
                 log::error!(
                     "[UserUseCase::find_by_uuid] User not found with uuid: {}",
@@ -212,28 +181,13 @@ impl UserUseCase {
         page_size: u64,
         search: Option<&str>,
     ) -> Result<(Vec<User>, u64), BusinessError> {
-        let (entities, total) = self
-            .gateway
-            .find_page(page, page_size, search)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_page] {}", msg);
-                BusinessError::new(msg)
-            })?;
-        Ok((UserEntityMapper::from_models(entities), total))
+        self.gateway.list_page(page, page_size, search).await
     }
 
     pub async fn find_all(&self) -> Result<Vec<User>, BusinessError> {
         log::info!("[UserUseCase::find_all] Executing find_all users");
 
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_all] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(UserEntityMapper::from_models(entities))
+        self.gateway.list_all().await
     }
 
     pub async fn find_all_by_tenant_id(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
@@ -242,20 +196,10 @@ impl UserUseCase {
             tenant_id
         );
 
-        let entities = self
-            .gateway
-            .find_all_by_tenant_id(tenant_id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_all_by_tenant_id] {}", msg);
-                BusinessError::new(msg)
-            })?;
-
-        Ok(UserEntityMapper::from_models(entities))
+        self.gateway.list_by_tenant(tenant_id).await
     }
 
-    pub async fn persist(db: DbConn, user: User) -> Result<User, BusinessError> {
+    pub async fn persist(&self, user: User) -> Result<User, BusinessError> {
         log::info!(
             "[UserUseCase::persist] Executing persist for user: {}",
             user.email
@@ -277,58 +221,29 @@ impl UserUseCase {
             ..user
         };
 
-        let user_gateway = UserGateway::new(db);
-        let entity = user_gateway
-            .persist(user_with_password_encrypted)
-            .await
-            .map_err(|error| {
-                log::error!("[UserUseCase::persist] Error adding user: {}", error);
-                BusinessError::new(format!("Failed to persist user: {error}"))
-            })?;
-        Ok(UserEntityMapper::from_active_model(entity))
+        self.gateway.save(user_with_password_encrypted).await
     }
 
-    pub async fn find_by_email(db: &DbConn, email: String) -> Option<User> {
+    pub async fn find_by_email(&self, email: String) -> Result<Option<User>, BusinessError> {
         log::info!(
             "[UserUseCase::find_by_email] Executing for email: {}",
             email
         );
 
-        let user_result = UserGateway::find_by_email(db, email.clone()).await;
-        match user_result {
-            Ok(Some(model)) => Some(UserEntityMapper::from_model(model)),
-            Ok(None) => {
+        match self.gateway.get_by_email(email.clone()).await? {
+            Some(user) => Ok(Some(user)),
+            None => {
                 log::info!(
                     "[UserUseCase::find_by_email] No user found for email: {}",
                     email
                 );
-                None
-            }
-            Err(error) => {
-                log::error!(
-                    "[UserUseCase::find_by_email] Error finding user by email {}: {}",
-                    email,
-                    error
-                );
-                None
+                Ok(None)
             }
         }
     }
 
-    async fn find_sysadmin(db: &DbConn) -> Result<Option<User>, BusinessError> {
-        match UserGateway::find_by_role(db, Role::SysAdmin.to_string()).await {
-            Ok(Some(model)) => Ok(Some(UserEntityMapper::from_model(model))),
-            Ok(None) => Ok(None),
-            Err(error) => {
-                log::error!(
-                    "[UserUseCase::find_sysadmin] Error finding SysAdmin user: {}",
-                    error
-                );
-                Err(BusinessError::new(format!(
-                    "Failed to find SysAdmin user: {error}"
-                )))
-            }
-        }
+    async fn find_sysadmin(&self) -> Result<Option<User>, BusinessError> {
+        self.gateway.get_by_role(Role::SysAdmin).await
     }
 
     /// Seeds the SysAdmin user from SYSADMIN_EMAIL/SYSADMIN_PASSWORD on every boot.
@@ -341,7 +256,7 @@ impl UserUseCase {
     /// `admin` when absent -- the one setting in the whole service that
     /// defaulted a secret instead of failing fast, and the one whose
     /// default is public (it is right here in the source).
-    pub async fn seed_sysadmin(db: &DbConn) -> Result<User, BusinessError> {
+    pub async fn seed_sysadmin(&self) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
         let sysadmin_email = env::var("SYSADMIN_EMAIL")
@@ -362,7 +277,7 @@ impl UserUseCase {
         // is actually written, so a second caller cannot bypass it.
         password_policy::validate_length(&sysadmin_password)?;
 
-        if let Some(existing_sysadmin) = Self::find_sysadmin(db).await? {
+        if let Some(existing_sysadmin) = self.find_sysadmin().await? {
             if existing_sysadmin.email == sysadmin_email {
                 log::info!(
                     "[UserUseCase::seed_sysadmin] SysAdmin user already exists with email: {}",
@@ -392,7 +307,7 @@ impl UserUseCase {
                 updated_by: Some("system".to_string()),
             };
 
-            let updated = Self::persist(db.clone(), updated_sysadmin).await?;
+            let updated = self.persist(updated_sysadmin).await?;
             log::info!("[UserUseCase::seed_sysadmin] SysAdmin user updated successfully.");
             return Ok(updated);
         }
@@ -417,7 +332,7 @@ impl UserUseCase {
             updated_by: Some("system".to_string()),
         };
 
-        let created = Self::persist(db.clone(), sysadmin_user).await?;
+        let created = self.persist(sysadmin_user).await?;
         log::info!("[UserUseCase::seed_sysadmin] Initial SysAdmin user created successfully.");
         Ok(created)
     }

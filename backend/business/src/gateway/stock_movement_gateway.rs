@@ -1,14 +1,31 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
+use crate::domain::part::{Part, PartEntityMapper};
 use crate::domain::stock_movement::{StockMovement, StockMovementEntityMapper};
 use entity::prelude::StockMovementEntity as StockMovementQuery;
 use entity::stock_movement_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder,
+    QueryOrder, TransactionTrait,
 };
+
+#[async_trait]
+pub trait StockMovementStore: Send + Sync {
+    async fn find_part(&self, part_id: i64) -> Result<Option<Part>, BusinessError>;
+    async fn current_stock(&self, part_id: i64) -> Result<f64, BusinessError>;
+    async fn save_adjustment(
+        &self,
+        movement: StockMovement,
+    ) -> Result<StockMovement, BusinessError>;
+    async fn record_entry_and_update_part(
+        &self,
+        movement: StockMovement,
+        part: Part,
+    ) -> Result<StockMovement, BusinessError>;
+}
 
 /// `HRMS-801` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -24,6 +41,89 @@ impl StockMovementGateway {
     pub fn db(&self) -> &DbConn {
         &self.db
     }
+}
+
+pub struct StockMovementDatabaseGateway {
+    movements: StockMovementGateway,
+    parts: crate::gateway::part_gateway::PartGateway,
+}
+
+impl StockMovementDatabaseGateway {
+    pub fn new(
+        movements: StockMovementGateway,
+        parts: crate::gateway::part_gateway::PartGateway,
+    ) -> Self {
+        Self { movements, parts }
+    }
+}
+
+#[async_trait]
+impl StockMovementStore for StockMovementDatabaseGateway {
+    async fn find_part(&self, part_id: i64) -> Result<Option<Part>, BusinessError> {
+        <crate::gateway::part_gateway::PartGateway as Gateway<
+            Part,
+            entity::part_entity::Model,
+            entity::part_entity::ActiveModel,
+        >>::find_by_id(&self.parts, part_id)
+        .await
+        .map(|part| part.map(PartEntityMapper::from_model))
+        .map_err(database_error)
+    }
+
+    async fn current_stock(&self, part_id: i64) -> Result<f64, BusinessError> {
+        self.movements
+            .find_by_part(part_id)
+            .await
+            .map(|rows| rows.iter().map(|movement| movement.quantity).sum())
+            .map_err(database_error)
+    }
+
+    async fn save_adjustment(
+        &self,
+        movement: StockMovement,
+    ) -> Result<StockMovement, BusinessError> {
+        <StockMovementGateway as Gateway<
+            StockMovement,
+            stock_movement_entity::Model,
+            stock_movement_entity::ActiveModel,
+        >>::persist(&self.movements, movement)
+        .await
+        .map(StockMovementEntityMapper::from_active_model)
+        .map_err(database_error)
+    }
+
+    async fn record_entry_and_update_part(
+        &self,
+        movement: StockMovement,
+        part: Part,
+    ) -> Result<StockMovement, BusinessError> {
+        let transaction = self.parts.db().begin().await.map_err(database_error)?;
+        let saved_movement = match StockMovementEntityMapper::build_active_model(movement)
+            .save(&transaction)
+            .await
+        {
+            Ok(active) => active,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(database_error(error));
+            }
+        };
+        if let Err(error) = PartEntityMapper::build_active_model(part)
+            .save(&transaction)
+            .await
+        {
+            let _ = transaction.rollback().await;
+            return Err(database_error(error));
+        }
+        transaction.commit().await.map_err(database_error)?;
+        Ok(StockMovementEntityMapper::from_active_model(saved_movement))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Database error: {error}");
+    log::error!("[StockMovementGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]
@@ -49,26 +149,35 @@ impl Gateway<StockMovement, stock_movement_entity::Model, stock_movement_entity:
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<stock_movement_entity::Model>, DbErr> {
-        tenant_select(StockMovementQuery::find(), stock_movement_entity::Column::TenantId)
-            .filter(stock_movement_entity::Column::Id.eq(id))
-            .one(&self.db)
-            .await
+        tenant_select(
+            StockMovementQuery::find(),
+            stock_movement_entity::Column::TenantId,
+        )
+        .filter(stock_movement_entity::Column::Id.eq(id))
+        .one(&self.db)
+        .await
     }
 
     async fn find_by_uuid(
         &self,
         uuid: String,
     ) -> Result<Option<stock_movement_entity::Model>, DbErr> {
-        tenant_select(StockMovementQuery::find(), stock_movement_entity::Column::TenantId)
-            .filter(stock_movement_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
-            .one(&self.db)
-            .await
+        tenant_select(
+            StockMovementQuery::find(),
+            stock_movement_entity::Column::TenantId,
+        )
+        .filter(stock_movement_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+        .one(&self.db)
+        .await
     }
 
     async fn find_all(&self) -> Result<Vec<stock_movement_entity::Model>, DbErr> {
-        tenant_select(StockMovementQuery::find(), stock_movement_entity::Column::TenantId)
-            .all(&self.db)
-            .await
+        tenant_select(
+            StockMovementQuery::find(),
+            stock_movement_entity::Column::TenantId,
+        )
+        .all(&self.db)
+        .await
     }
 }
 
@@ -79,11 +188,14 @@ impl StockMovementGateway {
         &self,
         part_id: i64,
     ) -> Result<Vec<stock_movement_entity::Model>, DbErr> {
-        tenant_select(StockMovementQuery::find(), stock_movement_entity::Column::TenantId)
-            .filter(stock_movement_entity::Column::PartId.eq(part_id))
-            .order_by_asc(stock_movement_entity::Column::CreatedAt)
-            .all(&self.db)
-            .await
+        tenant_select(
+            StockMovementQuery::find(),
+            stock_movement_entity::Column::TenantId,
+        )
+        .filter(stock_movement_entity::Column::PartId.eq(part_id))
+        .order_by_asc(stock_movement_entity::Column::CreatedAt)
+        .all(&self.db)
+        .await
     }
 }
 

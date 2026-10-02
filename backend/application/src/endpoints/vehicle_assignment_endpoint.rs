@@ -21,7 +21,7 @@ use business::use_cases::vehicle_assignment_use_case::{
     NO_LIVE_ASSIGNMENT, NOT_A_DRIVER, VEHICLE_ALREADY_ASSIGNED, VehicleAssignmentUseCase,
 };
 
-fn use_case(state: &AppState) -> VehicleAssignmentUseCase {
+fn use_case(state: &AppState) -> VehicleAssignmentUseCase<VehicleAssignmentGateway, UserGateway> {
     let db = state.conn.as_ref().clone();
     VehicleAssignmentUseCase::new(VehicleAssignmentGateway::new(db.clone()), UserGateway::new(db))
 }

@@ -1,11 +1,21 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::internal_tank::{InternalTank, InternalTankEntityMapper};
 use entity::internal_tank_entity;
 use entity::prelude::InternalTankEntity as InternalTankQuery;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+
+#[async_trait]
+pub trait InternalTankStore: Send + Sync {
+    async fn get_current(
+        &self,
+        target_tenant_id: Option<i64>,
+    ) -> Result<Option<InternalTank>, BusinessError>;
+    async fn save(&self, tank: InternalTank) -> Result<InternalTank, BusinessError>;
+}
 
 /// `HRMS-943` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -17,6 +27,36 @@ impl InternalTankGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl InternalTankStore for InternalTankGateway {
+    async fn get_current(
+        &self,
+        target_tenant_id: Option<i64>,
+    ) -> Result<Option<InternalTank>, BusinessError> {
+        let model = InternalTankGateway::find_current(self, target_tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(InternalTankEntityMapper::from_model))
+    }
+
+    async fn save(&self, tank: InternalTank) -> Result<InternalTank, BusinessError> {
+        let active_model = <Self as Gateway<
+            InternalTank,
+            internal_tank_entity::Model,
+            internal_tank_entity::ActiveModel,
+        >>::persist(self, tank)
+        .await
+        .map_err(database_error)?;
+        Ok(InternalTankEntityMapper::from_active_model(active_model))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Internal tank database error: {error}");
+    log::error!("[InternalTankGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

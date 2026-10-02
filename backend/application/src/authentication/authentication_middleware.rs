@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
 use business::domain::authorization::{is_unbound_sys_admin, lacks_required_tenant};
+use business::gateway::user_gateway::UserGateway;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 
 pub async fn authentication(
@@ -23,7 +24,7 @@ pub async fn authentication(
         return Ok(next.run(req).await);
     }
 
-    let auth_header = req.headers_mut().get(AUTHORIZATION);
+    let auth_header = req.headers().get(AUTHORIZATION);
     let auth_header = match auth_header {
         Some(header) => header.to_str().map_err(|_| {
             ExceptionResponse::Forbidden(locale.clone(), ErrorKey::AuthHeaderMissing)
@@ -36,13 +37,18 @@ pub async fn authentication(
         }
     };
 
-    let token = bearer_token(auth_header).ok_or_else(|| {
-        ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidJwtToken)
-    })?;
+    let token = bearer_token(auth_header)
+        .ok_or_else(|| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidJwtToken))?;
 
-    let current_user = AuthenticationUseCase::validate(&state.conn, token.to_string())
+    let current_user = AuthenticationUseCase::new(UserGateway::new(state.conn.as_ref().clone()))
+        .validate(token.to_string())
         .await
         .map_err(|_| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
+
+    let user_id = current_user
+        .id
+        .filter(|id| *id > 0)
+        .ok_or_else(|| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
 
     if lacks_required_tenant(&current_user) {
         return Err(ExceptionResponse::Forbidden(
@@ -52,7 +58,7 @@ pub async fn authentication(
     }
 
     let audit_user = entity::audit::AuditUser {
-        id: current_user.id.unwrap_or(0),
+        id: user_id,
         email: current_user.email.clone(),
         tenant_id: current_user.tenant_id,
         enforce_tenant: !is_unbound_sys_admin(&current_user),

@@ -19,6 +19,7 @@ use business::gateway::inspection_model_gateway::InspectionModelGateway;
 use business::gateway::preventive_plan_alert_gateway::PreventivePlanAlertGateway;
 use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
 use business::gateway::technical_inspection_gateway::TechnicalInspectionGateway;
+use business::gateway::technical_inspection_workflow_gateway::TechnicalInspectionDatabaseGateway;
 use business::gateway::technical_inspection_item_gateway::TechnicalInspectionItemGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::gateway::work_order_gateway::WorkOrderGateway;
@@ -27,7 +28,7 @@ use business::use_cases::technical_inspection_use_case::{INSPECTION_NOT_FOUND, T
 
 fn use_case(state: &AppState) -> TechnicalInspectionUseCase {
     let db = state.conn.as_ref().clone();
-    TechnicalInspectionUseCase::new(
+    TechnicalInspectionUseCase::new(TechnicalInspectionDatabaseGateway::new(
         TechnicalInspectionGateway::new(db.clone()),
         TechnicalInspectionItemGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
@@ -36,7 +37,7 @@ fn use_case(state: &AppState) -> TechnicalInspectionUseCase {
         PreventivePlanGateway::new(db.clone()),
         PreventivePlanAlertGateway::new(db.clone()),
         InspectionModelGateway::new(db),
-    )
+    ))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {

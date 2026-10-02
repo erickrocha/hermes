@@ -11,15 +11,18 @@ use axum::extract::{Extension, Query, State};
 use business::domain::authorization::{can_configure_internal_tank, can_read_internal_tank};
 use business::domain::internal_tank::InternalTank;
 use business::domain::user::User;
+use business::gateway::fuel_entry_gateway::FuelEntryGateway;
 use business::gateway::internal_tank_gateway::InternalTankGateway;
 use business::use_cases::internal_tank_use_case::{
     ALERT_LEVEL_MUST_NOT_BE_NEGATIVE, CAPACITY_MUST_BE_POSITIVE, INTERNAL_TANK_NOT_CONFIGURED,
     InternalTankUseCase, REFERENCE_STOCK_OUT_OF_RANGE, RESERVE_LEVEL_MUST_NOT_BE_NEGATIVE,
 };
 
-fn use_case(state: &AppState) -> InternalTankUseCase {
+fn use_case(
+    state: &AppState,
+) -> InternalTankUseCase<InternalTankGateway, FuelEntryGateway> {
     let db = state.conn.as_ref().clone();
-    InternalTankUseCase::new(InternalTankGateway::new(db.clone()), business::gateway::fuel_entry_gateway::FuelEntryGateway::new(db))
+    InternalTankUseCase::new(InternalTankGateway::new(db.clone()), FuelEntryGateway::new(db))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {

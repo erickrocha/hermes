@@ -16,11 +16,15 @@ use business::domain::part::Part;
 use business::domain::stock_movement::StockMovement;
 use business::domain::user::User;
 use business::gateway::part_gateway::PartGateway;
-use business::gateway::stock_movement_gateway::StockMovementGateway;
-use business::use_cases::part_use_case::{NAME_REQUIRED, NEGATIVE_MINIMUM_STOCK, PartUseCase, UNIT_REQUIRED};
+use business::gateway::stock_movement_gateway::{
+    StockMovementDatabaseGateway, StockMovementGateway,
+};
+use business::use_cases::part_use_case::{
+    NAME_REQUIRED, NEGATIVE_MINIMUM_STOCK, PartUseCase, UNIT_REQUIRED,
+};
 use business::use_cases::stock_movement_use_case::{
-    NON_NEGATIVE_BALANCE_REQUIRED, PART_NOT_FOUND as MOVEMENT_PART_NOT_FOUND, QUANTITY_MUST_BE_POSITIVE,
-    StockMovementUseCase, VALUE_REQUIRED,
+    NON_NEGATIVE_BALANCE_REQUIRED, PART_NOT_FOUND as MOVEMENT_PART_NOT_FOUND,
+    QUANTITY_MUST_BE_POSITIVE, StockMovementUseCase, VALUE_REQUIRED,
 };
 
 fn use_case(state: &AppState) -> PartUseCase<PartGateway> {
@@ -29,14 +33,21 @@ fn use_case(state: &AppState) -> PartUseCase<PartGateway> {
 
 fn movement_use_case(state: &AppState) -> StockMovementUseCase {
     let db = state.conn.as_ref().clone();
-    StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db))
+    StockMovementUseCase::new(StockMovementDatabaseGateway::new(
+        StockMovementGateway::new(db.clone()),
+        PartGateway::new(db),
+    ))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         MOVEMENT_PART_NOT_FOUND => ExceptionResponse::NotFound(locale, ErrorKey::PartNotFound),
-        NAME_REQUIRED | UNIT_REQUIRED | NEGATIVE_MINIMUM_STOCK | QUANTITY_MUST_BE_POSITIVE
-        | VALUE_REQUIRED | NON_NEGATIVE_BALANCE_REQUIRED => {
+        NAME_REQUIRED
+        | UNIT_REQUIRED
+        | NEGATIVE_MINIMUM_STOCK
+        | QUANTITY_MUST_BE_POSITIVE
+        | VALUE_REQUIRED
+        | NON_NEGATIVE_BALANCE_REQUIRED => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
         }
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
@@ -44,7 +55,10 @@ fn error(locale: Locale, message: &str) -> ExceptionResponse {
 }
 
 async fn json(state: &AppState, part: Part) -> PartJson {
-    let current_stock = movement_use_case(state).current_stock(part.id.unwrap_or_default()).await.ok();
+    let current_stock = movement_use_case(state)
+        .current_stock(part.id.unwrap_or_default())
+        .await
+        .ok();
     PartJson {
         uuid: part.uuid,
         code: part.id.map(|id| format!("PC-{id}")),
@@ -99,7 +113,10 @@ pub async fn add(
     Json(payload): Json<PartJson>,
 ) -> HttpResponse<(StatusCode, Json<PartJson>)> {
     if !can_create_part(&current_user, payload.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PartForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::PartForbidden,
+        ));
     }
 
     let mut tenant_id = payload.tenant_id;
@@ -211,10 +228,16 @@ async fn writable_part(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound))?;
     if !can_read_part(current_user, part.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::PartNotFound,
+        ));
     }
     if !can_create_stock_movement(current_user, part.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::PartForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale.clone(),
+            ErrorKey::PartForbidden,
+        ));
     }
     Ok(part)
 }

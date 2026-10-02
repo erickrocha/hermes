@@ -1,10 +1,7 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::vehicle_expense::{VehicleExpense, VehicleExpenseEntityMapper};
-use crate::gateway::vehicle_expense_gateway::VehicleExpenseGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use sea_orm::DbErr;
+use crate::domain::vehicle_expense::VehicleExpense;
+use crate::gateway::vehicle_expense_gateway::{VehicleExpenseStore, VehicleExpenseStoreError};
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
 
 pub const CATEGORY_REQUIRED: &str = "A vehicle expense needs a category";
 pub const COMPETENCE_PERIOD_REQUIRED: &str = "A vehicle expense needs a competence period";
@@ -16,24 +13,19 @@ pub const DUPLICATE_EXPENSE_INVOICE: &str =
     "This vehicle already has an expense in this category for that invoice number";
 pub const VEHICLE_EXPENSE_NOT_FOUND: &str = "Vehicle expense not found";
 
-pub struct VehicleExpenseUseCase {
-    gateway: VehicleExpenseGateway,
-    vehicles: VehicleGateway,
+pub struct VehicleExpenseUseCase<E: VehicleExpenseStore, V: VehicleLookupStore> {
+    gateway: E,
+    vehicles: V,
 }
 
-impl VehicleExpenseUseCase {
-    pub fn new(gateway: VehicleExpenseGateway, vehicles: VehicleGateway) -> Self {
+impl<E: VehicleExpenseStore, V: VehicleLookupStore> VehicleExpenseUseCase<E, V> {
+    pub fn new(gateway: E, vehicles: V) -> Self {
         Self { gateway, vehicles }
     }
 
     pub async fn create(&self, expense: VehicleExpense) -> Result<VehicleExpense, BusinessError> {
         let expense = self.validated(expense).await?;
-        let entity = self
-            .gateway
-            .persist(expense)
-            .await
-            .map_err(database_error)?;
-        Ok(VehicleExpenseEntityMapper::from_active_model(entity))
+        self.gateway.save(expense).await.map_err(store_error)
     }
 
     async fn validated(&self, expense: VehicleExpense) -> Result<VehicleExpense, BusinessError> {
@@ -49,11 +41,7 @@ impl VehicleExpenseUseCase {
             return Err(BusinessError::new(VALUE_MUST_BE_POSITIVE.to_string()));
         }
 
-        let vehicle = self
-            .vehicles
-            .find_by_id(expense.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.vehicles.get_by_id(expense.vehicle_id).await?;
         let belongs = vehicle.is_some_and(|v| v.tenant_id == expense.tenant_id);
         if !belongs {
             return Err(BusinessError::new(VEHICLE_NOT_FOUND.to_string()));
@@ -63,15 +51,12 @@ impl VehicleExpenseUseCase {
             .invoice_number
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-        {
-            let existing = self
+            && self
                 .gateway
-                .find_by_vehicle_category_invoice(expense.vehicle_id, &category, invoice_number)
-                .await
-                .map_err(database_error)?;
-            if !existing.is_empty() {
-                return Err(BusinessError::new(DUPLICATE_EXPENSE_INVOICE.to_string()));
-            }
+                .invoice_exists(expense.vehicle_id, &category, invoice_number)
+                .await?
+        {
+            return Err(BusinessError::new(DUPLICATE_EXPENSE_INVOICE.to_string()));
         }
 
         Ok(VehicleExpense {
@@ -82,15 +67,10 @@ impl VehicleExpenseUseCase {
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<VehicleExpense, BusinessError> {
-        let entity = self
-            .gateway
-            .find_by_uuid(uuid)
-            .await
-            .map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(VehicleExpenseEntityMapper::from_model(model)),
-            None => Err(BusinessError::new(VEHICLE_EXPENSE_NOT_FOUND.to_string())),
-        }
+        self.gateway
+            .get_by_uuid(uuid)
+            .await?
+            .ok_or_else(|| BusinessError::new(VEHICLE_EXPENSE_NOT_FOUND.to_string()))
     }
 
     pub async fn find_page(
@@ -98,17 +78,15 @@ impl VehicleExpenseUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<VehicleExpense>, u64), BusinessError> {
-        let (rows, total) = self
-            .gateway
-            .find_page(page, page_size)
-            .await
-            .map_err(database_error)?;
-        Ok((VehicleExpenseEntityMapper::from_models(rows), total))
+        self.gateway.list_page(page, page_size).await
     }
 }
 
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[VehicleExpenseUseCase] {}", msg);
-    BusinessError::new(msg)
+fn store_error(error: VehicleExpenseStoreError) -> BusinessError {
+    match error {
+        VehicleExpenseStoreError::DuplicateInvoice => {
+            BusinessError::new(DUPLICATE_EXPENSE_INVOICE.to_string())
+        }
+        VehicleExpenseStoreError::Storage(error) => error,
+    }
 }

@@ -1,13 +1,10 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::commons::password;
 use crate::domain::access_token::{AccessToken, Claims};
 use crate::domain::business_error::BusinessError;
-use crate::domain::user::{User, UserEntityMapper};
-use crate::gateway::user_gateway::UserGateway;
+use crate::domain::user::User;
+use crate::gateway::user_gateway::UserStore;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use sea_orm::DbConn;
 use std::env;
 
 /// PD-030: 3 h / 7 d continuam os padrões; o que muda é que deixam de ser
@@ -36,9 +33,17 @@ fn refresh_token_days() -> i64 {
     )
 }
 
-pub struct AuthenticationUseCase {}
+pub struct AuthenticationUseCase {
+    users: Box<dyn UserStore>,
+}
 
 impl AuthenticationUseCase {
+    pub fn new<U: UserStore + 'static>(users: U) -> Self {
+        Self {
+            users: Box::new(users),
+        }
+    }
+
     /// Carrega o usuário pelo e-mail e recusa conta desabilitada.
     ///
     /// Todo caminho de autenticação passa por aqui — login, validação de access
@@ -46,12 +51,10 @@ impl AuthenticationUseCase {
     /// valer. Sem ele o flag existe no schema e não protege nada: desabilitar
     /// uma conta (ou atender um pedido de exclusão) não derrubaria a sessão em
     /// curso nem impediria um novo login.
-    async fn load_enabled_user(
-        db: &DbConn,
-        email: &str,
-        context: &str,
-    ) -> Result<User, BusinessError> {
-        let found = UserGateway::find_by_email(db, email.to_string())
+    async fn load_enabled_user(&self, email: &str, context: &str) -> Result<User, BusinessError> {
+        let found = self
+            .users
+            .get_by_email(email.to_string())
             .await
             .map_err(|err| {
                 log::error!(
@@ -63,7 +66,7 @@ impl AuthenticationUseCase {
                 BusinessError::new("Invalid credentials".to_string())
             })?;
 
-        let Some(model) = found else {
+        let Some(user) = found else {
             log::error!(
                 "[AuthenticationUseCase::{}] User not found: {}",
                 context,
@@ -72,7 +75,7 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         };
 
-        if !model.enabled {
+        if !user.enabled {
             log::warn!(
                 "[AuthenticationUseCase::{}] Disabled account rejected: {}",
                 context,
@@ -81,7 +84,7 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        Ok(UserEntityMapper::from_model(model))
+        Ok(user)
     }
 
     /// DEF-IA-01/DEF-IA-02 (HRMS-104, HRMS-102, HRMS-003): resolves the account
@@ -94,7 +97,7 @@ impl AuthenticationUseCase {
     /// the token. The address is still compared here, but as a *check*: a token
     /// minted before a rename no longer describes the account and is refused.
     async fn load_enabled_account(
-        db: &DbConn,
+        &self,
         user_id: i64,
         email: &str,
         context: &str,
@@ -107,19 +110,17 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        let found = UserGateway::find_by_user_id(db, user_id)
-            .await
-            .map_err(|err| {
-                log::error!(
-                    "[AuthenticationUseCase::{}] Database error for user id {}: {}",
-                    context,
-                    user_id,
-                    err
-                );
-                BusinessError::new("Invalid credentials".to_string())
-            })?;
+        let found = self.users.get_by_id(user_id).await.map_err(|err| {
+            log::error!(
+                "[AuthenticationUseCase::{}] Database error for user id {}: {}",
+                context,
+                user_id,
+                err
+            );
+            BusinessError::new("Invalid credentials".to_string())
+        })?;
 
-        let Some(model) = found else {
+        let Some(user) = found else {
             log::error!(
                 "[AuthenticationUseCase::{}] User not found by id: {}",
                 context,
@@ -128,7 +129,7 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         };
 
-        if !model.enabled {
+        if !user.enabled {
             log::warn!(
                 "[AuthenticationUseCase::{}] Disabled account rejected: id {}",
                 context,
@@ -137,17 +138,17 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        if model.id != user_id {
+        if user.id != Some(user_id) {
             log::error!(
-                "[AuthenticationUseCase::{}] Account lookup returned id {} for id {}",
+                "[AuthenticationUseCase::{}] Account lookup returned id {:?} for id {}",
                 context,
-                model.id,
+                user.id,
                 user_id
             );
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        if model.email != email {
+        if user.email != email {
             log::warn!(
                 "[AuthenticationUseCase::{}] Token subject no longer matches account id {}",
                 context,
@@ -156,11 +157,11 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        Ok(UserEntityMapper::from_model(model))
+        Ok(user)
     }
 
     pub async fn execute(
-        db: &DbConn,
+        &self,
         email: String,
         password: String,
     ) -> Result<AccessToken, BusinessError> {
@@ -174,7 +175,7 @@ impl AuthenticationUseCase {
                 "Email and password are required".to_string(),
             ));
         }
-        let user = Self::load_enabled_user(db, &email, "execute").await;
+        let user = self.load_enabled_user(&email, "execute").await;
 
         // DEF-IA-05 (HRMS-103): the three refusals -- unknown address, disabled
         // account, wrong password -- must be indistinguishable, and a body that
@@ -199,7 +200,7 @@ impl AuthenticationUseCase {
             // único que pode reescrever um hash legado em Argon2id. Falhar aqui
             // nunca recusa o login — o usuário acertou a senha; só significa que
             // a conta tenta de novo no próximo login.
-            let user = Self::upgrade_legacy_hash(db, user, &password).await;
+            let user = self.upgrade_legacy_hash(user, &password).await;
             Self::generate_access_token(user)
         } else {
             log::error!(
@@ -212,7 +213,7 @@ impl AuthenticationUseCase {
 
     /// Reescreve um hash bcrypt em Argon2id depois de um login bem-sucedido.
     /// Devolve o usuário com o hash novo quando conseguiu, o original quando não.
-    async fn upgrade_legacy_hash(db: &DbConn, user: User, plaintext: &str) -> User {
+    async fn upgrade_legacy_hash(&self, user: User, plaintext: &str) -> User {
         if !password::needs_rehash(&user.password) {
             return user;
         }
@@ -229,9 +230,7 @@ impl AuthenticationUseCase {
         };
         // D-05: o login acontece antes de existir sessão, logo fora de escopo.
         // A reescrita do hash é trabalho da plataforma sobre a própria conta.
-        match entity::audit::run_as_platform(UserGateway::new(db.clone()).persist(upgraded.clone()))
-            .await
-        {
+        match entity::audit::run_as_platform(self.users.save(upgraded.clone())).await {
             Ok(_) => {
                 log::info!(
                     "[AuthenticationUseCase::upgrade_legacy_hash] Upgraded {} to Argon2id",
@@ -257,7 +256,9 @@ impl AuthenticationUseCase {
         );
         let expiration = Utc::now()
             .checked_add_signed(chrono::Duration::hours(access_token_hours()))
-            .ok_or_else(|| BusinessError::new("Access token expiration is out of range".to_string()))?
+            .ok_or_else(|| {
+                BusinessError::new("Access token expiration is out of range".to_string())
+            })?
             .timestamp();
         let claims = Self::claims(&user, expiration)?;
 
@@ -270,7 +271,9 @@ impl AuthenticationUseCase {
             &EncodingKey::from_secret(private_key.as_bytes()),
         )
         .map_err(|error| {
-            log::error!("[AuthenticationUseCase::generate_access_token] Token encoding failed: {error}");
+            log::error!(
+                "[AuthenticationUseCase::generate_access_token] Token encoding failed: {error}"
+            );
             BusinessError::new("Token generation failed".to_string())
         })?;
         let refresh_token = Self::generate_refresh_token(user)?;
@@ -296,7 +299,9 @@ impl AuthenticationUseCase {
         );
         let expiration = Utc::now()
             .checked_add_signed(chrono::Duration::days(refresh_token_days()))
-            .ok_or_else(|| BusinessError::new("Refresh token expiration is out of range".to_string()))?
+            .ok_or_else(|| {
+                BusinessError::new("Refresh token expiration is out of range".to_string())
+            })?
             .timestamp();
         let claims = Self::claims(&user, expiration)?;
 
@@ -309,7 +314,9 @@ impl AuthenticationUseCase {
             &EncodingKey::from_secret(private_key.as_bytes()),
         )
         .map_err(|error| {
-            log::error!("[AuthenticationUseCase::generate_refresh_token] Token encoding failed: {error}");
+            log::error!(
+                "[AuthenticationUseCase::generate_refresh_token] Token encoding failed: {error}"
+            );
             BusinessError::new("Token generation failed".to_string())
         })
     }
@@ -333,7 +340,9 @@ impl AuthenticationUseCase {
             .role(user.role.clone())
             .tenant_id(user.tenant_id)
             .build()
-            .map_err(|message| BusinessError::new(format!("Token claims are incomplete: {message}")))
+            .map_err(|message| {
+                BusinessError::new(format!("Token claims are incomplete: {message}"))
+            })
     }
 
     /// DEF-XF-09 (owner, 2026-09-18): identity and tenant scope come from the
@@ -347,7 +356,7 @@ impl AuthenticationUseCase {
     /// be enabled, so disabling someone ends their session at once instead of
     /// when the token expires. A role or tenant change takes effect at the next
     /// login or refresh, which re-reads the account and mints fresh claims.
-    pub async fn validate(db: &DbConn, token: String) -> Result<User, BusinessError> {
+    pub async fn validate(&self, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate] Validating access token");
         let public_key = env::var("ACCESS_TOKEN_SECRET")
             .map_err(|_| BusinessError::new("Token is invalid".to_string()))?;
@@ -369,8 +378,9 @@ impl AuthenticationUseCase {
             claims.sub
         );
 
-        let account =
-            Self::load_enabled_account(db, claims.user_id, &claims.sub, "validate").await?;
+        let account = self
+            .load_enabled_account(claims.user_id, &claims.sub, "validate")
+            .await?;
         Ok(User {
             id: Some(claims.user_id),
             role: claims.role,
@@ -379,7 +389,7 @@ impl AuthenticationUseCase {
         })
     }
 
-    pub async fn validate_refresh_token(db: &DbConn, token: String) -> Result<User, BusinessError> {
+    pub async fn validate_refresh_token(&self, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate_refresh_token] Validating refresh token");
         let public_key = env::var("REFRESH_TOKEN_SECRET")
             .map_err(|_| BusinessError::new("Token is invalid".to_string()))?;
@@ -405,15 +415,13 @@ impl AuthenticationUseCase {
         // DEF-IA-01: the refresh path mints a *new* session, so getting the
         // account wrong here is the worst of the two. Resolved by id, and the
         // freshly read role and tenant (not the token's) go into the new claims.
-        Self::load_enabled_account(db, claims.user_id, &claims.sub, "validate_refresh_token").await
+        self.load_enabled_account(claims.user_id, &claims.sub, "validate_refresh_token")
+            .await
     }
 
-    pub async fn refresh_token(
-        db: &DbConn,
-        refresh_token: String,
-    ) -> Result<AccessToken, BusinessError> {
+    pub async fn refresh_token(&self, refresh_token: String) -> Result<AccessToken, BusinessError> {
         log::info!("[AuthenticationUseCase::refresh_token] Refreshing token");
-        let user = AuthenticationUseCase::validate_refresh_token(db, refresh_token).await?;
+        let user = self.validate_refresh_token(refresh_token).await?;
         AuthenticationUseCase::generate_access_token(user)
     }
 }

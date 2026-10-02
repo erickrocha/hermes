@@ -1,13 +1,10 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::maintenance_plan::{MaintenancePlan, MaintenancePlanEntityMapper};
 use crate::domain::enums::MaintenancePlanStatus;
-use crate::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
-use crate::gateway::maintenance_plan_gateway::MaintenancePlanGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::gateway::work_order_gateway::WorkOrderGateway;
-use sea_orm::DbErr;
+use crate::domain::maintenance_plan::MaintenancePlan;
+use crate::domain::work_order::WorkOrder;
+use crate::gateway::maintenance_plan_gateway::MaintenancePlanStore;
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
+use crate::gateway::work_order_gateway::WorkOrderStore;
 
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 /// `TRM-234`: two overlapping maintenance windows for the same vehicle on
@@ -23,21 +20,22 @@ pub const WORK_ORDER_ALREADY_SCHEDULED: &str =
     "This work order is already scheduled into another active maintenance plan";
 
 pub struct MaintenancePlanUseCase {
-    gateway: MaintenancePlanGateway,
-    work_orders: WorkOrderGateway,
-    vehicles: VehicleGateway,
+    gateway: Box<dyn MaintenancePlanStore>,
+    work_orders: Box<dyn WorkOrderStore>,
+    vehicles: Box<dyn VehicleLookupStore>,
 }
 
 impl MaintenancePlanUseCase {
-    pub fn new(
-        gateway: MaintenancePlanGateway,
-        work_orders: WorkOrderGateway,
-        vehicles: VehicleGateway,
-    ) -> Self {
+    pub fn new<P, W, V>(gateway: P, work_orders: W, vehicles: V) -> Self
+    where
+        P: MaintenancePlanStore + 'static,
+        W: WorkOrderStore + 'static,
+        V: VehicleLookupStore + 'static,
+    {
         Self {
-            gateway,
-            work_orders,
-            vehicles,
+            gateway: Box::new(gateway),
+            work_orders: Box::new(work_orders),
+            vehicles: Box::new(vehicles),
         }
     }
 
@@ -58,31 +56,25 @@ impl MaintenancePlanUseCase {
             work_orders.push(self.validated_work_order(id, &plan).await?);
         }
 
-        let entity = self.gateway.persist(plan).await.map_err(database_error)?;
-        let saved_plan = MaintenancePlanEntityMapper::from_active_model(entity);
+        let saved_plan = self.gateway.save(plan).await?;
 
         let mut linked = Vec::with_capacity(work_orders.len());
         for work_order in work_orders {
-            let entity = self
+            let saved = self
                 .work_orders
-                .persist(WorkOrder {
+                .save(WorkOrder {
                     maintenance_plan_id: saved_plan.id,
                     ..work_order
                 })
-                .await
-                .map_err(database_error)?;
-            linked.push(WorkOrderEntityMapper::from_active_model(entity));
+                .await?;
+            linked.push(saved);
         }
 
         Ok((saved_plan, linked))
     }
 
     async fn validated(&self, plan: MaintenancePlan) -> Result<MaintenancePlan, BusinessError> {
-        let vehicle = self
-            .vehicles
-            .find_by_id(plan.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.vehicles.get_by_id(plan.vehicle_id).await?;
         if !vehicle.is_some_and(|v| v.tenant_id == plan.tenant_id) {
             return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
         }
@@ -90,9 +82,11 @@ impl MaintenancePlanUseCase {
         let existing = self
             .gateway
             .find_by_vehicle_and_date(plan.vehicle_id, plan.date)
-            .await
-            .map_err(database_error)?;
-        if existing.iter().any(|p| Self::is_active(&p.status)) {
+            .await?;
+        if existing
+            .iter()
+            .any(|plan| Self::is_active(&plan.status.to_string()))
+        {
             return Err(BusinessError::new(OVERLAPPING_PLAN_EXISTS.to_string()));
         }
 
@@ -108,26 +102,16 @@ impl MaintenancePlanUseCase {
         work_order_id: i64,
         plan: &MaintenancePlan,
     ) -> Result<WorkOrder, BusinessError> {
-        let existing = self
-            .work_orders
-            .find_by_id(work_order_id)
-            .await
-            .map_err(database_error)?;
-        let Some(existing) = existing else {
+        let Some(work_order) = self.work_orders.get_by_id(work_order_id).await? else {
             return Err(BusinessError::new(WORK_ORDER_NOT_FOUND.to_string()));
         };
-        let work_order = WorkOrderEntityMapper::from_model(existing);
         if work_order.tenant_id != plan.tenant_id || work_order.vehicle_id != plan.vehicle_id {
             return Err(BusinessError::new(WORK_ORDER_WRONG_VEHICLE.to_string()));
         }
 
         if let Some(current_plan_id) = work_order.maintenance_plan_id {
-            let current_plan = self
-                .gateway
-                .find_by_id(current_plan_id)
-                .await
-                .map_err(database_error)?;
-            if current_plan.is_some_and(|p| Self::is_active(&p.status)) {
+            let current_plan = self.gateway.get_by_id(current_plan_id).await?;
+            if current_plan.is_some_and(|plan| Self::is_active(&plan.status.to_string())) {
                 return Err(BusinessError::new(WORK_ORDER_ALREADY_SCHEDULED.to_string()));
             }
         }
@@ -145,17 +129,16 @@ impl MaintenancePlanUseCase {
         &self,
         uuid: String,
     ) -> Result<(MaintenancePlan, Vec<WorkOrder>), BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        let plan = match entity {
-            Some(model) => MaintenancePlanEntityMapper::from_model(model),
-            None => return Err(BusinessError::new("Maintenance plan not found".to_string())),
-        };
-        let work_orders = self
-            .work_orders
-            .find_by_maintenance_plan(plan.id.unwrap_or_default())
-            .await
-            .map_err(database_error)?;
-        Ok((plan, WorkOrderEntityMapper::from_models(work_orders)))
+        let plan = self
+            .gateway
+            .get_by_uuid(uuid)
+            .await?
+            .ok_or_else(|| BusinessError::new("Maintenance plan not found".to_string()))?;
+        let plan_id = plan.id.filter(|id| *id > 0).ok_or_else(|| {
+            BusinessError::new("Maintenance plan identity is incomplete".to_string())
+        })?;
+        let work_orders = self.work_orders.list_by_maintenance_plan(plan_id).await?;
+        Ok((plan, work_orders))
     }
 
     pub async fn find_page(
@@ -163,13 +146,6 @@ impl MaintenancePlanUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<MaintenancePlan>, u64), BusinessError> {
-        let (rows, total) = self.gateway.find_page(page, page_size).await.map_err(database_error)?;
-        Ok((MaintenancePlanEntityMapper::from_models(rows), total))
+        self.gateway.list_page(page, page_size).await
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[MaintenancePlanUseCase] {}", msg);
-    BusinessError::new(msg)
 }

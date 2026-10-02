@@ -14,7 +14,7 @@ use business::domain::user::User;
 use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
 use business::use_cases::tenant_rule_setting_use_case::TenantRuleSettingUseCase;
 
-fn use_case(state: &AppState) -> TenantRuleSettingUseCase {
+fn use_case(state: &AppState) -> TenantRuleSettingUseCase<TenantRuleSettingGateway> {
     TenantRuleSettingUseCase::new(TenantRuleSettingGateway::new(state.conn.as_ref().clone()))
 }
 

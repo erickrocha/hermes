@@ -19,7 +19,7 @@ use business::domain::user::User;
 use business::gateway::customer_gateway::CustomerGateway;
 use business::use_cases::customer_use_case::CustomerUseCase;
 
-fn use_case(state: &AppState) -> CustomerUseCase {
+fn use_case(state: &AppState) -> CustomerUseCase<CustomerGateway> {
     CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()))
 }
 

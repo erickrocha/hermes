@@ -18,7 +18,9 @@ use business::gateway::vehicle_gateway::VehicleGateway;
 use business::use_cases::garage_service_model_use_case::{DUPLICATE_NAME, GarageServiceModelUseCase};
 use std::str::FromStr;
 
-fn use_case(state: &AppState) -> GarageServiceModelUseCase {
+fn use_case(
+    state: &AppState,
+) -> GarageServiceModelUseCase<GarageServiceModelGateway, VehicleGateway> {
     GarageServiceModelUseCase::new(
         GarageServiceModelGateway::new(state.conn.as_ref().clone()),
         VehicleGateway::new(state.conn.as_ref().clone()),

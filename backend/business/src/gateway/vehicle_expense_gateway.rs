@@ -1,14 +1,40 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::vehicle_expense::{VehicleExpense, VehicleExpenseEntityMapper};
 use entity::prelude::VehicleExpenseEntity as VehicleExpenseQuery;
 use entity::vehicle_expense_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
-    QueryFilter, QueryOrder,
+    QueryFilter, QueryOrder, SqlErr,
 };
+
+pub enum VehicleExpenseStoreError {
+    DuplicateInvoice,
+    Storage(BusinessError),
+}
+
+#[async_trait]
+pub trait VehicleExpenseStore: Send + Sync {
+    async fn save(
+        &self,
+        expense: VehicleExpense,
+    ) -> Result<VehicleExpense, VehicleExpenseStoreError>;
+    async fn invoice_exists(
+        &self,
+        vehicle_id: i64,
+        category: &str,
+        invoice_number: &str,
+    ) -> Result<bool, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<VehicleExpense>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<VehicleExpense>, u64), BusinessError>;
+}
 
 /// `HRMS-803` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +46,64 @@ impl VehicleExpenseGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl VehicleExpenseStore for VehicleExpenseGateway {
+    async fn save(
+        &self,
+        expense: VehicleExpense,
+    ) -> Result<VehicleExpense, VehicleExpenseStoreError> {
+        let active_model = VehicleExpenseEntityMapper::build_active_model(expense);
+        let saved = active_model.save(&self.db).await.map_err(|error| {
+            if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
+                VehicleExpenseStoreError::DuplicateInvoice
+            } else {
+                VehicleExpenseStoreError::Storage(database_error(error))
+            }
+        })?;
+        Ok(VehicleExpenseEntityMapper::from_active_model(saved))
+    }
+
+    async fn invoice_exists(
+        &self,
+        vehicle_id: i64,
+        category: &str,
+        invoice_number: &str,
+    ) -> Result<bool, BusinessError> {
+        self.find_by_vehicle_category_invoice(vehicle_id, category, invoice_number)
+            .await
+            .map(|rows| !rows.is_empty())
+            .map_err(database_error)
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<VehicleExpense>, BusinessError> {
+        let model = <Self as Gateway<
+            VehicleExpense,
+            vehicle_expense_entity::Model,
+            vehicle_expense_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(VehicleExpenseEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<VehicleExpense>, u64), BusinessError> {
+        let (models, total) = VehicleExpenseGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((VehicleExpenseEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Vehicle expense database error: {error}");
+    log::error!("[VehicleExpenseGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

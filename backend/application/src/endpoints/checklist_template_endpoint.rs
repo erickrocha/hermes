@@ -17,7 +17,9 @@ use business::domain::checklist_template::ChecklistTemplate;
 use business::domain::checklist_template_item::ChecklistTemplateItem;
 use business::domain::enums::ChecklistType;
 use business::domain::user::User;
-use business::gateway::checklist_template_gateway::ChecklistTemplateGateway;
+use business::gateway::checklist_template_gateway::{
+    ChecklistTemplateDatabaseGateway, ChecklistTemplateGateway,
+};
 use business::gateway::checklist_template_item_gateway::ChecklistTemplateItemGateway;
 use business::use_cases::checklist_template_use_case::{
     AT_LEAST_ONE_ITEM_REQUIRED, ChecklistTemplateUseCase, ITEM_DESCRIPTION_REQUIRED, NAME_REQUIRED,
@@ -26,10 +28,10 @@ use std::str::FromStr;
 
 fn use_case(state: &AppState) -> ChecklistTemplateUseCase {
     let db = state.conn.as_ref().clone();
-    ChecklistTemplateUseCase::new(
+    ChecklistTemplateUseCase::new(ChecklistTemplateDatabaseGateway::new(
         ChecklistTemplateGateway::new(db.clone()),
         ChecklistTemplateItemGateway::new(db),
-    )
+    ))
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
@@ -64,7 +66,10 @@ fn item_json(item: ChecklistTemplateItem) -> ChecklistTemplateItemJson {
     }
 }
 
-fn template_json(template: ChecklistTemplate, items: Vec<ChecklistTemplateItem>) -> ChecklistTemplateJson {
+fn template_json(
+    template: ChecklistTemplate,
+    items: Vec<ChecklistTemplateItem>,
+) -> ChecklistTemplateJson {
     ChecklistTemplateJson {
         uuid: template.uuid,
         tenant_id: template.tenant_id,
@@ -151,10 +156,9 @@ pub async fn get_by_uuid(
     Extension(current_user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<ChecklistTemplateJson>> {
-    let (template, items) = use_case(&state)
-        .find_by_uuid(uuid)
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::ChecklistTemplateNotFound))?;
+    let (template, items) = use_case(&state).find_by_uuid(uuid).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::ChecklistTemplateNotFound)
+    })?;
 
     if !can_read_checklist_template(&current_user, template.tenant_id) {
         return Err(ExceptionResponse::NotFound(

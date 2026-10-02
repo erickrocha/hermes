@@ -1,6 +1,8 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
+use crate::domain::enums::Role;
 use crate::domain::user::{User, UserEntityMapper};
 use entity::prelude::UserEntity as UserQuery;
 use entity::user_entity;
@@ -9,6 +11,27 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
     QueryFilter, QueryOrder,
 };
+
+#[async_trait]
+pub trait UserLookupStore: Send + Sync {
+    async fn get_by_id(&self, id: i64) -> Result<Option<User>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<User>, BusinessError>;
+}
+
+#[async_trait]
+pub trait UserStore: UserLookupStore {
+    async fn save(&self, user: User) -> Result<User, BusinessError>;
+    async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError>;
+    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<User>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<User>, BusinessError>;
+    async fn list_by_tenant(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError>;
+}
 
 pub struct UserGateway {
     db: DbConn,
@@ -22,6 +45,85 @@ impl UserGateway {
     pub fn db(&self) -> &DbConn {
         &self.db
     }
+}
+
+#[async_trait]
+impl UserLookupStore for UserGateway {
+    async fn get_by_id(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_id(self, id)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<User>, BusinessError> {
+        let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_uuid(self, uuid)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+}
+
+#[async_trait]
+impl UserStore for UserGateway {
+    async fn save(&self, user: User) -> Result<User, BusinessError> {
+        let active_model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::persist(self, user)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError> {
+        let model = UserGateway::find_by_email(&self.db, email)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError> {
+        let model = UserGateway::find_by_role(&self.db, role.to_string())
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<User>, u64), BusinessError> {
+        let (models, total) = UserGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((UserEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<User>, BusinessError> {
+        let models = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_all(self)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_models(models))
+    }
+
+    async fn list_by_tenant(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
+        let models = UserGateway::find_all_by_tenant_id(self, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_models(models))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("User database error: {error}");
+    log::error!("[UserGateway] {message}");
+    BusinessError::new(message)
+}
+
+fn lookup_database_error(error: DbErr) -> BusinessError {
+    let message = format!("User lookup database error: {error}");
+    log::error!("[UserGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

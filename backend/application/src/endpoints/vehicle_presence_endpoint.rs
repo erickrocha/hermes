@@ -91,11 +91,13 @@ async fn open_triage_on_arrival(state: &AppState, tenant_id: Option<i64>, vehicl
         Err(_) => business::domain::tenant_rule_setting::RuleSettings::default().garage_min_trip_absence_minutes,
     };
     let triage = business::use_cases::garage_attendance_use_case::GarageAttendanceUseCase::new(
-        garage_attendance_gateway::GarageAttendanceGateway::new(db.clone()),
+        garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway::new(
+            garage_attendance_gateway::GarageAttendanceGateway::new(db.clone()),
         garage_service_gateway::GarageServiceGateway::new(db.clone()),
         garage_service_log_gateway::GarageServiceLogGateway::new(db.clone()),
         garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
         VehicleGateway::new(db),
+        ),
     );
     let run = snapshot.last_departure_at.map(|departed| (departed, arrived_at));
     if let Err(e) = triage.open_on_arrival(tenant_id, vehicle_id, run, minutes).await {

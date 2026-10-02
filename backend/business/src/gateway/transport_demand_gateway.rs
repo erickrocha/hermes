@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::transport_demand::{TransportDemand, TransportDemandEntityMapper};
 use entity::prelude::TransportDemandEntity as DemandQuery;
 use entity::transport_demand_entity;
@@ -9,6 +10,19 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait TransportDemandStore: Send + Sync {
+    async fn save(&self, demand: TransportDemand) -> Result<TransportDemand, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<TransportDemand>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<TransportDemand>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<TransportDemand>, u64), BusinessError>;
+}
 
 /// `HRMS-603` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as `CustomerGateway`.
@@ -20,6 +34,60 @@ impl TransportDemandGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl TransportDemandStore for TransportDemandGateway {
+    async fn save(&self, demand: TransportDemand) -> Result<TransportDemand, BusinessError> {
+        let active_model = <Self as Gateway<
+            TransportDemand,
+            transport_demand_entity::Model,
+            transport_demand_entity::ActiveModel,
+        >>::persist(self, demand)
+        .await
+        .map_err(database_error)?;
+        Ok(TransportDemandEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<TransportDemand>, BusinessError> {
+        let model = <Self as Gateway<
+            TransportDemand,
+            transport_demand_entity::Model,
+            transport_demand_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(TransportDemandEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<TransportDemand>, BusinessError> {
+        let model = <Self as Gateway<
+            TransportDemand,
+            transport_demand_entity::Model,
+            transport_demand_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(TransportDemandEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<TransportDemand>, u64), BusinessError> {
+        let (models, total) = TransportDemandGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((TransportDemandEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Transport demand database error: {error}");
+    log::error!("[TransportDemandGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

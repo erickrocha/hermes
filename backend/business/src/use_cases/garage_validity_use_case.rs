@@ -1,19 +1,17 @@
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::GarageServiceState;
+use crate::domain::enums::{GarageServiceState, PresenceEventKind};
 use crate::domain::garage_attendance::GarageAttendance;
 use crate::domain::garage_service::GarageService;
 use crate::domain::tenant_rule_setting::RuleSettings;
-use crate::gateway::extra_trip_gateway::ExtraTripGateway;
-use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
-use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
-use crate::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway;
-use crate::use_cases::fuel_gauge_use_case::{FuelGaugeUseCase, TankGauge};
+use crate::gateway::extra_trip_gateway::GarageValidityTripStore;
+use crate::gateway::garage_service_model_gateway::GarageServiceModelStore;
+use crate::gateway::tenant_rule_setting_gateway::TenantRuleSettingStore;
+use crate::gateway::vehicle_presence_event_gateway::GarageValidityPresenceStore;
+use crate::use_cases::fuel_gauge_use_case::{FuelGaugeReader, TankGauge};
 use crate::use_cases::garage_validity::{
     PresenceFacts, ServiceFacts, TankFact, ValidityContext, ValidityReason, effective_state,
 };
 use chrono::NaiveDateTime;
-use sea_orm::DbErr;
 
 /// What a triage's services evaluate to, and what they were evaluated on.
 pub struct Evaluation {
@@ -30,22 +28,29 @@ pub struct Evaluation {
 /// evaluates every service of a triage with them. Nothing is stored
 /// (`TRM-447`); identical facts feed every surface (`TRM-448`).
 pub struct GarageValidityUseCase {
-    events: VehiclePresenceEventGateway,
-    trips: ExtraTripGateway,
-    models: GarageServiceModelGateway,
-    rules: TenantRuleSettingGateway,
-    gauge: FuelGaugeUseCase,
+    events: Box<dyn GarageValidityPresenceStore>,
+    trips: Box<dyn GarageValidityTripStore>,
+    models: Box<dyn GarageServiceModelStore>,
+    rules: Box<dyn TenantRuleSettingStore>,
+    gauge: Box<dyn FuelGaugeReader>,
 }
 
 impl GarageValidityUseCase {
-    pub fn new(
-        events: VehiclePresenceEventGateway,
-        trips: ExtraTripGateway,
-        models: GarageServiceModelGateway,
-        rules: TenantRuleSettingGateway,
-        gauge: FuelGaugeUseCase,
-    ) -> Self {
-        Self { events, trips, models, rules, gauge }
+    pub fn new<E, T, M, R, G>(events: E, trips: T, models: M, rules: R, gauge: G) -> Self
+    where
+        E: GarageValidityPresenceStore + 'static,
+        T: GarageValidityTripStore + 'static,
+        M: GarageServiceModelStore + 'static,
+        R: TenantRuleSettingStore + 'static,
+        G: FuelGaugeReader + 'static,
+    {
+        Self {
+            events: Box::new(events),
+            trips: Box::new(trips),
+            models: Box::new(models),
+            rules: Box::new(rules),
+            gauge: Box::new(gauge),
+        }
     }
 
     /// The effective state and reason of each of the triage's services, in
@@ -68,7 +73,10 @@ impl GarageValidityUseCase {
         use crate::domain::enums::GarageAttendanceStatus;
         if attendance.status != GarageAttendanceStatus::Open {
             return Ok(Evaluation {
-                services: services.iter().map(|s| (s.state, ValidityReason::Valid)).collect(),
+                services: services
+                    .iter()
+                    .map(|s| (s.state, ValidityReason::Valid))
+                    .collect(),
                 required: vec![false; services.len()],
                 names: vec![String::new(); services.len()],
                 tank: TankFact::NoUsableReading,
@@ -76,28 +84,40 @@ impl GarageValidityUseCase {
             });
         }
         let vehicle_id = attendance.vehicle_id;
-        let rules: RuleSettings = self.rules.settings_for(attendance.tenant_id).await.map_err(database_error)?;
+        let rules = self
+            .rules
+            .get_current(attendance.tenant_id)
+            .await?
+            .map(|setting| setting.settings())
+            .unwrap_or_default();
         let presence = self.presence(vehicle_id).await?;
         let trip_marked_at = self
             .trips
-            .find_upcoming_by_vehicle(vehicle_id, chrono::Utc::now().date_naive())
-            .await
-            .map_err(database_error)?
+            .upcoming_for_vehicle(vehicle_id, chrono::Utc::now().date_naive())
+            .await?
             .first()
-            .map(|t| t.created_at.naive_utc());
+            .and_then(|trip| trip.created_at);
 
         // One gauge read, and only if some service is tank-governed.
         let mut governed = Vec::with_capacity(services.len());
         let mut required = Vec::with_capacity(services.len());
         let mut names = Vec::with_capacity(services.len());
         for s in services {
-            let model = self.models.find_by_id(s.service_model_id).await.map_err(database_error)?;
-            governed.push(model.as_ref().is_some_and(|m| m.governed_by_tank));
-            required.push(model.as_ref().is_some_and(|m| m.required_for_departure));
-            names.push(model.map(|m| m.name).unwrap_or_else(|| s.name_key.clone()));
+            let model = self.models.get_by_id(s.service_model_id).await?;
+            governed.push(model.as_ref().is_some_and(|model| model.governed_by_tank));
+            required.push(
+                model
+                    .as_ref()
+                    .is_some_and(|model| model.required_for_departure),
+            );
+            names.push(
+                model
+                    .map(|model| model.name)
+                    .unwrap_or_else(|| s.name_key.clone()),
+            );
         }
         let tank = if governed.iter().any(|g| *g) {
-            match self.gauge.gauge(vehicle_id).await? {
+            match self.gauge.read_gauge(vehicle_id).await? {
                 TankGauge::Reading { percent, .. } => TankFact::Percent(percent),
                 TankGauge::Unavailable(_) => TankFact::NoUsableReading,
             }
@@ -105,7 +125,12 @@ impl GarageValidityUseCase {
             TankFact::NoUsableReading
         };
 
-        let ctx = ValidityContext { presence, trip_marked_at, tank, now: chrono::Utc::now().naive_utc() };
+        let ctx = ValidityContext {
+            presence,
+            trip_marked_at,
+            tank,
+            now: chrono::Utc::now().naive_utc(),
+        };
         let effective = services
             .iter()
             .zip(governed)
@@ -123,26 +148,44 @@ impl GarageValidityUseCase {
                 )
             })
             .collect();
-        Ok(Evaluation { services: effective, required, names, tank, rules })
+        Ok(Evaluation {
+            services: effective,
+            required,
+            names,
+            tank,
+            rules,
+        })
     }
 
     pub async fn rules_for(&self, tenant_id: Option<i64>) -> Result<RuleSettings, BusinessError> {
-        self.rules.settings_for(tenant_id).await.map_err(database_error)
+        Ok(self
+            .rules
+            .get_current(tenant_id)
+            .await?
+            .map(|setting| setting.settings())
+            .unwrap_or_default())
     }
 
     /// The vehicle's tank reading whether or not any service is tank-governed
     /// (the monitor's cards show every vehicle's tank, `TRM-495`).
     pub async fn tank_fact(&self, vehicle_id: i64) -> TankFact {
-        match self.gauge.gauge(vehicle_id).await {
+        match self.gauge.read_gauge(vehicle_id).await {
             Ok(TankGauge::Reading { percent, .. }) => TankFact::Percent(percent),
             _ => TankFact::NoUsableReading,
         }
     }
 
     async fn presence(&self, vehicle_id: i64) -> Result<PresenceFacts, BusinessError> {
-        let at = |m: Option<entity::vehicle_presence_event_entity::Model>| m.map(|m| m.occurred_at.naive_utc());
-        let last_arrival_at = at(self.events.find_latest_of_kind(vehicle_id, "Arrival").await.map_err(database_error)?);
-        let last_departure_at = at(self.events.find_latest_of_kind(vehicle_id, "Departure").await.map_err(database_error)?);
+        let last_arrival_at = self
+            .events
+            .latest_of_kind(vehicle_id, PresenceEventKind::Arrival)
+            .await?
+            .map(|event| event.occurred_at);
+        let last_departure_at = self
+            .events
+            .latest_of_kind(vehicle_id, PresenceEventKind::Departure)
+            .await?
+            .map(|event| event.occurred_at);
         let away = match (last_arrival_at, last_departure_at) {
             (_, None) => false,
             (None, Some(_)) => true,
@@ -156,21 +199,23 @@ impl GarageValidityUseCase {
                 .map(|departed| (departed, arrival)),
             None => None,
         };
-        Ok(PresenceFacts { last_arrival_at, last_departure_at, away, last_run })
+        Ok(PresenceFacts {
+            last_arrival_at,
+            last_departure_at,
+            away,
+            last_run,
+        })
     }
 
-    async fn departure_before(&self, vehicle_id: i64, before: NaiveDateTime) -> Result<Option<NaiveDateTime>, BusinessError> {
+    async fn departure_before(
+        &self,
+        vehicle_id: i64,
+        before: NaiveDateTime,
+    ) -> Result<Option<NaiveDateTime>, BusinessError> {
         Ok(self
             .events
-            .find_latest_of_kind_before(vehicle_id, "Departure", before)
-            .await
-            .map_err(database_error)?
-            .map(|m| m.occurred_at.naive_utc()))
+            .latest_of_kind_before(vehicle_id, PresenceEventKind::Departure, before)
+            .await?
+            .map(|event| event.occurred_at))
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[GarageValidityUseCase] {}", msg);
-    BusinessError::new(msg)
 }

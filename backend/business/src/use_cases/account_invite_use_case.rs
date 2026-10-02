@@ -1,13 +1,10 @@
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::password_policy;
 use crate::domain::user::User;
-use crate::gateway::user_gateway::UserGateway;
+use crate::gateway::user_gateway::UserStore;
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use entity::user_entity;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use sea_orm::{ActiveModelTrait, DbConn, Set};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -30,9 +27,17 @@ pub struct AccountInvite {
     pub expires_at: DateTime<Utc>,
 }
 
-pub struct AccountInviteUseCase;
+pub struct AccountInviteUseCase {
+    users: Box<dyn UserStore>,
+}
 
 impl AccountInviteUseCase {
+    pub fn new<U: UserStore + 'static>(users: U) -> Self {
+        Self {
+            users: Box::new(users),
+        }
+    }
+
     /// Emite um convite de uso único para o paciente definir a própria senha.
     ///
     /// Substitui a senha padrão compartilhada: a conta nasce com um segredo
@@ -70,7 +75,7 @@ impl AccountInviteUseCase {
     }
 
     /// Consome o convite: valida e grava a senha escolhida pelo paciente.
-    pub async fn accept(db: &DbConn, token: &str, new_password: &str) -> Result<(), BusinessError> {
+    pub async fn accept(&self, token: &str, new_password: &str) -> Result<(), BusinessError> {
         password_policy::validate_length(new_password)?;
 
         // O e-mail sai do payload sem validar assinatura, só para localizar a conta:
@@ -79,7 +84,9 @@ impl AccountInviteUseCase {
         // real acontece logo abaixo.
         let email = Self::peek_subject(token)?;
 
-        let user = UserGateway::find_by_email(db, email)
+        let user = self
+            .users
+            .get_by_email(email)
             .await
             .map_err(|e| BusinessError::new(format!("Database error validating invite: {}", e)))?
             .ok_or_else(|| BusinessError::new("Invalid invite".to_string()))?;
@@ -123,20 +130,24 @@ impl AccountInviteUseCase {
         let hashed = crate::commons::password::hash(new_password)
             .map_err(|e| BusinessError::new(format!("Failed to hash password: {}", e)))?;
 
-        let mut active: user_entity::ActiveModel = user.clone().into();
-        active.password = Set(hashed);
+        let updated = User {
+            password: hashed,
+            ..user.clone()
+        };
         // D-05: `/accept-invite` é rota pública — não há sessão, logo não há
         // escopo, logo a gravação seria recusada. O convidado age sobre a
         // própria conta, então a escrita roda com a identidade dele: quem tem
         // tenant grava dentro do próprio tenant, e o audit trail continua
         // apontando para a pessoa, não para "system".
         let actor = entity::audit::AuditUser {
-            id: user.id,
+            id: user
+                .id
+                .ok_or_else(|| BusinessError::new("Invalid invite".to_string()))?,
             email: user.email.clone(),
             tenant_id: user.tenant_id,
             enforce_tenant: user.tenant_id.is_some(),
         };
-        entity::audit::run_with_user(Some(actor), active.update(db))
+        entity::audit::run_with_user(Some(actor), self.users.save(updated))
             .await
             .map_err(|e| BusinessError::new(format!("Failed to set password: {}", e)))?;
 
@@ -170,7 +181,7 @@ impl AccountInviteUseCase {
     /// unguessable secret invalidates every earlier invitation by construction.
     /// The account is left with a secret nobody knows, which is the same state
     /// `POST /user` leaves it in.
-    pub async fn reissue(db: &DbConn, user: User) -> Result<(User, AccountInvite), BusinessError> {
+    pub async fn reissue(&self, user: User) -> Result<(User, AccountInvite), BusinessError> {
         if !user.enabled {
             // DEF-IA-04's rule, stated on the issuing side too: a disabled
             // account is not invited back in.
@@ -188,12 +199,11 @@ impl AccountInviteUseCase {
             ..user
         };
 
-        let saved = UserGateway::new(db.clone())
-            .persist(refreshed.clone())
+        self.users
+            .save(refreshed.clone())
             .await
             .map_err(|e| BusinessError::new(format!("Failed to re-issue invite: {}", e)))?;
 
-        let _ = saved;
         let invite = Self::issue(&refreshed)?;
         log::info!(
             "[AccountInviteUseCase::reissue] Invite re-issued for {}",

@@ -1,14 +1,35 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
+use crate::domain::part::{Part, PartEntityMapper};
 use crate::domain::purchase_order::{PurchaseOrder, PurchaseOrderEntityMapper};
+use crate::gateway::part_gateway::PartGateway;
 use entity::prelude::PurchaseOrderEntity as PurchaseOrderQuery;
 use entity::purchase_order_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder,
 };
+
+#[async_trait]
+pub trait PurchaseOrderStore: Send + Sync {
+    async fn find_part(&self, part_id: i64) -> Result<Option<Part>, BusinessError>;
+    async fn save(&self, order: PurchaseOrder) -> Result<PurchaseOrder, BusinessError>;
+    async fn find_by_id(&self, id: i64) -> Result<Option<PurchaseOrder>, BusinessError>;
+    async fn find_by_uuid(&self, uuid: String) -> Result<Option<PurchaseOrder>, BusinessError>;
+    async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PurchaseOrder>, u64), BusinessError>;
+    async fn find_active_by_part_and_work_order(
+        &self,
+        part_id: i64,
+        work_order_id: i64,
+    ) -> Result<Vec<PurchaseOrder>, BusinessError>;
+}
 
 /// `HRMS-802` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +41,94 @@ impl PurchaseOrderGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+pub struct PurchaseOrderDatabaseGateway {
+    orders: PurchaseOrderGateway,
+    parts: PartGateway,
+}
+
+impl PurchaseOrderDatabaseGateway {
+    pub fn new(orders: PurchaseOrderGateway, parts: PartGateway) -> Self {
+        Self { orders, parts }
+    }
+}
+
+#[async_trait]
+impl PurchaseOrderStore for PurchaseOrderDatabaseGateway {
+    async fn find_part(&self, part_id: i64) -> Result<Option<Part>, BusinessError> {
+        <PartGateway as Gateway<
+            Part,
+            entity::part_entity::Model,
+            entity::part_entity::ActiveModel,
+        >>::find_by_id(&self.parts, part_id)
+        .await
+        .map(|model| model.map(PartEntityMapper::from_model))
+        .map_err(database_error)
+    }
+
+    async fn save(&self, order: PurchaseOrder) -> Result<PurchaseOrder, BusinessError> {
+        <PurchaseOrderGateway as Gateway<
+            PurchaseOrder,
+            purchase_order_entity::Model,
+            purchase_order_entity::ActiveModel,
+        >>::persist(&self.orders, order)
+        .await
+        .map(PurchaseOrderEntityMapper::from_active_model)
+        .map_err(database_error)
+    }
+
+    async fn find_by_id(&self, id: i64) -> Result<Option<PurchaseOrder>, BusinessError> {
+        <PurchaseOrderGateway as Gateway<
+            PurchaseOrder,
+            purchase_order_entity::Model,
+            purchase_order_entity::ActiveModel,
+        >>::find_by_id(&self.orders, id)
+        .await
+        .map(|model| model.map(PurchaseOrderEntityMapper::from_model))
+        .map_err(database_error)
+    }
+
+    async fn find_by_uuid(&self, uuid: String) -> Result<Option<PurchaseOrder>, BusinessError> {
+        <PurchaseOrderGateway as Gateway<
+            PurchaseOrder,
+            purchase_order_entity::Model,
+            purchase_order_entity::ActiveModel,
+        >>::find_by_uuid(&self.orders, uuid)
+        .await
+        .map(|model| model.map(PurchaseOrderEntityMapper::from_model))
+        .map_err(database_error)
+    }
+
+    async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PurchaseOrder>, u64), BusinessError> {
+        self.orders
+            .find_page(page, page_size)
+            .await
+            .map(|(models, total)| (PurchaseOrderEntityMapper::from_models(models), total))
+            .map_err(database_error)
+    }
+
+    async fn find_active_by_part_and_work_order(
+        &self,
+        part_id: i64,
+        work_order_id: i64,
+    ) -> Result<Vec<PurchaseOrder>, BusinessError> {
+        self.orders
+            .find_active_by_part_and_work_order(part_id, work_order_id)
+            .await
+            .map(PurchaseOrderEntityMapper::from_models)
+            .map_err(database_error)
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Database error: {error}");
+    log::error!("[PurchaseOrderGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]
@@ -45,26 +154,35 @@ impl Gateway<PurchaseOrder, purchase_order_entity::Model, purchase_order_entity:
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<purchase_order_entity::Model>, DbErr> {
-        tenant_select(PurchaseOrderQuery::find(), purchase_order_entity::Column::TenantId)
-            .filter(purchase_order_entity::Column::Id.eq(id))
-            .one(&self.db)
-            .await
+        tenant_select(
+            PurchaseOrderQuery::find(),
+            purchase_order_entity::Column::TenantId,
+        )
+        .filter(purchase_order_entity::Column::Id.eq(id))
+        .one(&self.db)
+        .await
     }
 
     async fn find_by_uuid(
         &self,
         uuid: String,
     ) -> Result<Option<purchase_order_entity::Model>, DbErr> {
-        tenant_select(PurchaseOrderQuery::find(), purchase_order_entity::Column::TenantId)
-            .filter(purchase_order_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
-            .one(&self.db)
-            .await
+        tenant_select(
+            PurchaseOrderQuery::find(),
+            purchase_order_entity::Column::TenantId,
+        )
+        .filter(purchase_order_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+        .one(&self.db)
+        .await
     }
 
     async fn find_all(&self) -> Result<Vec<purchase_order_entity::Model>, DbErr> {
-        tenant_select(PurchaseOrderQuery::find(), purchase_order_entity::Column::TenantId)
-            .all(&self.db)
-            .await
+        tenant_select(
+            PurchaseOrderQuery::find(),
+            purchase_order_entity::Column::TenantId,
+        )
+        .all(&self.db)
+        .await
     }
 }
 
@@ -76,8 +194,11 @@ impl PurchaseOrderGateway {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<purchase_order_entity::Model>, u64), DbErr> {
-        let query = tenant_select(PurchaseOrderQuery::find(), purchase_order_entity::Column::TenantId)
-            .order_by_desc(purchase_order_entity::Column::CreatedAt);
+        let query = tenant_select(
+            PurchaseOrderQuery::find(),
+            purchase_order_entity::Column::TenantId,
+        )
+        .order_by_desc(purchase_order_entity::Column::CreatedAt);
         fetch_page(query, &self.db, page, page_size).await
     }
 
@@ -89,19 +210,22 @@ impl PurchaseOrderGateway {
         part_id: i64,
         work_order_id: i64,
     ) -> Result<Vec<purchase_order_entity::Model>, DbErr> {
-        tenant_select(PurchaseOrderQuery::find(), purchase_order_entity::Column::TenantId)
-            .filter(
-                Condition::all()
-                    .add(purchase_order_entity::Column::PartId.eq(part_id))
-                    .add(purchase_order_entity::Column::WorkOrderId.eq(work_order_id))
-                    .add(
-                        Condition::any()
-                            .add(purchase_order_entity::Column::Status.eq("Requested"))
-                            .add(purchase_order_entity::Column::Status.eq("Ordered")),
-                    ),
-            )
-            .all(&self.db)
-            .await
+        tenant_select(
+            PurchaseOrderQuery::find(),
+            purchase_order_entity::Column::TenantId,
+        )
+        .filter(
+            Condition::all()
+                .add(purchase_order_entity::Column::PartId.eq(part_id))
+                .add(purchase_order_entity::Column::WorkOrderId.eq(work_order_id))
+                .add(
+                    Condition::any()
+                        .add(purchase_order_entity::Column::Status.eq("Requested"))
+                        .add(purchase_order_entity::Column::Status.eq("Ordered")),
+                ),
+        )
+        .all(&self.db)
+        .await
     }
 }
 

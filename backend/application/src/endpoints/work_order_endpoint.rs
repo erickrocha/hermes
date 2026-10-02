@@ -16,6 +16,7 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
+use business::domain::authorization::can_read_preventive_plan;
 use business::domain::authorization::{
     can_administer_work_order, can_create_work_order, can_read_part, can_read_work_order,
 };
@@ -26,17 +27,22 @@ use business::domain::work_order_item::WorkOrderItem;
 use business::domain::work_order_posting::WorkOrderPosting;
 use business::gateway::km_evolution_gateway::KmEvolutionGateway;
 use business::gateway::part_gateway::PartGateway;
-use business::gateway::stock_movement_gateway::StockMovementGateway;
-use business::domain::authorization::can_read_preventive_plan;
 use business::gateway::preventive_plan_extension_gateway::PreventivePlanExtensionGateway;
-use business::gateway::preventive_plan_gateway::PreventivePlanGateway;
-use business::use_cases::preventive_plan_use_case::PreventivePlanUseCase;
+use business::gateway::preventive_plan_gateway::{
+    PreventivePlanDatabaseGateway, PreventivePlanGateway,
+};
+use business::gateway::stock_movement_gateway::{
+    StockMovementDatabaseGateway, StockMovementGateway,
+};
 use business::gateway::vehicle_gateway::VehicleGateway;
-use business::gateway::work_order_gateway::WorkOrderGateway;
+use business::gateway::work_order_gateway::{WorkOrderGateway, WorkOrderWorkflowDatabaseGateway};
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
-use business::gateway::work_order_posting_gateway::WorkOrderPostingGateway;
+use business::gateway::work_order_posting_gateway::{
+    WorkOrderPostingDatabaseGateway, WorkOrderPostingGateway,
+};
 use business::use_cases::km_evolution_use_case::KmEvolutionUseCase;
 use business::use_cases::part_use_case::PartUseCase;
+use business::use_cases::preventive_plan_use_case::PreventivePlanUseCase;
 use business::use_cases::stock_movement_use_case::StockMovementUseCase;
 use business::use_cases::vehicle_use_case::VehicleUseCase;
 use business::use_cases::work_order_posting_use_case::{
@@ -52,36 +58,46 @@ use std::str::FromStr;
 fn use_case(state: &AppState) -> WorkOrderUseCase {
     let db = state.conn.as_ref().clone();
     WorkOrderUseCase::new(
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
-        KmEvolutionUseCase::new(KmEvolutionGateway::new(db.clone()), VehicleGateway::new(db.clone())),
-        PreventivePlanGateway::new(db.clone()),
-        PreventivePlanExtensionGateway::new(db),
+        WorkOrderWorkflowDatabaseGateway::new(
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+            PreventivePlanGateway::new(db.clone()),
+            PreventivePlanExtensionGateway::new(db.clone()),
+        ),
+        KmEvolutionUseCase::new(
+            KmEvolutionGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+        ),
     )
 }
 
 fn preventive_plan_use_case(state: &AppState) -> PreventivePlanUseCase {
     let db = state.conn.as_ref().clone();
-    PreventivePlanUseCase::new(
+    PreventivePlanUseCase::new(PreventivePlanDatabaseGateway::new(
         PreventivePlanGateway::new(db.clone()),
         VehicleGateway::new(db.clone()),
         WorkOrderGateway::new(db.clone()),
         WorkOrderItemGateway::new(db.clone()),
         PreventivePlanExtensionGateway::new(db.clone()),
         business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db),
-    )
+    ))
 }
 
 fn posting_use_case(state: &AppState) -> WorkOrderPostingUseCase {
     let db = state.conn.as_ref().clone();
     WorkOrderPostingUseCase::new(
-        WorkOrderPostingGateway::new(db.clone()),
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-        PartGateway::new(db.clone()),
-        StockMovementGateway::new(db.clone()),
-        StockMovementUseCase::new(StockMovementGateway::new(db.clone()), PartGateway::new(db)),
+        WorkOrderPostingDatabaseGateway::new(
+            WorkOrderPostingGateway::new(db.clone()),
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+            PartGateway::new(db.clone()),
+            StockMovementGateway::new(db.clone()),
+        ),
+        StockMovementUseCase::new(StockMovementDatabaseGateway::new(
+            StockMovementGateway::new(db.clone()),
+            PartGateway::new(db),
+        )),
     )
 }
 
@@ -98,7 +114,9 @@ fn error(locale: Locale, message: &str) -> ExceptionResponse {
         | POSTING_ITEM_NOT_ON_THIS_WORK_ORDER
         | POSTING_PART_NOT_FOUND
         | QUANTITY_MUST_BE_POSITIVE
-        | INSUFFICIENT_STOCK => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+        | INSUFFICIENT_STOCK => {
+            ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
+        }
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
     }
 }
@@ -164,7 +182,11 @@ async fn total_cost_cents(state: &AppState, work_order: &WorkOrder) -> i64 {
     postings_total + external
 }
 
-fn posting_json(posting: WorkOrderPosting, part_uuid: String, item_uuid: Option<String>) -> WorkOrderPostingJson {
+fn posting_json(
+    posting: WorkOrderPosting,
+    part_uuid: String,
+    item_uuid: Option<String>,
+) -> WorkOrderPostingJson {
     WorkOrderPostingJson {
         uuid: posting.uuid,
         part_uuid,
@@ -176,7 +198,10 @@ fn posting_json(posting: WorkOrderPosting, part_uuid: String, item_uuid: Option<
     }
 }
 
-async fn posting_json_resolved(state: &AppState, posting: WorkOrderPosting) -> WorkOrderPostingJson {
+async fn posting_json_resolved(
+    state: &AppState,
+    posting: WorkOrderPosting,
+) -> WorkOrderPostingJson {
     let part_uuid = PartGateway::new(state.conn.as_ref().clone())
         .find_by_id(posting.part_id)
         .await
@@ -217,7 +242,8 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<WorkOrderJson>,
 ) -> HttpResponse<(StatusCode, Json<WorkOrderJson>)> {
-    let vehicle = find_visible(&state, &locale, &current_user, payload.vehicle_uuid.clone()).await?;
+    let vehicle =
+        find_visible(&state, &locale, &current_user, payload.vehicle_uuid.clone()).await?;
     if !can_create_work_order(&current_user, vehicle.tenant_id) {
         return Err(ExceptionResponse::Forbidden(
             locale,
@@ -254,7 +280,10 @@ pub async fn add(
     };
 
     match use_case(&state).create(work_order).await {
-        Ok(saved) => Ok((StatusCode::CREATED, Json(json(&state, saved, Vec::new()).await))),
+        Ok(saved) => Ok((
+            StatusCode::CREATED,
+            Json(json(&state, saved, Vec::new()).await),
+        )),
         Err(e) => Err(error(locale, &e.message)),
     }
 }
@@ -283,7 +312,10 @@ pub async fn get_by_uuid(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(&current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
     Ok(Json(json(&state, work_order, items).await))
 }
@@ -350,7 +382,10 @@ pub async fn add_item(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(&current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
     if !can_create_work_order(&current_user, work_order.tenant_id) {
         return Err(ExceptionResponse::Forbidden(
@@ -367,9 +402,14 @@ pub async fn add_item(
             let (plan, _) = preventive_plan_use_case(&state)
                 .find_by_uuid(plan_uuid)
                 .await
-                .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound))?;
+                .map_err(|_| {
+                    ExceptionResponse::NotFound(locale.clone(), ErrorKey::PreventivePlanNotFound)
+                })?;
             if !can_read_preventive_plan(&current_user, plan.tenant_id) {
-                return Err(ExceptionResponse::NotFound(locale, ErrorKey::PreventivePlanNotFound));
+                return Err(ExceptionResponse::NotFound(
+                    locale,
+                    ErrorKey::PreventivePlanNotFound,
+                ));
             }
             plan.id
         }
@@ -397,7 +437,10 @@ pub async fn add_item(
         updated_by: None,
     };
 
-    match use_case(&state).add_item(work_order.id.unwrap_or_default(), item).await {
+    match use_case(&state)
+        .add_item(work_order.id.unwrap_or_default(), item)
+        .await
+    {
         Ok((updated_work_order, saved_item)) => Ok((
             StatusCode::CREATED,
             Json(json(&state, updated_work_order, vec![saved_item]).await),
@@ -422,7 +465,10 @@ async fn administered_work_order(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
     if !can_administer_work_order(current_user, work_order.tenant_id) {
         return Err(ExceptionResponse::Forbidden(
@@ -515,7 +561,10 @@ async fn resolve_issued_part_id(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound))?;
     if !can_read_part(current_user, part.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::PartNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale.clone(),
+            ErrorKey::PartNotFound,
+        ));
     }
     Ok(part.id.unwrap_or_default())
 }
@@ -562,20 +611,34 @@ pub async fn issue_part(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(&current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
     if !can_create_work_order(&current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::WorkOrderForbidden));
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::WorkOrderForbidden,
+        ));
     }
 
     let part_id = resolve_issued_part_id(&state, &locale, &current_user, payload.part_uuid).await?;
     let item_id = resolve_issue_item_id(&state, &locale, payload.work_order_item_uuid).await?;
 
     match posting_use_case(&state)
-        .issue(work_order.id.unwrap_or_default(), item_id, part_id, payload.quantity)
+        .issue(
+            work_order.id.unwrap_or_default(),
+            item_id,
+            part_id,
+            payload.quantity,
+        )
         .await
     {
-        Ok(saved) => Ok((StatusCode::CREATED, Json(posting_json_resolved(&state, saved).await))),
+        Ok(saved) => Ok((
+            StatusCode::CREATED,
+            Json(posting_json_resolved(&state, saved).await),
+        )),
         Err(e) => Err(error(locale, &e.message)),
     }
 }
@@ -604,7 +667,10 @@ pub async fn list_postings(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
     if !can_read_work_order(&current_user, work_order.tenant_id) {
-        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::WorkOrderNotFound,
+        ));
     }
 
     match posting_use_case(&state)

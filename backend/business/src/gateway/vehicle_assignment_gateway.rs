@@ -1,14 +1,38 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::vehicle_assignment::{VehicleAssignment, VehicleAssignmentEntityMapper};
 use entity::prelude::VehicleAssignmentEntity as AssignmentQuery;
 use entity::vehicle_assignment_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
-    QueryOrder,
+    QueryOrder, SqlErr,
 };
+
+pub enum VehicleAssignmentStoreError {
+    AlreadyAssigned,
+    Storage(BusinessError),
+}
+
+#[async_trait]
+pub trait VehicleAssignmentStore: Send + Sync {
+    async fn save(
+        &self,
+        assignment: VehicleAssignment,
+    ) -> Result<VehicleAssignment, VehicleAssignmentStoreError>;
+    async fn get_live_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<VehicleAssignment>, BusinessError>;
+    async fn list_by_vehicle(
+        &self,
+        vehicle_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<VehicleAssignment>, u64), BusinessError>;
+}
 
 /// EPIC-FO-03 (HRMS-933, D-09): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, like `VehicleGateway`.
@@ -20,6 +44,53 @@ impl VehicleAssignmentGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl VehicleAssignmentStore for VehicleAssignmentGateway {
+    async fn save(
+        &self,
+        assignment: VehicleAssignment,
+    ) -> Result<VehicleAssignment, VehicleAssignmentStoreError> {
+        let active_model = VehicleAssignmentEntityMapper::build_active_model(assignment);
+        let saved = active_model.save(&self.db).await.map_err(|error| {
+            if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
+                VehicleAssignmentStoreError::AlreadyAssigned
+            } else {
+                VehicleAssignmentStoreError::Storage(database_error(error))
+            }
+        })?;
+        Ok(VehicleAssignmentEntityMapper::from_active_model(saved))
+    }
+
+    async fn get_live_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<VehicleAssignment>, BusinessError> {
+        let model = VehicleAssignmentGateway::find_live_by_vehicle(self, vehicle_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(VehicleAssignmentEntityMapper::from_model))
+    }
+
+    async fn list_by_vehicle(
+        &self,
+        vehicle_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<VehicleAssignment>, u64), BusinessError> {
+        let (models, total) =
+            VehicleAssignmentGateway::find_page_by_vehicle(self, vehicle_id, page, page_size)
+                .await
+                .map_err(database_error)?;
+        Ok((VehicleAssignmentEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Vehicle assignment database error: {error}");
+    log::error!("[VehicleAssignmentGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

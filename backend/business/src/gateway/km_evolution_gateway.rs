@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::km_evolution::{KmEvolution, KmEvolutionEntityMapper};
 use entity::km_evolution_entity;
 use entity::prelude::KmEvolutionEntity as KmEvolutionQuery;
@@ -9,6 +10,42 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait KmEvolutionStore: Send + Sync {
+    async fn save(&self, reading: KmEvolution) -> Result<KmEvolution, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<KmEvolution>, BusinessError>;
+    async fn get_latest_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<KmEvolution>, BusinessError>;
+    async fn get_before(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError>;
+    async fn get_after(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError>;
+    async fn list_by_vehicle(
+        &self,
+        vehicle_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<KmEvolution>, u64), BusinessError>;
+}
+
+#[async_trait]
+pub trait FuelGaugeOdometerStore: Send + Sync {
+    async fn reading_before(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError>;
+    async fn latest_kilometers(&self, vehicle_id: i64) -> Result<Option<f64>, BusinessError>;
+}
 
 /// `HRMS-650` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +57,107 @@ impl KmEvolutionGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl KmEvolutionStore for KmEvolutionGateway {
+    async fn save(&self, reading: KmEvolution) -> Result<KmEvolution, BusinessError> {
+        let active_model = <Self as Gateway<
+            KmEvolution,
+            km_evolution_entity::Model,
+            km_evolution_entity::ActiveModel,
+        >>::persist(self, reading)
+        .await
+        .map_err(database_error)?;
+        Ok(KmEvolutionEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<KmEvolution>, BusinessError> {
+        let model = <Self as Gateway<
+            KmEvolution,
+            km_evolution_entity::Model,
+            km_evolution_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(KmEvolutionEntityMapper::from_model))
+    }
+
+    async fn get_latest_by_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<KmEvolution>, BusinessError> {
+        let model = KmEvolutionGateway::find_latest_by_vehicle(self, vehicle_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(KmEvolutionEntityMapper::from_model))
+    }
+
+    async fn get_before(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError> {
+        let model = KmEvolutionGateway::find_before(self, vehicle_id, at)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(KmEvolutionEntityMapper::from_model))
+    }
+
+    async fn get_after(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError> {
+        let model = KmEvolutionGateway::find_after(self, vehicle_id, at)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(KmEvolutionEntityMapper::from_model))
+    }
+
+    async fn list_by_vehicle(
+        &self,
+        vehicle_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<KmEvolution>, u64), BusinessError> {
+        let (models, total) = KmEvolutionGateway::find_page_by_vehicle(
+            self,
+            vehicle_id,
+            page,
+            page_size,
+        )
+        .await
+        .map_err(database_error)?;
+        Ok((KmEvolutionEntityMapper::from_models(models), total))
+    }
+}
+
+#[async_trait]
+impl FuelGaugeOdometerStore for KmEvolutionGateway {
+    async fn reading_before(
+        &self,
+        vehicle_id: i64,
+        at: chrono::NaiveDateTime,
+    ) -> Result<Option<KmEvolution>, BusinessError> {
+        let model = KmEvolutionGateway::find_before(self, vehicle_id, at)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(KmEvolutionEntityMapper::from_model))
+    }
+
+    async fn latest_kilometers(&self, vehicle_id: i64) -> Result<Option<f64>, BusinessError> {
+        Ok(self
+            .get_latest_by_vehicle(vehicle_id)
+            .await?
+            .map(|reading| reading.km))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Kilometre reading database error: {error}");
+    log::error!("[KmEvolutionGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

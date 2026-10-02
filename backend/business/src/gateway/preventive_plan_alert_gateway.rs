@@ -1,11 +1,19 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::preventive_plan_alert::{PreventivePlanAlert, PreventivePlanAlertEntityMapper};
 use entity::prelude::PreventivePlanAlertEntity as AlertQuery;
 use entity::preventive_plan_alert_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
+
+#[async_trait]
+pub trait PreventivePlanAlertStore: Send + Sync {
+    async fn save(&self, alert: PreventivePlanAlert) -> Result<PreventivePlanAlert, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<PreventivePlanAlert>, BusinessError>;
+    async fn list_by_plan(&self, plan_id: i64) -> Result<Vec<PreventivePlanAlert>, BusinessError>;
+}
 
 /// `HRMS-713` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`.
@@ -26,6 +34,44 @@ impl PreventivePlanAlertGateway {
             .all(&self.db)
             .await
     }
+}
+
+#[async_trait]
+impl PreventivePlanAlertStore for PreventivePlanAlertGateway {
+    async fn save(&self, alert: PreventivePlanAlert) -> Result<PreventivePlanAlert, BusinessError> {
+        let active_model = <Self as Gateway<
+            PreventivePlanAlert,
+            preventive_plan_alert_entity::Model,
+            preventive_plan_alert_entity::ActiveModel,
+        >>::persist(self, alert)
+        .await
+        .map_err(database_error)?;
+        Ok(PreventivePlanAlertEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<PreventivePlanAlert>, BusinessError> {
+        let model = <Self as Gateway<
+            PreventivePlanAlert,
+            preventive_plan_alert_entity::Model,
+            preventive_plan_alert_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(PreventivePlanAlertEntityMapper::from_model))
+    }
+
+    async fn list_by_plan(&self, plan_id: i64) -> Result<Vec<PreventivePlanAlert>, BusinessError> {
+        let models = PreventivePlanAlertGateway::find_by_plan(self, plan_id)
+            .await
+            .map_err(database_error)?;
+        Ok(PreventivePlanAlertEntityMapper::from_models(models))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Preventive plan alert database error: {error}");
+    log::error!("[PreventivePlanAlertGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

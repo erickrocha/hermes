@@ -20,7 +20,7 @@ use business::use_cases::customer_day_off_use_case::{
     CustomerDayOffUseCase, DAY_OFF_NOT_FOUND, DUPLICATE_DAY_OFF,
 };
 
-fn use_case(state: &AppState) -> CustomerDayOffUseCase {
+fn use_case(state: &AppState) -> CustomerDayOffUseCase<CustomerDayOffGateway> {
     CustomerDayOffUseCase::new(CustomerDayOffGateway::new(state.conn.as_ref().clone()))
 }
 

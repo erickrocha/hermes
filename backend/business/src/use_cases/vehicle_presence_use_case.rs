@@ -1,17 +1,17 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::{PresenceEventKind, PresenceSource};
-use crate::domain::vehicle_presence_event::{VehiclePresenceEvent, VehiclePresenceEventEntityMapper};
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway;
+use crate::domain::vehicle_presence_event::VehiclePresenceEvent;
+use crate::gateway::vehicle_gateway::VehicleLookupStore;
+use crate::gateway::vehicle_presence_event_gateway::VehiclePresenceStore;
 use chrono::NaiveDateTime;
-use sea_orm::DbErr;
+use sea_orm::prelude::async_trait::async_trait;
 
 pub const VEHICLE_NOT_FOUND: &str = "Vehicle not found";
 /// `D-24(e)`: only a real tracker reading stamps presence.
-pub const ESTIMATE_CANNOT_STAMP: &str = "A schedule estimate cannot stamp a vehicle's arrival or departure";
-pub const OUT_OF_ORDER: &str = "This event is earlier than the vehicle's latest recorded arrival or departure";
+pub const ESTIMATE_CANNOT_STAMP: &str =
+    "A schedule estimate cannot stamp a vehicle's arrival or departure";
+pub const OUT_OF_ORDER: &str =
+    "This event is earlier than the vehicle's latest recorded arrival or departure";
 pub const IN_THE_FUTURE: &str = "A presence event cannot be in the future";
 
 /// How far ahead of the server clock a tracker's timestamp may be (clock skew).
@@ -26,16 +26,28 @@ pub struct PresenceSnapshot {
     pub away: bool,
 }
 
+#[async_trait]
+pub trait VehiclePresenceReader: Send + Sync {
+    async fn snapshot(&self, vehicle_id: i64) -> Result<PresenceSnapshot, BusinessError>;
+}
+
 /// `EPIC-GA-03-S01` (`HRMS-960`): the vehicle's physical arrival and departure
 /// stamps -- the presence domain's exclusive output (`AD-036`, `TRM-788`).
 pub struct VehiclePresenceUseCase {
-    events: VehiclePresenceEventGateway,
-    vehicles: VehicleGateway,
+    events: Box<dyn VehiclePresenceStore>,
+    vehicles: Box<dyn VehicleLookupStore>,
 }
 
 impl VehiclePresenceUseCase {
-    pub fn new(events: VehiclePresenceEventGateway, vehicles: VehicleGateway) -> Self {
-        Self { events, vehicles }
+    pub fn new<E, V>(events: E, vehicles: V) -> Self
+    where
+        E: VehiclePresenceStore + 'static,
+        V: VehicleLookupStore + 'static,
+    {
+        Self {
+            events: Box::new(events),
+            vehicles: Box::new(vehicles),
+        }
     }
 
     /// `TRM-770…775`: records a physical arrival or departure. An event is new
@@ -58,22 +70,21 @@ impl VehiclePresenceUseCase {
         if occurred_at > chrono::Utc::now().naive_utc() + chrono::Duration::seconds(SKEW_SECONDS) {
             return Err(BusinessError::new(IN_THE_FUTURE.to_string()));
         }
-        let vehicle = self.vehicles.find_by_id(vehicle_id).await.map_err(database_error)?;
+        let vehicle = self.vehicles.get_by_id(vehicle_id).await?;
         if !vehicle.is_some_and(|v| v.tenant_id == tenant_id) {
             return Err(BusinessError::new(VEHICLE_NOT_FOUND.to_string()));
         }
 
-        let latest = self
-            .events
-            .find_latest(vehicle_id)
-            .await
-            .map_err(database_error)?
-            .map(VehiclePresenceEventEntityMapper::from_model);
-        let decision = decide(latest.as_ref().map(|e| (e.kind, e.occurred_at)), kind, occurred_at)?;
+        let latest = self.events.get_latest(vehicle_id).await?;
+        let decision = decide(
+            latest.as_ref().map(|e| (e.kind, e.occurred_at)),
+            kind,
+            occurred_at,
+        )?;
         let recorded = decision == Decision::Record;
         if recorded {
             self.events
-                .persist(VehiclePresenceEvent {
+                .save(VehiclePresenceEvent {
                     id: None,
                     uuid: None,
                     tenant_id,
@@ -85,22 +96,39 @@ impl VehiclePresenceUseCase {
                     updated_at: None,
                     updated_by: None,
                 })
-                .await
-                .map_err(database_error)?;
+                .await?;
         }
         Ok((recorded, self.snapshot(vehicle_id).await?))
     }
 
     pub async fn snapshot(&self, vehicle_id: i64) -> Result<PresenceSnapshot, BusinessError> {
-        let at = |model: Option<entity::vehicle_presence_event_entity::Model>| model.map(|m| m.occurred_at.naive_utc());
-        let last_arrival_at = at(self.events.find_latest_of_kind(vehicle_id, "Arrival").await.map_err(database_error)?);
-        let last_departure_at = at(self.events.find_latest_of_kind(vehicle_id, "Departure").await.map_err(database_error)?);
+        let last_arrival_at = self
+            .events
+            .get_latest_of_kind(vehicle_id, PresenceEventKind::Arrival)
+            .await?
+            .map(|event| event.occurred_at);
+        let last_departure_at = self
+            .events
+            .get_latest_of_kind(vehicle_id, PresenceEventKind::Departure)
+            .await?
+            .map(|event| event.occurred_at);
         let away = match (last_arrival_at, last_departure_at) {
             (_, None) => false,
             (None, Some(_)) => true,
             (Some(arrival), Some(departure)) => departure > arrival,
         };
-        Ok(PresenceSnapshot { last_arrival_at, last_departure_at, away })
+        Ok(PresenceSnapshot {
+            last_arrival_at,
+            last_departure_at,
+            away,
+        })
+    }
+}
+
+#[async_trait]
+impl VehiclePresenceReader for VehiclePresenceUseCase {
+    async fn snapshot(&self, vehicle_id: i64) -> Result<PresenceSnapshot, BusinessError> {
+        VehiclePresenceUseCase::snapshot(self, vehicle_id).await
     }
 }
 
@@ -120,16 +148,12 @@ pub fn decide(
 ) -> Result<Decision, BusinessError> {
     match latest {
         None => Ok(Decision::Record),
-        Some((_, previous_at)) if at < previous_at => Err(BusinessError::new(OUT_OF_ORDER.to_string())),
+        Some((_, previous_at)) if at < previous_at => {
+            Err(BusinessError::new(OUT_OF_ORDER.to_string()))
+        }
         Some((previous, _)) if previous == kind => Ok(Decision::Ignore),
         Some(_) => Ok(Decision::Record),
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[VehiclePresenceUseCase] {}", msg);
-    BusinessError::new(msg)
 }
 
 #[cfg(test)]
@@ -138,30 +162,52 @@ mod tests {
     use chrono::NaiveDate;
 
     fn at(h: u32) -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(2026, 9, 30).unwrap().and_hms_opt(h, 0, 0).unwrap()
+        NaiveDate::from_ymd_opt(2026, 9, 30)
+            .unwrap()
+            .and_hms_opt(h, 0, 0)
+            .unwrap()
     }
 
     #[test]
     fn a_departure_is_new_only_when_an_arrival_came_in_between() {
         use PresenceEventKind::*;
-        assert_eq!(decide(None, Departure, at(8)), Ok(Decision::Record), "the first event is new");
-        assert_eq!(decide(Some((Arrival, at(7))), Departure, at(8)), Ok(Decision::Record));
+        assert_eq!(
+            decide(None, Departure, at(8)),
+            Ok(Decision::Record),
+            "the first event is new"
+        );
+        assert_eq!(
+            decide(Some((Arrival, at(7))), Departure, at(8)),
+            Ok(Decision::Record)
+        );
         // The vehicle never came back: a second departure leaves the stamp alone.
-        assert_eq!(decide(Some((Departure, at(8))), Departure, at(9)), Ok(Decision::Ignore));
+        assert_eq!(
+            decide(Some((Departure, at(8))), Departure, at(9)),
+            Ok(Decision::Ignore)
+        );
     }
 
     #[test]
     fn an_arrival_is_new_only_when_a_departure_preceded_it() {
         use PresenceEventKind::*;
-        assert_eq!(decide(Some((Departure, at(8))), Arrival, at(9)), Ok(Decision::Record));
+        assert_eq!(
+            decide(Some((Departure, at(8))), Arrival, at(9)),
+            Ok(Decision::Record)
+        );
         // Re-reporting an arrival must not move the stamp later: a later arrival would wrongly
         // return every not-needed mark to pending (TRM-455).
-        assert_eq!(decide(Some((Arrival, at(7))), Arrival, at(9)), Ok(Decision::Ignore));
+        assert_eq!(
+            decide(Some((Arrival, at(7))), Arrival, at(9)),
+            Ok(Decision::Ignore)
+        );
     }
 
     #[test]
     fn an_event_may_not_go_backwards() {
         use PresenceEventKind::*;
-        assert_eq!(decide(Some((Departure, at(8))), Arrival, at(7)), Err(BusinessError::new(OUT_OF_ORDER.to_string())));
+        assert_eq!(
+            decide(Some((Departure, at(8))), Arrival, at(7)),
+            Err(BusinessError::new(OUT_OF_ORDER.to_string()))
+        );
     }
 }

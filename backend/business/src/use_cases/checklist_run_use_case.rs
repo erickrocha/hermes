@@ -1,33 +1,26 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::checklist_answer::{ChecklistAnswer, ChecklistAnswerEntityMapper};
-use crate::domain::checklist_run::{ChecklistRun, ChecklistRunEntityMapper};
+use crate::domain::checklist_answer::ChecklistAnswer;
+use crate::domain::checklist_run::ChecklistRun;
 use crate::domain::enums::{
-    AnswerStatus, ChecklistType, KmOrigin, Role, WorkOrderItemStatus, WorkOrderOrigin, WorkOrderStatus,
+    AnswerStatus, ChecklistType, KmOrigin, Role, WorkOrderItemStatus, WorkOrderOrigin,
+    WorkOrderStatus,
 };
 use crate::domain::km_evolution::KmEvolution;
-use crate::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
+use crate::domain::work_order::WorkOrder;
 use crate::domain::work_order_item::WorkOrderItem;
-use crate::gateway::checklist_answer_gateway::ChecklistAnswerGateway;
-use crate::gateway::checklist_run_gateway::ChecklistRunGateway;
-use crate::gateway::checklist_template_gateway::ChecklistTemplateGateway;
-use crate::gateway::checklist_template_item_gateway::ChecklistTemplateItemGateway;
-use crate::gateway::user_gateway::UserGateway;
-use crate::gateway::vehicle_gateway::VehicleGateway;
-use crate::gateway::work_order_gateway::WorkOrderGateway;
-use crate::gateway::work_order_item_gateway::WorkOrderItemGateway;
+use crate::gateway::checklist_run_gateway::ChecklistRunStore;
 use crate::use_cases::km_evolution_use_case::KmEvolutionUseCase;
-use sea_orm::{ActiveModelTrait, DbErr, TransactionTrait};
 use std::collections::{HashMap, HashSet};
 
-pub const NOT_A_TENANT_TEMPLATE: &str = "The checklist template named does not belong to this tenant";
+pub const NOT_A_TENANT_TEMPLATE: &str =
+    "The checklist template named does not belong to this tenant";
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this tenant";
 /// `TRM-105`: a driver may hold at most one open vehicle at a time.
 pub const DRIVER_ALREADY_HOLDS_A_VEHICLE: &str =
     "This driver already holds an open checklist on another vehicle";
-pub const RETURN_REQUIRES_OPENING_CHECKLIST: &str = "A return checklist must name the departure it closes";
+pub const RETURN_REQUIRES_OPENING_CHECKLIST: &str =
+    "A return checklist must name the departure it closes";
 pub const MAY_NOT_NAME_AN_OPENING_CHECKLIST: &str =
     "Only a return checklist may name the departure it closes";
 pub const OPENING_CHECKLIST_NOT_FOUND: &str = "The departure checklist named does not exist";
@@ -42,45 +35,15 @@ pub const ANSWER_NOT_A_TEMPLATE_ITEM: &str =
     "An answered item does not belong to this checklist's own template";
 
 pub struct ChecklistRunUseCase {
-    gateway: ChecklistRunGateway,
-    templates: ChecklistTemplateGateway,
-    template_items: ChecklistTemplateItemGateway,
-    answers: ChecklistAnswerGateway,
-    vehicles: VehicleGateway,
-    drivers: UserGateway,
+    store: Box<dyn ChecklistRunStore>,
     km_evolution: KmEvolutionUseCase,
-    work_orders: WorkOrderGateway,
-    work_order_items: WorkOrderItemGateway,
 }
 
 impl ChecklistRunUseCase {
-    /// Nine collaborators is this use case coordinating six entities
-    /// (`checklist_run`, `checklist_answer`, `checklist_template(_item)`,
-    /// `vehicle`, `user`, and now `work_order(_item)` for `EPIC-CK-03-S02`),
-    /// not a design smell to refactor away with a builder or config struct
-    /// for two call sites (the endpoint and the test helper).
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        gateway: ChecklistRunGateway,
-        templates: ChecklistTemplateGateway,
-        template_items: ChecklistTemplateItemGateway,
-        answers: ChecklistAnswerGateway,
-        vehicles: VehicleGateway,
-        drivers: UserGateway,
-        km_evolution: KmEvolutionUseCase,
-        work_orders: WorkOrderGateway,
-        work_order_items: WorkOrderItemGateway,
-    ) -> Self {
+    pub fn new<S: ChecklistRunStore + 'static>(store: S, km_evolution: KmEvolutionUseCase) -> Self {
         Self {
-            gateway,
-            templates,
-            template_items,
-            answers,
-            vehicles,
-            drivers,
+            store: Box::new(store),
             km_evolution,
-            work_orders,
-            work_order_items,
         }
     }
 
@@ -100,37 +63,8 @@ impl ChecklistRunUseCase {
         let run = self.validated(run).await?;
         let (answers, item_info) = self.validated_answers(&run, answers).await?;
 
-        let transaction = self.gateway.db().begin().await.map_err(database_error)?;
-
-        let saved_run = match ChecklistRunEntityMapper::build_active_model(run)
-            .save(&transaction)
-            .await
-        {
-            Ok(active) => ChecklistRunEntityMapper::from_active_model(active),
-            Err(e) => {
-                let _ = transaction.rollback().await;
-                return Err(database_error(e));
-            }
-        };
-
-        let mut saved_answers = Vec::with_capacity(answers.len());
-        for mut answer in answers {
-            answer.checklist_run_id = saved_run.id.unwrap_or_default();
-            match ChecklistAnswerEntityMapper::build_active_model(answer)
-                .save(&transaction)
-                .await
-            {
-                Ok(active) => {
-                    saved_answers.push(ChecklistAnswerEntityMapper::from_active_model(active))
-                }
-                Err(e) => {
-                    let _ = transaction.rollback().await;
-                    return Err(database_error(e));
-                }
-            }
-        }
-
-        transaction.commit().await.map_err(database_error)?;
+        let (saved_run, mut saved_answers) =
+            self.store.create_run_with_answers(run, answers).await?;
 
         let reading = KmEvolution {
             id: None,
@@ -166,17 +100,14 @@ impl ChecklistRunUseCase {
             let work_order_id = self
                 .open_work_order_for_flagged_answers(&saved_run, &flagged, &item_info)
                 .await?;
-            let flagged_item_ids: HashSet<i64> =
-                flagged.iter().map(|a| a.checklist_template_item_id).collect();
+            let flagged_item_ids: HashSet<i64> = flagged
+                .iter()
+                .map(|a| a.checklist_template_item_id)
+                .collect();
             for answer in saved_answers.iter_mut() {
                 if flagged_item_ids.contains(&answer.checklist_template_item_id) {
                     answer.work_order_id = Some(work_order_id);
-                    let entity = self
-                        .answers
-                        .persist(answer.clone())
-                        .await
-                        .map_err(database_error)?;
-                    *answer = ChecklistAnswerEntityMapper::from_active_model(entity);
+                    *answer = self.store.save_answer(answer.clone()).await?;
                 }
             }
         }
@@ -206,10 +137,9 @@ impl ChecklistRunUseCase {
                 return Err(BusinessError::new(DUPLICATE_ANSWER_FOR_ITEM.to_string()));
             }
             let item = self
-                .template_items
-                .find_by_id(answer.checklist_template_item_id)
-                .await
-                .map_err(database_error)?;
+                .store
+                .find_template_item(answer.checklist_template_item_id)
+                .await?;
             let Some(item) = item.filter(|i| {
                 i.checklist_template_id == run.checklist_template_id && i.tenant_id == run.tenant_id
             }) else {
@@ -266,8 +196,10 @@ impl ChecklistRunUseCase {
             updated_at: None,
             updated_by: None,
         };
-        let entity = self.work_orders.persist(work_order).await.map_err(database_error)?;
-        let work_order_id = WorkOrderEntityMapper::from_active_model(entity)
+        let work_order_id = self
+            .store
+            .save_work_order(work_order)
+            .await?
             .id
             .unwrap_or_default();
 
@@ -296,38 +228,26 @@ impl ChecklistRunUseCase {
                 updated_at: None,
                 updated_by: None,
             };
-            self.work_order_items.persist(item).await.map_err(database_error)?;
+            self.store.save_work_order_item(item).await?;
         }
 
         Ok(work_order_id)
     }
 
     async fn validated(&self, run: ChecklistRun) -> Result<ChecklistRun, BusinessError> {
-        let template = self
-            .templates
-            .find_by_id(run.checklist_template_id)
-            .await
-            .map_err(database_error)?;
+        let template = self.store.find_template(run.checklist_template_id).await?;
         if !template.is_some_and(|t| t.tenant_id == run.tenant_id) {
             return Err(BusinessError::new(NOT_A_TENANT_TEMPLATE.to_string()));
         }
 
-        let vehicle = self
-            .vehicles
-            .find_by_id(run.vehicle_id)
-            .await
-            .map_err(database_error)?;
+        let vehicle = self.store.find_vehicle(run.vehicle_id).await?;
         if !vehicle.is_some_and(|v| v.tenant_id == run.tenant_id) {
             return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
         }
 
-        let driver = self
-            .drivers
-            .find_by_id(run.driver_id)
-            .await
-            .map_err(database_error)?;
+        let driver = self.store.find_driver(run.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {
-            user.role == Role::Driver.to_string() && user.enabled && user.tenant_id == run.tenant_id
+            user.role == Role::Driver && user.enabled && user.tenant_id == run.tenant_id
         });
         if !is_valid_driver {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));
@@ -336,33 +256,42 @@ impl ChecklistRunUseCase {
         match run.checklist_type {
             ChecklistType::Departure | ChecklistType::Standalone => {
                 if run.opening_checklist_id.is_some() {
-                    return Err(BusinessError::new(MAY_NOT_NAME_AN_OPENING_CHECKLIST.to_string()));
+                    return Err(BusinessError::new(
+                        MAY_NOT_NAME_AN_OPENING_CHECKLIST.to_string(),
+                    ));
                 }
                 if matches!(run.checklist_type, ChecklistType::Departure)
                     && self.driver_holds_an_open_vehicle(run.driver_id).await?
                 {
-                    return Err(BusinessError::new(DRIVER_ALREADY_HOLDS_A_VEHICLE.to_string()));
+                    return Err(BusinessError::new(
+                        DRIVER_ALREADY_HOLDS_A_VEHICLE.to_string(),
+                    ));
                 }
             }
             ChecklistType::Return => {
                 let Some(opening_id) = run.opening_checklist_id else {
-                    return Err(BusinessError::new(RETURN_REQUIRES_OPENING_CHECKLIST.to_string()));
+                    return Err(BusinessError::new(
+                        RETURN_REQUIRES_OPENING_CHECKLIST.to_string(),
+                    ));
                 };
-                let opening = self.gateway.find_by_id(opening_id).await.map_err(database_error)?;
+                let opening = self.store.find_run(opening_id).await?;
                 let Some(opening) = opening else {
                     return Err(BusinessError::new(OPENING_CHECKLIST_NOT_FOUND.to_string()));
                 };
                 if opening.vehicle_id != run.vehicle_id {
-                    return Err(BusinessError::new(OPENING_CHECKLIST_WRONG_VEHICLE.to_string()));
+                    return Err(BusinessError::new(
+                        OPENING_CHECKLIST_WRONG_VEHICLE.to_string(),
+                    ));
                 }
                 let already_closed = !self
-                    .gateway
-                    .find_returns_closing(vec![opening_id])
-                    .await
-                    .map_err(database_error)?
+                    .store
+                    .returns_closing(vec![opening_id])
+                    .await?
                     .is_empty();
                 if already_closed {
-                    return Err(BusinessError::new(OPENING_CHECKLIST_ALREADY_CLOSED.to_string()));
+                    return Err(BusinessError::new(
+                        OPENING_CHECKLIST_ALREADY_CLOSED.to_string(),
+                    ));
                 }
             }
         }
@@ -373,70 +302,52 @@ impl ChecklistRunUseCase {
     /// `TRM-105`: true when this driver has a `Departure` with no `Return`
     /// naming it yet.
     async fn driver_holds_an_open_vehicle(&self, driver_id: i64) -> Result<bool, BusinessError> {
-        let departures = self
-            .gateway
-            .find_departures_by_driver(driver_id)
-            .await
-            .map_err(database_error)?;
+        let departures = self.store.departures_by_driver(driver_id).await?;
         if departures.is_empty() {
             return Ok(false);
         }
-        let ids: Vec<i64> = departures.iter().map(|d| d.id).collect();
+        let ids: Vec<i64> = departures
+            .iter()
+            .filter_map(|departure| departure.id)
+            .collect();
         let closed_ids: Vec<i64> = self
-            .gateway
-            .find_returns_closing(ids)
-            .await
-            .map_err(database_error)?
+            .store
+            .returns_closing(ids)
+            .await?
             .into_iter()
             .filter_map(|r| r.opening_checklist_id)
             .collect();
-        Ok(departures.iter().any(|d| !closed_ids.contains(&d.id)))
+        Ok(departures
+            .iter()
+            .any(|departure| departure.id.is_some_and(|id| !closed_ids.contains(&id))))
     }
 
     /// `TRM-123`-lite: the vehicle's current holder, or `None` when its
     /// latest `Departure` has already been closed by a `Return`.
-    pub async fn current_holder(&self, vehicle_id: i64) -> Result<Option<ChecklistRun>, BusinessError> {
-        let Some(latest) = self
-            .gateway
-            .find_latest_departure_by_vehicle(vehicle_id)
-            .await
-            .map_err(database_error)?
-        else {
+    pub async fn current_holder(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<ChecklistRun>, BusinessError> {
+        let Some(latest) = self.store.latest_departure_by_vehicle(vehicle_id).await? else {
             return Ok(None);
         };
         let closed = !self
-            .gateway
-            .find_returns_closing(vec![latest.id])
-            .await
-            .map_err(database_error)?
+            .store
+            .returns_closing(vec![latest.id.unwrap_or_default()])
+            .await?
             .is_empty();
-        if closed {
-            Ok(None)
-        } else {
-            Ok(Some(ChecklistRunEntityMapper::from_model(latest)))
-        }
+        if closed { Ok(None) } else { Ok(Some(latest)) }
     }
 
     pub async fn find_by_uuid(
         &self,
         uuid: String,
     ) -> Result<(ChecklistRun, Vec<ChecklistAnswer>), BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(database_error)?;
-        let run = match entity {
-            Some(model) => ChecklistRunEntityMapper::from_model(model),
+        let run = match self.store.find_run_by_uuid(uuid).await? {
+            Some(run) => run,
             None => return Err(BusinessError::new("Checklist not found".to_string())),
         };
-        let answers = self
-            .answers
-            .find_by_run(run.id.unwrap_or_default())
-            .await
-            .map_err(database_error)?;
-        Ok((run, ChecklistAnswerEntityMapper::from_models(answers)))
+        let answers = self.store.list_answers(run.id.unwrap_or_default()).await?;
+        Ok((run, answers))
     }
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[ChecklistRunUseCase] {}", msg);
-    BusinessError::new(msg)
 }

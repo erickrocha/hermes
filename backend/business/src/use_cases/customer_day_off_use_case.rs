@@ -1,10 +1,7 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::customer::Customer;
-use crate::domain::customer_day_off::{CustomerDayOff, CustomerDayOffEntityMapper};
-use crate::gateway::customer_day_off_gateway::CustomerDayOffGateway;
-use sea_orm::{DbErr, SqlErr};
+use crate::domain::customer_day_off::CustomerDayOff;
+use crate::gateway::customer_day_off_gateway::{CustomerDayOffStore, CustomerDayOffStoreError};
 
 /// `HRMS-601`: this customer already has a day off recorded for that date
 /// (`uq_customer_day_off_customer_date`). Answered 409.
@@ -12,12 +9,12 @@ pub const DUPLICATE_DAY_OFF: &str = "This customer already has a day off recorde
 /// The day off has no row with that uuid, or it belongs to another customer.
 pub const DAY_OFF_NOT_FOUND: &str = "Day off not found";
 
-pub struct CustomerDayOffUseCase {
-    gateway: CustomerDayOffGateway,
+pub struct CustomerDayOffUseCase<G: CustomerDayOffStore> {
+    gateway: G,
 }
 
-impl CustomerDayOffUseCase {
-    pub fn new(gateway: CustomerDayOffGateway) -> Self {
+impl<G: CustomerDayOffStore> CustomerDayOffUseCase<G> {
+    pub fn new(gateway: G) -> Self {
         Self { gateway }
     }
 
@@ -29,11 +26,12 @@ impl CustomerDayOffUseCase {
         date: sea_orm::prelude::Date,
         reason: Option<String>,
     ) -> Result<CustomerDayOff, BusinessError> {
+        let customer_id = persisted_customer_id(customer)?;
         let day_off = CustomerDayOff {
             id: None,
             uuid: None,
             tenant_id: customer.tenant_id,
-            customer_id: customer.id.unwrap_or_default(),
+            customer_id,
             date,
             reason,
             created_at: None,
@@ -41,22 +39,24 @@ impl CustomerDayOffUseCase {
             updated_at: None,
             updated_by: None,
         };
-        let saved = self.gateway.persist(day_off).await.map_err(|e| {
-            if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                BusinessError::new(DUPLICATE_DAY_OFF.to_string())
-            } else {
-                database_error(e)
-            }
-        })?;
-        Ok(CustomerDayOffEntityMapper::from_active_model(saved))
+        self.gateway
+            .save(day_off)
+            .await
+            .map_err(|error| match error {
+                CustomerDayOffStoreError::DuplicateDate => {
+                    BusinessError::new(DUPLICATE_DAY_OFF.to_string())
+                }
+                CustomerDayOffStoreError::Storage(error) => error,
+            })
     }
 
     pub async fn remove(&self, customer: &Customer, uuid: String) -> Result<(), BusinessError> {
         let existing = self.find_visible(customer, uuid).await?;
-        self.gateway
-            .delete_by_id(existing.id.unwrap_or_default())
-            .await
-            .map_err(database_error)?;
+        let id = existing
+            .id
+            .filter(|id| *id > 0)
+            .ok_or_else(|| BusinessError::new(DAY_OFF_NOT_FOUND.to_string()))?;
+        self.gateway.delete_by_id(id).await?;
         Ok(())
     }
 
@@ -66,12 +66,10 @@ impl CustomerDayOffUseCase {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<CustomerDayOff>, u64), BusinessError> {
-        let (rows, total) = self
-            .gateway
-            .find_page_by_customer(customer.id.unwrap_or_default(), page, page_size)
+        let customer_id = persisted_customer_id(customer)?;
+        self.gateway
+            .list_page_by_customer(customer_id, page, page_size)
             .await
-            .map_err(database_error)?;
-        Ok((CustomerDayOffEntityMapper::from_models(rows), total))
     }
 
     /// The uuid must resolve to a row belonging to *this* customer -- not
@@ -83,21 +81,22 @@ impl CustomerDayOffUseCase {
         customer: &Customer,
         uuid: String,
     ) -> Result<CustomerDayOff, BusinessError> {
-        let model = self
+        let customer_id = persisted_customer_id(customer)?;
+        let day_off = self
             .gateway
-            .find_by_uuid(uuid)
-            .await
-            .map_err(database_error)?
+            .get_by_uuid(uuid)
+            .await?
             .ok_or_else(|| BusinessError::new(DAY_OFF_NOT_FOUND.to_string()))?;
-        if model.customer_id != customer.id.unwrap_or_default() {
+        if day_off.customer_id != customer_id {
             return Err(BusinessError::new(DAY_OFF_NOT_FOUND.to_string()));
         }
-        Ok(CustomerDayOffEntityMapper::from_model(model))
+        Ok(day_off)
     }
 }
 
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[CustomerDayOffUseCase] {}", msg);
-    BusinessError::new(msg)
+fn persisted_customer_id(customer: &Customer) -> Result<i64, BusinessError> {
+    customer
+        .id
+        .filter(|id| *id > 0)
+        .ok_or_else(|| BusinessError::new("Customer identity is incomplete".to_string()))
 }

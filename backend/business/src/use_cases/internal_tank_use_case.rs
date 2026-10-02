@@ -1,13 +1,9 @@
-use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::bytes_para_string;
-use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
-use crate::domain::internal_tank::{InternalTank, InternalTankEntityMapper};
+use crate::domain::internal_tank::InternalTank;
 use crate::domain::enums::FuelEntryOrigin;
-use crate::domain::fuel_entry::{FuelEntry, FuelEntryEntityMapper};
-use crate::gateway::fuel_entry_gateway::FuelEntryGateway;
-use crate::gateway::internal_tank_gateway::InternalTankGateway;
-use sea_orm::DbErr;
+use crate::domain::fuel_entry::FuelEntry;
+use crate::gateway::fuel_entry_gateway::FuelEntryReadStore;
+use crate::gateway::internal_tank_gateway::InternalTankStore;
 
 pub const CAPACITY_MUST_BE_POSITIVE: &str = "A tank's capacity must be positive";
 pub const REFERENCE_STOCK_OUT_OF_RANGE: &str = "The reference stock must be between zero and the tank's capacity";
@@ -15,13 +11,13 @@ pub const ALERT_LEVEL_MUST_NOT_BE_NEGATIVE: &str = "The alert level cannot be ne
 pub const RESERVE_LEVEL_MUST_NOT_BE_NEGATIVE: &str = "The reserve level cannot be negative";
 pub const INTERNAL_TANK_NOT_CONFIGURED: &str = "The internal tank has not been configured";
 
-pub struct InternalTankUseCase {
-    gateway: InternalTankGateway,
-    fuel: FuelEntryGateway,
+pub struct InternalTankUseCase<T: InternalTankStore, F: FuelEntryReadStore> {
+    gateway: T,
+    fuel: F,
 }
 
-impl InternalTankUseCase {
-    pub fn new(gateway: InternalTankGateway, fuel: FuelEntryGateway) -> Self {
+impl<T: InternalTankStore, F: FuelEntryReadStore> InternalTankUseCase<T, F> {
+    pub fn new(gateway: T, fuel: F) -> Self {
         Self { gateway, fuel }
     }
 
@@ -32,22 +28,17 @@ impl InternalTankUseCase {
     pub async fn configure(&self, tank: InternalTank) -> Result<InternalTank, BusinessError> {
         let tank = Self::validated(tank)?;
 
-        let existing = self
-            .gateway
-            .find_current(tank.tenant_id)
-            .await
-            .map_err(database_error)?;
+        let existing = self.gateway.get_current(tank.tenant_id).await?;
         let tank = match existing {
-            Some(model) => InternalTank {
-                id: Some(model.id),
-                uuid: Some(bytes_para_string(model.uuid)),
+            Some(existing) => InternalTank {
+                id: existing.id,
+                uuid: existing.uuid,
                 ..tank
             },
             None => tank,
         };
 
-        let entity = self.gateway.persist(tank).await.map_err(database_error)?;
-        Ok(InternalTankEntityMapper::from_active_model(entity))
+        self.gateway.save(tank).await
     }
 
     fn validated(tank: InternalTank) -> Result<InternalTank, BusinessError> {
@@ -67,13 +58,9 @@ impl InternalTankUseCase {
     }
 
     pub async fn get_current(&self, target_tenant_id: Option<i64>) -> Result<InternalTank, BusinessError> {
-        let entity = self
-            .gateway
-            .find_current(target_tenant_id)
-            .await
-            .map_err(database_error)?;
-        match entity {
-            Some(model) => Ok(InternalTankEntityMapper::from_model(model)),
+        let tank = self.gateway.get_current(target_tenant_id).await?;
+        match tank {
+            Some(tank) => Ok(tank),
             None => Err(BusinessError::new(INTERNAL_TANK_NOT_CONFIGURED.to_string())),
         }
     }
@@ -95,20 +82,15 @@ pub struct TankStock {
 pub const NO_FUELLING_RECORDS: &str =
     "No fuelling record has loaded; the stock is not shown, and the reference should not be reconfigured now";
 
-impl InternalTankUseCase {
+impl<T: InternalTankStore, F: FuelEntryReadStore> InternalTankUseCase<T, F> {
     pub async fn stock(&self, target_tenant_id: Option<i64>) -> Result<(InternalTank, TankStock), BusinessError> {
         let tank = self.get_current(target_tenant_id).await?;
-        let (_, ledger_size) = self.fuel.find_page(0, 1).await.map_err(database_error)?;
-        if ledger_size == 0 {
+        if !self.fuel.has_entries().await? {
             let stock = TankStock { current_stock_liters: None, delivery_alert: false, suppressed: Some(NO_FUELLING_RECORDS) };
             return Ok((tank, stock));
         }
-        let since = self
-            .fuel
-            .find_report(Some(tank.reference_at), None, None, None)
-            .await
-            .map_err(database_error)?;
-        let current = current_stock(&tank, &FuelEntryEntityMapper::from_models(since));
+        let since = self.fuel.reports_from(tank.reference_at).await?;
+        let current = current_stock(&tank, &since);
         let stock = TankStock {
             current_stock_liters: Some(current),
             delivery_alert: current <= tank.alert_level_liters,
@@ -128,12 +110,6 @@ pub fn current_stock(tank: &InternalTank, entries: &[FuelEntry]) -> f64 {
         .map(|e| e.volume_liters)
         .sum();
     (tank.reference_stock_liters - withdrawn).max(0.0)
-}
-
-fn database_error(e: DbErr) -> BusinessError {
-    let msg = format!("Database error: {}", e);
-    log::error!("[InternalTankUseCase] {}", msg);
-    BusinessError::new(msg)
 }
 
 #[cfg(test)]
