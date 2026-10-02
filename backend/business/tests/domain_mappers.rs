@@ -175,6 +175,12 @@ fn user_from_active_model_handles_complete_and_partial_models() {
 }
 
 #[test]
+fn an_active_user_model_without_a_role_degrades_to_the_least_privileged_role() {
+    let user = UserEntityMapper::from_active_model(user_entity::ActiveModel::default());
+    assert_eq!(user.role, Role::TenantUser);
+}
+
+#[test]
 fn from_models_maps_every_row() {
     let users: Vec<User> = UserEntityMapper::from_models(vec![user_model(), user_model()]);
     assert_eq!(users.len(), 2);
@@ -234,6 +240,13 @@ fn tenant_round_trips_through_the_mapper() {
 
     let partial = TenantEntityMapper::from_active_model(active);
     assert_eq!(partial.tax_id, "11222333000181");
+}
+
+#[test]
+fn an_empty_tenant_active_model_degrades_without_panicking() {
+    let tenant = TenantEntityMapper::from_active_model(tenant_entity::ActiveModel::default());
+    assert!(tenant.business_name.is_empty());
+    assert!(tenant.tax_id.is_empty());
 }
 
 // ---------------------------------------------------------------- BusinessPlan

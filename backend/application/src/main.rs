@@ -346,17 +346,15 @@ fn welcome_route() -> Router<AppState> {
 
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
-    health_app().expect("ENV don't have the required config");
+    health_app()?;
     tracing_subscriber::fmt::init();
 
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let host = env::var("HOST").expect("HOST is not set in .env file");
-    let port = env::var("PORT").expect("PORT is not set in .env file");
+    let db_url = env::var("DATABASE_URL")?;
+    let host = env::var("HOST")?;
+    let port = env::var("PORT")?;
     let server_url = format!("{host}:{port}");
 
-    let connection = Database::connect(&db_url)
-        .await
-        .expect("Failed to connect to database");
+    let connection = Database::connect(&db_url).await?;
 
     // PD-033: migrations are a deliberate deploy step, not a boot side effect.
     // Booting no longer applies them -- it refuses to start when the schema is
@@ -379,7 +377,7 @@ async fn start() -> anyhow::Result<()> {
     entity::audit::run_as_platform(
         business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection),
     )
-    .await;
+    .await?;
 
     let state = AppState {
         conn: Arc::new(connection),
@@ -475,10 +473,8 @@ async fn migrate() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     // Only the database is needed here: the server's secrets are checked when it boots.
     load_dotenv()?;
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let connection = Database::connect(&db_url)
-        .await
-        .expect("Failed to connect to database");
+    let db_url = env::var("DATABASE_URL")?;
+    let connection = Database::connect(&db_url).await?;
 
     let backend = connection.get_database_backend();
     let lock_row = connection
@@ -487,20 +483,19 @@ async fn migrate() -> anyhow::Result<()> {
             "SELECT GET_LOCK('hermes_migrations', 30) AS acquired".to_owned(),
         ))
         .await?
-        .expect("GET_LOCK query returned no rows");
-    let acquired: i64 = lock_row.try_get("", "acquired").unwrap_or(0);
+        .ok_or_else(|| anyhow::anyhow!("GET_LOCK query returned no rows"))?;
+    let acquired: i64 = lock_row.try_get("", "acquired")?;
     if acquired != 1 {
         anyhow::bail!("Could not acquire migration lock within timeout");
     }
 
     let migration_result = Migrator::up(&connection, None).await;
-
-    connection
+    let release_result = connection
         .execute_unprepared("SELECT RELEASE_LOCK('hermes_migrations')")
-        .await
-        .ok();
+        .await;
 
     migration_result?;
+    release_result?;
     log::info!("Migrations applied.");
     Ok(())
 }

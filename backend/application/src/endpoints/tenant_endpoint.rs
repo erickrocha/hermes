@@ -297,13 +297,13 @@ async fn set_tenant_plan(
         // says and as an unknown plan already answered — not a 400.
         .map_err(|err| {
             if err.is_not_found() {
-                ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)
+                ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound)
             } else {
-                ExceptionResponse::BadRequest(locale, ErrorKey::TenantUpdateFailed)
+                ExceptionResponse::BadRequest(locale.clone(), ErrorKey::TenantUpdateFailed)
             }
         })?;
 
-    Ok(Json(business_plan_response(plan)))
+    Ok(Json(business_plan_response(plan, &locale)?))
 }
 
 #[utoipa::path(
@@ -341,7 +341,7 @@ async fn active_plan(
     let tenant = tenant_use_case
         .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound))?;
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound))?;
 
     let Some(business_plan_id) = tenant.business_plan_id else {
         return Ok(Json(None));
@@ -350,7 +350,7 @@ async fn active_plan(
     let plan_use_case =
         BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()));
     match plan_use_case.find_by_id(business_plan_id).await {
-        Ok(plan) => Ok(Json(Some(business_plan_response(plan)))),
+        Ok(plan) => Ok(Json(Some(business_plan_response(plan, &locale)?))),
         Err(_) => Ok(Json(None)),
     }
 }

@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::fetch_page;
+use crate::domain::business_error::BusinessError;
 use crate::domain::business_plan::{BusinessPlan, BusinessPlanEntityMapper};
 use entity::business_plan_entity::Model as BusinessPlanEntity;
 use entity::{business_plan_entity, tenant_entity};
@@ -8,6 +9,22 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, EntityTrait, QueryFilter, QueryOrder,
     TryIntoModel,
 };
+use sea_orm::prelude::async_trait::async_trait;
+
+#[async_trait]
+pub trait BusinessPlanStore: Send + Sync {
+    async fn save(&self, plan: BusinessPlan) -> Result<BusinessPlan, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<BusinessPlan>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: &str) -> Result<Option<BusinessPlan>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<BusinessPlan>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<BusinessPlan>, BusinessError>;
+    async fn delete(&self, id: i64) -> Result<bool, BusinessError>;
+}
 
 pub struct BusinessPlanGateway {
     db: DbConn,
@@ -89,4 +106,49 @@ impl BusinessPlanGateway {
             .await?;
         Ok(result.rows_affected == 1)
     }
+}
+
+#[async_trait]
+impl BusinessPlanStore for BusinessPlanGateway {
+    async fn save(&self, plan: BusinessPlan) -> Result<BusinessPlan, BusinessError> {
+        let model = BusinessPlanGateway::save(self, plan).await.map_err(database_error)?;
+        Ok(BusinessPlanEntityMapper::from_model(model))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<BusinessPlan>, BusinessError> {
+        let model = BusinessPlanGateway::find_by_id(self, id).await.map_err(database_error)?;
+        Ok(model.map(BusinessPlanEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: &str) -> Result<Option<BusinessPlan>, BusinessError> {
+        let model = BusinessPlanGateway::find_by_uuid(self, uuid).await.map_err(database_error)?;
+        Ok(model.map(BusinessPlanEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<BusinessPlan>, u64), BusinessError> {
+        let (models, total) = BusinessPlanGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((BusinessPlanEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<BusinessPlan>, BusinessError> {
+        let models = BusinessPlanGateway::find_all(self).await.map_err(database_error)?;
+        Ok(BusinessPlanEntityMapper::from_models(models))
+    }
+
+    async fn delete(&self, id: i64) -> Result<bool, BusinessError> {
+        BusinessPlanGateway::delete(self, id).await.map_err(database_error)
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Business plan database error: {error}");
+    log::error!("[BusinessPlanGateway] {message}");
+    BusinessError::new(message)
 }

@@ -79,7 +79,11 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                 password: e.password.take().unwrap_or_default(),
                 enabled: e.enabled.take().unwrap_or(true),
                 tenant_id: e.tenant_id.take().flatten(),
-                role: Role::from_str(e.role.unwrap().as_str()).unwrap_or(Role::TenantUser),
+                role: e
+                    .role
+                    .take()
+                    .and_then(|role| Role::from_str(&role).ok())
+                    .unwrap_or(Role::TenantUser),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

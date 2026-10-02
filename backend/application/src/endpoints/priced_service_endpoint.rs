@@ -16,7 +16,7 @@ use business::domain::user::User;
 use business::gateway::priced_service_gateway::PricedServiceGateway;
 use business::use_cases::priced_service_use_case::{NAME_REQUIRED, PricedServiceUseCase};
 
-fn use_case(state: &AppState) -> PricedServiceUseCase {
+fn use_case(state: &AppState) -> PricedServiceUseCase<PricedServiceGateway> {
     PricedServiceUseCase::new(PricedServiceGateway::new(state.conn.as_ref().clone()))
 }
 

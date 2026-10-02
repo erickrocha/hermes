@@ -99,9 +99,9 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
             Err(_) => Tenant {
                 id: e.id.take(),
                 uuid: e.uuid.take().map(bytes_para_string),
-                business_name: e.business_name.unwrap(),
+                business_name: e.business_name.take().unwrap_or_default(),
                 company_name: e.company_name.take().flatten(),
-                tax_id: e.tax_id.unwrap(),
+                tax_id: e.tax_id.take().unwrap_or_default(),
                 email: e.email.take().flatten(),
                 phone: e.phone.take().flatten(),
                 website: e.website.take().flatten(),

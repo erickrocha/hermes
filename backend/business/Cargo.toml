@@ -44,3 +44,19 @@ required-features = ["mock"]
 [[test]]
 name = "authentication"
 required-features = ["mock"]
+
+[[test]]
+name = "tenant_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "business_plan_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "service_type_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "priced_service_use_case_test"
+required-features = ["mock"]

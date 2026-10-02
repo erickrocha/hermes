@@ -36,18 +36,11 @@ pub async fn authentication(
         }
     };
 
-    let mut header = auth_header.split_whitespace();
+    let token = bearer_token(auth_header).ok_or_else(|| {
+        ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidJwtToken)
+    })?;
 
-    let (bearer, token) = (header.next(), header.next());
-
-    if bearer != Some("Bearer") || token.is_none() {
-        return Err(ExceptionResponse::Forbidden(
-            locale,
-            ErrorKey::InvalidJwtToken,
-        ));
-    }
-
-    let current_user = AuthenticationUseCase::validate(&state.conn, token.unwrap().to_string())
+    let current_user = AuthenticationUseCase::validate(&state.conn, token.to_string())
         .await
         .map_err(|_| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
 
@@ -69,6 +62,14 @@ pub async fn authentication(
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
 }
 
+fn bearer_token(header: &str) -> Option<&str> {
+    let mut parts = header.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some("Bearer"), Some(token)) => Some(token),
+        _ => None,
+    }
+}
+
 /// EPIC-XF-03-S01/S02/S03 (HRMS-018, HRMS-019, HRMS-020, D-6, U-013): the
 /// authenticated surface is the default; this is the whole exception list,
 /// matched exactly rather than by prefix (`/login-anything` is not public).
@@ -82,7 +83,15 @@ fn is_public_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_public_path;
+    use super::{bearer_token, is_public_path};
+
+    #[test]
+    fn bearer_token_requires_scheme_and_token_without_panicking() {
+        assert_eq!(bearer_token("Bearer abc.def.ghi"), Some("abc.def.ghi"));
+        assert_eq!(bearer_token(""), None);
+        assert_eq!(bearer_token("Bearer"), None);
+        assert_eq!(bearer_token("Basic abc"), None);
+    }
 
     #[test]
     fn public_paths_match_the_router_exactly() {

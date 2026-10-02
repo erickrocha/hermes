@@ -200,8 +200,7 @@ impl AuthenticationUseCase {
             // nunca recusa o login — o usuário acertou a senha; só significa que
             // a conta tenta de novo no próximo login.
             let user = Self::upgrade_legacy_hash(db, user, &password).await;
-            let access_token = Self::generate_access_token(user);
-            Ok(access_token)
+            Self::generate_access_token(user)
         } else {
             log::error!(
                 "[AuthenticationUseCase::execute] Invalid password for user: {}",
@@ -251,36 +250,31 @@ impl AuthenticationUseCase {
         }
     }
 
-    pub fn generate_access_token(user: User) -> AccessToken {
+    pub fn generate_access_token(user: User) -> Result<AccessToken, BusinessError> {
         log::info!(
             "[AuthenticationUseCase::generate_access_token] Generating access token for: {}",
             user.email
         );
         let expiration = Utc::now()
             .checked_add_signed(chrono::Duration::hours(access_token_hours()))
-            .expect("valid timestamp")
+            .ok_or_else(|| BusinessError::new("Access token expiration is out of range".to_string()))?
             .timestamp();
-        let claims = Claims::builder()
-            .with_sub(user.email.clone())
-            .exp(expiration)
-            .uuid(user.uuid.clone().unwrap_or_default())
-            .name(user.name.clone().unwrap_or_default())
-            .user_id(user.id.unwrap_or(0))
-            .role(user.role.clone())
-            .tenant_id(user.tenant_id)
-            .build()
-            .expect("missing required claims field");
+        let claims = Self::claims(&user, expiration)?;
 
         let header = Header::new(Algorithm::HS512);
-        let private_key = env::var("ACCESS_TOKEN_SECRET").expect("ACCESS_TOKEN_SECRET must be set");
+        let private_key = env::var("ACCESS_TOKEN_SECRET")
+            .map_err(|_| BusinessError::new("Token signing is unavailable".to_string()))?;
         let token = encode(
             &header,
             &claims,
             &EncodingKey::from_secret(private_key.as_bytes()),
         )
-        .unwrap();
-        let refresh_token = Self::generate_refresh_token(user.clone());
-        AccessToken {
+        .map_err(|error| {
+            log::error!("[AuthenticationUseCase::generate_access_token] Token encoding failed: {error}");
+            BusinessError::new("Token generation failed".to_string())
+        })?;
+        let refresh_token = Self::generate_refresh_token(user)?;
+        Ok(AccessToken {
             access_token: token,
             token_type: "Bearer".to_string(),
             expire_in: expiration,
@@ -292,38 +286,54 @@ impl AuthenticationUseCase {
             role: claims.role,
             tenant_id: claims.tenant_id,
             tenant_uuid: None,
-        }
+        })
     }
 
-    fn generate_refresh_token(user: User) -> String {
+    fn generate_refresh_token(user: User) -> Result<String, BusinessError> {
         log::info!(
             "[AuthenticationUseCase::generate_refresh_token] Generating refresh token for: {}",
             user.email
         );
         let expiration = Utc::now()
             .checked_add_signed(chrono::Duration::days(refresh_token_days()))
-            .expect("valid timestamp")
+            .ok_or_else(|| BusinessError::new("Refresh token expiration is out of range".to_string()))?
             .timestamp();
-        let claims = Claims::builder()
-            .with_sub(user.email.clone())
-            .exp(expiration)
-            .uuid(user.uuid.clone().unwrap_or_default())
-            .name(user.name.clone().unwrap_or_default())
-            .user_id(user.id.unwrap_or(0))
-            .role(user.role.clone())
-            .tenant_id(user.tenant_id)
-            .build()
-            .expect("missing required claims field");
+        let claims = Self::claims(&user, expiration)?;
 
         let header = Header::new(Algorithm::HS512);
-        let private_key =
-            env::var("REFRESH_TOKEN_SECRET").expect("REFRESH_TOKEN_SECRET must be set");
+        let private_key = env::var("REFRESH_TOKEN_SECRET")
+            .map_err(|_| BusinessError::new("Token signing is unavailable".to_string()))?;
         encode(
             &header,
             &claims,
             &EncodingKey::from_secret(private_key.as_bytes()),
         )
-        .unwrap()
+        .map_err(|error| {
+            log::error!("[AuthenticationUseCase::generate_refresh_token] Token encoding failed: {error}");
+            BusinessError::new("Token generation failed".to_string())
+        })
+    }
+
+    fn claims(user: &User, expiration: i64) -> Result<Claims, BusinessError> {
+        let uuid = user
+            .uuid
+            .as_deref()
+            .filter(|uuid| !uuid.is_empty())
+            .ok_or_else(|| BusinessError::new("User identity is incomplete".to_string()))?;
+        let user_id = user
+            .id
+            .filter(|id| *id > 0)
+            .ok_or_else(|| BusinessError::new("User identity is incomplete".to_string()))?;
+        Claims::builder()
+            .with_sub(user.email.clone())
+            .exp(expiration)
+            .uuid(uuid)
+            .name(user.name.clone().unwrap_or_default())
+            .user_id(user_id)
+            .role(user.role.clone())
+            .tenant_id(user.tenant_id)
+            .build()
+            .map_err(|message| BusinessError::new(format!("Token claims are incomplete: {message}")))
     }
 
     /// DEF-XF-09 (owner, 2026-09-18): identity and tenant scope come from the
@@ -339,7 +349,8 @@ impl AuthenticationUseCase {
     /// login or refresh, which re-reads the account and mints fresh claims.
     pub async fn validate(db: &DbConn, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate] Validating access token");
-        let public_key = env::var("ACCESS_TOKEN_SECRET").expect("ACCESS_TOKEN_SECRET must be set");
+        let public_key = env::var("ACCESS_TOKEN_SECRET")
+            .map_err(|_| BusinessError::new("Token is invalid".to_string()))?;
         let claims = decode::<Claims>(
             &token,
             &DecodingKey::from_secret(public_key.as_bytes()),
@@ -370,23 +381,21 @@ impl AuthenticationUseCase {
 
     pub async fn validate_refresh_token(db: &DbConn, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate_refresh_token] Validating refresh token");
-        let public_key =
-            env::var("REFRESH_TOKEN_SECRET").expect("REFRESH_TOKEN_SECRET must be set");
-        let result = decode::<Claims>(
+        let public_key = env::var("REFRESH_TOKEN_SECRET")
+            .map_err(|_| BusinessError::new("Token is invalid".to_string()))?;
+        let authentication = decode::<Claims>(
             &token,
             &DecodingKey::from_secret(public_key.as_bytes()),
             &Validation::new(Algorithm::HS512),
-        );
-
-        if let Err(err) = &result {
+        )
+        .map_err(|error| {
             log::error!(
                 "[AuthenticationUseCase::validate_refresh_token] Refresh token decode error: {:?}",
-                err
+                error
             );
-            return Err(BusinessError::new("Token is invalid".to_string()));
-        }
+            BusinessError::new("Token is invalid".to_string())
+        })?;
 
-        let authentication = result.unwrap();
         log::info!(
             "[AuthenticationUseCase::validate_refresh_token] Refresh token valid for subject: {}",
             authentication.claims.sub
@@ -405,7 +414,7 @@ impl AuthenticationUseCase {
     ) -> Result<AccessToken, BusinessError> {
         log::info!("[AuthenticationUseCase::refresh_token] Refreshing token");
         let user = AuthenticationUseCase::validate_refresh_token(db, refresh_token).await?;
-        Ok(AuthenticationUseCase::generate_access_token(user))
+        AuthenticationUseCase::generate_access_token(user)
     }
 }
 

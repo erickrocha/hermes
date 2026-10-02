@@ -1149,14 +1149,14 @@ async fn failed_writes_are_reported() {
         ),
     ))
     .await;
-    assert!(persisted.is_none());
+    assert!(persisted.is_err());
     assert!(
         UserUseCase::persist(
             mock().into_connection(),
             new_user("", "", Role::TenantUser, None)
         )
         .await
-        .is_none()
+        .is_err()
     );
 }
 
@@ -3841,7 +3841,9 @@ use business::use_cases::service_type_use_case::{
     CODE_REQUIRED, DUPLICATE_CODE, NAME_REQUIRED as SERVICE_TYPE_NAME_REQUIRED, ServiceTypeUseCase,
 };
 
-fn service_type_use_case(db: &DatabaseConnection) -> ServiceTypeUseCase {
+fn service_type_use_case(
+    db: &DatabaseConnection,
+) -> ServiceTypeUseCase<business::gateway::service_type_gateway::ServiceTypeGateway> {
     ServiceTypeUseCase::new(ServiceTypeGateway::new(db.clone()))
 }
 
@@ -3928,7 +3930,9 @@ async fn saving_a_new_service_type_inserts_once() {
     assert_eq!(saved.id, Some(600));
 }
 
-fn priced_service_use_case(db: &DatabaseConnection) -> PricedServiceUseCase {
+fn priced_service_use_case(
+    db: &DatabaseConnection,
+) -> PricedServiceUseCase<business::gateway::priced_service_gateway::PricedServiceGateway> {
     PricedServiceUseCase::new(PricedServiceGateway::new(db.clone()))
 }
 

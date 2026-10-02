@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page};
+use crate::domain::business_error::BusinessError;
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use entity::prelude::TenantEntity as TenantQuery;
 use entity::tenant_entity;
@@ -10,6 +11,20 @@ use sea_orm::{
     QueryFilter, QueryOrder,
 };
 
+#[async_trait]
+pub trait TenantStore: Send + Sync {
+    async fn save(&self, tenant: Tenant) -> Result<Tenant, BusinessError>;
+    async fn get_by_id(&self, id: i64) -> Result<Option<Tenant>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Tenant>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Tenant>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<Tenant>, BusinessError>;
+}
+
 pub struct TenantGateway {
     db: DbConn,
 }
@@ -18,6 +33,53 @@ impl TenantGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl TenantStore for TenantGateway {
+    async fn save(&self, tenant: Tenant) -> Result<Tenant, BusinessError> {
+        let active = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::persist(self, tenant)
+            .await
+            .map_err(database_error)?;
+        Ok(TenantEntityMapper::from_active_model(active))
+    }
+
+    async fn get_by_id(&self, id: i64) -> Result<Option<Tenant>, BusinessError> {
+        let model = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_by_id(self, id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(TenantEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<Tenant>, BusinessError> {
+        let model = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_by_uuid(self, uuid)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(TenantEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<Tenant>, u64), BusinessError> {
+        let (models, total) = self.find_page(page, page_size, search).await.map_err(database_error)?;
+        Ok((TenantEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<Tenant>, BusinessError> {
+        let models = <Self as Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel>>::find_all(self)
+            .await
+            .map_err(database_error)?;
+        Ok(TenantEntityMapper::from_models(models))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Database error: {error}");
+    log::error!("[TenantGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

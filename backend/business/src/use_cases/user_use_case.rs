@@ -255,32 +255,37 @@ impl UserUseCase {
         Ok(UserEntityMapper::from_models(entities))
     }
 
-    pub async fn persist(db: DbConn, user: User) -> Option<User> {
+    pub async fn persist(db: DbConn, user: User) -> Result<User, BusinessError> {
         log::info!(
             "[UserUseCase::persist] Executing persist for user: {}",
             user.email
         );
 
         if user.email.is_empty() || user.password.is_empty() {
-            log::error!("[UserUseCase::persist] Email or password is empty");
-            return None;
+            let error = BusinessError::new("Email and password are required".to_string());
+            log::error!("[UserUseCase::persist] {}", error.message);
+            return Err(error);
         }
 
+        let encrypted_password = password::hash(&user.password).map_err(|error| {
+            let message = format!("Password encryption error: {error:?}");
+            log::error!("[UserUseCase::persist] {}", message);
+            BusinessError::new(message)
+        })?;
         let user_with_password_encrypted = User {
-            password: password::hash(&user.password).expect("password hashing cannot fail"),
+            password: encrypted_password,
             ..user
         };
 
         let user_gateway = UserGateway::new(db);
-        let entity = user_gateway.persist(user_with_password_encrypted).await;
-        if entity.is_err() {
-            let error = entity.err().unwrap();
-            log::error!("[UserUseCase::persist] Error adding user: {}", error);
-            return None;
-        }
-        let user = entity.unwrap();
-
-        Some(UserEntityMapper::from_active_model(user))
+        let entity = user_gateway
+            .persist(user_with_password_encrypted)
+            .await
+            .map_err(|error| {
+                log::error!("[UserUseCase::persist] Error adding user: {}", error);
+                BusinessError::new(format!("Failed to persist user: {error}"))
+            })?;
+        Ok(UserEntityMapper::from_active_model(entity))
     }
 
     pub async fn find_by_email(db: &DbConn, email: String) -> Option<User> {
@@ -310,16 +315,18 @@ impl UserUseCase {
         }
     }
 
-    async fn find_sysadmin(db: &DbConn) -> Option<User> {
+    async fn find_sysadmin(db: &DbConn) -> Result<Option<User>, BusinessError> {
         match UserGateway::find_by_role(db, Role::SysAdmin.to_string()).await {
-            Ok(Some(model)) => Some(UserEntityMapper::from_model(model)),
-            Ok(None) => None,
+            Ok(Some(model)) => Ok(Some(UserEntityMapper::from_model(model))),
+            Ok(None) => Ok(None),
             Err(error) => {
                 log::error!(
                     "[UserUseCase::find_sysadmin] Error finding SysAdmin user: {}",
                     error
                 );
-                None
+                Err(BusinessError::new(format!(
+                    "Failed to find SysAdmin user: {error}"
+                )))
             }
         }
     }
@@ -334,15 +341,18 @@ impl UserUseCase {
     /// `admin` when absent -- the one setting in the whole service that
     /// defaulted a secret instead of failing fast, and the one whose
     /// default is public (it is right here in the source).
-    pub async fn seed_sysadmin(db: &DbConn) -> Option<User> {
+    pub async fn seed_sysadmin(db: &DbConn) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
-        let sysadmin_email = env::var("SYSADMIN_EMAIL").expect("SYSADMIN_EMAIL must be set");
-        let sysadmin_password =
-            env::var("SYSADMIN_PASSWORD").expect("SYSADMIN_PASSWORD must be set");
+        let sysadmin_email = env::var("SYSADMIN_EMAIL")
+            .map_err(|_| BusinessError::new("SYSADMIN_EMAIL must be set".to_string()))?;
+        let sysadmin_password = env::var("SYSADMIN_PASSWORD")
+            .map_err(|_| BusinessError::new("SYSADMIN_PASSWORD must be set".to_string()))?;
 
         if sysadmin_email.trim().is_empty() || sysadmin_password.trim().is_empty() {
-            panic!("SYSADMIN_EMAIL and SYSADMIN_PASSWORD must not be empty");
+            return Err(BusinessError::new(
+                "SYSADMIN_EMAIL and SYSADMIN_PASSWORD must not be empty".to_string(),
+            ));
         }
 
         // DEF-IA-09 (HRMS-109): the minimum applies to every path that sets a
@@ -350,17 +360,15 @@ impl UserUseCase {
         // the platform. `application`'s `start` (main.rs) refuses to boot on a short value before
         // this is ever reached; this is the same rule stated where the password
         // is actually written, so a second caller cannot bypass it.
-        if let Err(error) = password_policy::validate_length(&sysadmin_password) {
-            panic!("SYSADMIN_PASSWORD is invalid: {}", error.message);
-        }
+        password_policy::validate_length(&sysadmin_password)?;
 
-        if let Some(existing_sysadmin) = Self::find_sysadmin(db).await {
+        if let Some(existing_sysadmin) = Self::find_sysadmin(db).await? {
             if existing_sysadmin.email == sysadmin_email {
                 log::info!(
                     "[UserUseCase::seed_sysadmin] SysAdmin user already exists with email: {}",
                     sysadmin_email
                 );
-                return Some(existing_sysadmin);
+                return Ok(existing_sysadmin);
             }
 
             log::info!(
@@ -384,13 +392,9 @@ impl UserUseCase {
                 updated_by: Some("system".to_string()),
             };
 
-            let updated = Self::persist(db.clone(), updated_sysadmin).await;
-            if updated.is_some() {
-                log::info!("[UserUseCase::seed_sysadmin] SysAdmin user updated successfully.");
-            } else {
-                log::error!("[UserUseCase::seed_sysadmin] Failed to update SysAdmin user.");
-            }
-            return updated;
+            let updated = Self::persist(db.clone(), updated_sysadmin).await?;
+            log::info!("[UserUseCase::seed_sysadmin] SysAdmin user updated successfully.");
+            return Ok(updated);
         }
 
         log::info!(
@@ -413,12 +417,8 @@ impl UserUseCase {
             updated_by: Some("system".to_string()),
         };
 
-        let created = Self::persist(db.clone(), sysadmin_user).await;
-        if created.is_some() {
-            log::info!("[UserUseCase::seed_sysadmin] Initial SysAdmin user created successfully.");
-        } else {
-            log::error!("[UserUseCase::seed_sysadmin] Failed to create initial SysAdmin user.");
-        }
-        created
+        let created = Self::persist(db.clone(), sysadmin_user).await?;
+        log::info!("[UserUseCase::seed_sysadmin] Initial SysAdmin user created successfully.");
+        Ok(created)
     }
 }

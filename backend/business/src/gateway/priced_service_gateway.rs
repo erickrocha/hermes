@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::priced_service::{PricedService, PricedServiceEntityMapper};
 use entity::prelude::PricedServiceEntity as PricedServiceQuery;
 use entity::priced_service_entity;
@@ -9,6 +10,17 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait PricedServiceStore: Send + Sync {
+    async fn save(&self, priced_service: PricedService) -> Result<PricedService, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<PricedService>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PricedService>, u64), BusinessError>;
+}
 
 /// `HRMS-704` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +32,48 @@ impl PricedServiceGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl PricedServiceStore for PricedServiceGateway {
+    async fn save(&self, priced_service: PricedService) -> Result<PricedService, BusinessError> {
+        let entity = <Self as Gateway<
+            PricedService,
+            priced_service_entity::Model,
+            priced_service_entity::ActiveModel,
+        >>::persist(self, priced_service)
+        .await
+        .map_err(database_error)?;
+        Ok(PricedServiceEntityMapper::from_active_model(entity))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<PricedService>, BusinessError> {
+        let model = <Self as Gateway<
+            PricedService,
+            priced_service_entity::Model,
+            priced_service_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(PricedServiceEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PricedService>, u64), BusinessError> {
+        let (models, total) = PricedServiceGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((PricedServiceEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Priced service database error: {error}");
+    log::error!("[PricedServiceGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

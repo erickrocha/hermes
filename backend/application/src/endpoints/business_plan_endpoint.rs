@@ -27,28 +27,36 @@ fn authorize(user: &User, locale: &Locale) -> Result<(), ExceptionResponse> {
     Ok(())
 }
 
-fn use_case(state: &AppState) -> BusinessPlanUseCase {
+fn use_case(state: &AppState) -> BusinessPlanUseCase<BusinessPlanGateway> {
     BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()))
 }
 
-pub(crate) fn response(plan: BusinessPlan) -> BusinessPlanJson {
-    BusinessPlanJson {
-        id: plan.id.expect("persisted business plan has an id"),
-        uuid: plan.uuid.expect("persisted business plan has a uuid"),
+pub(crate) fn response(plan: BusinessPlan, locale: &Locale) -> Result<BusinessPlanJson, ExceptionResponse> {
+    let id = plan.id.ok_or_else(|| {
+        ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+    })?;
+    let uuid = plan.uuid.ok_or_else(|| {
+        ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+    })?;
+    let created_at = plan.created_at.ok_or_else(|| {
+        ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+    })?;
+    let updated_at = plan.updated_at.ok_or_else(|| {
+        ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+    })?;
+    Ok(BusinessPlanJson {
+        id,
+        uuid,
         name: plan.name,
         price_in_cents: plan.price_in_cents,
         available_users: plan.available_users,
         period_days: plan.period_days,
         payment_date: plan.payment_date,
-        created_at: plan
-            .created_at
-            .expect("persisted business plan has created_at"),
+        created_at,
         created_by: plan.created_by,
-        updated_at: plan
-            .updated_at
-            .expect("persisted business plan has updated_at"),
+        updated_at,
         updated_by: plan.updated_by,
-    }
+    })
 }
 
 fn domain(payload: CreateBusinessPlanJson) -> BusinessPlan {
@@ -107,11 +115,13 @@ pub async fn add(
     Json(payload): Json<CreateBusinessPlanJson>,
 ) -> HttpResponse<(StatusCode, Json<BusinessPlanJson>)> {
     authorize(&user, &locale)?;
-    use_case(&state)
+    match use_case(&state)
         .create(domain(payload))
         .await
-        .map(|plan| (StatusCode::CREATED, Json(response(plan))))
-        .map_err(|error| map_error(locale, &error.message))
+    {
+        Ok(plan) => Ok((StatusCode::CREATED, Json(response(plan, &locale)?))),
+        Err(error) => Err(map_error(locale, &error.message)),
+    }
 }
 
 #[utoipa::path(
@@ -135,18 +145,15 @@ pub async fn list_all(
     authorize(&user, &locale)?;
     let (page, page_size) = (page_query.page(), page_query.page_size());
     let search = page_query.search();
-    use_case(&state)
+    let (plans, total) = use_case(&state)
         .find_page(page, page_size, search.as_deref())
         .await
-        .map(|(plans, total)| {
-            Json(PageJson::new(
-                plans.into_iter().map(response).collect(),
-                page,
-                page_size,
-                total,
-            ))
-        })
-        .map_err(|error| map_error(locale, &error.message))
+        .map_err(|error| map_error(locale.clone(), &error.message))?;
+    let plans = plans
+        .into_iter()
+        .map(|plan| response(plan, &locale))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(PageJson::new(plans, page, page_size, total)))
 }
 
 #[utoipa::path(
@@ -169,11 +176,11 @@ pub async fn get_by_uuid(
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
     authorize(&user, &locale)?;
-    use_case(&state)
+    let plan = use_case(&state)
         .find_by_uuid(&uuid)
         .await
-        .map(|plan| Json(response(plan)))
-        .map_err(|error| map_error(locale, &error.message))
+        .map_err(|error| map_error(locale.clone(), &error.message))?;
+    Ok(Json(response(plan, &locale)?))
 }
 
 /// HRMS-204/AD-010 (OBS-TP-05): a plan is named by its UUID, so no public URL
@@ -189,7 +196,7 @@ async fn resolve_uuid(
         .find_by_uuid(uuid)
         .await
         .map_err(|error| map_error(locale.clone(), &error.message))?;
-    Ok(plan.id.unwrap_or_default())
+    plan.id.ok_or_else(|| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))
 }
 
 #[utoipa::path(
@@ -216,11 +223,11 @@ pub async fn update(
 ) -> HttpResponse<Json<BusinessPlanJson>> {
     authorize(&user, &locale)?;
     let id = resolve_uuid(&state, &locale, &uuid).await?;
-    use_case(&state)
+    let plan = use_case(&state)
         .update(id, update_domain(payload))
         .await
-        .map(|plan| Json(response(plan)))
-        .map_err(|error| map_error(locale, &error.message))
+        .map_err(|error| map_error(locale.clone(), &error.message))?;
+    Ok(Json(response(plan, &locale)?))
 }
 
 #[utoipa::path(

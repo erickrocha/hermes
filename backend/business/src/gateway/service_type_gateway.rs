@@ -1,6 +1,7 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
 use crate::domain::service_type::{ServiceType, ServiceTypeEntityMapper};
 use entity::prelude::ServiceTypeEntity as ServiceTypeQuery;
 use entity::service_type_entity;
@@ -9,6 +10,22 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
     QueryOrder,
 };
+
+#[async_trait]
+pub trait ServiceTypeStore: Send + Sync {
+    async fn save(&self, service_type: ServiceType) -> Result<ServiceType, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ServiceType>, BusinessError>;
+    async fn get_by_code(
+        &self,
+        code: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<ServiceType>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ServiceType>, u64), BusinessError>;
+}
 
 /// `HRMS-704` (`D-09`): every read and delete goes through
 /// `tenant_select`/`tenant_delete`, same as every other gateway here.
@@ -20,6 +37,59 @@ impl ServiceTypeGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
     }
+}
+
+#[async_trait]
+impl ServiceTypeStore for ServiceTypeGateway {
+    async fn save(&self, service_type: ServiceType) -> Result<ServiceType, BusinessError> {
+        let entity = <Self as Gateway<
+            ServiceType,
+            service_type_entity::Model,
+            service_type_entity::ActiveModel,
+        >>::persist(self, service_type)
+        .await
+        .map_err(database_error)?;
+        Ok(ServiceTypeEntityMapper::from_active_model(entity))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<ServiceType>, BusinessError> {
+        let model = <Self as Gateway<
+            ServiceType,
+            service_type_entity::Model,
+            service_type_entity::ActiveModel,
+        >>::find_by_uuid(self, uuid)
+        .await
+        .map_err(database_error)?;
+        Ok(model.map(ServiceTypeEntityMapper::from_model))
+    }
+
+    async fn get_by_code(
+        &self,
+        code: &str,
+        tenant_id: Option<i64>,
+    ) -> Result<Option<ServiceType>, BusinessError> {
+        let model = ServiceTypeGateway::find_by_code(self, code, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(ServiceTypeEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<ServiceType>, u64), BusinessError> {
+        let (models, total) = ServiceTypeGateway::find_page(self, page, page_size)
+            .await
+            .map_err(database_error)?;
+        Ok((ServiceTypeEntityMapper::from_models(models), total))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("Service type database error: {error}");
+    log::error!("[ServiceTypeGateway] {message}");
+    BusinessError::new(message)
 }
 
 #[async_trait]

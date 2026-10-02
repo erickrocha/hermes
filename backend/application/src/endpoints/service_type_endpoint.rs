@@ -18,7 +18,7 @@ use business::use_cases::service_type_use_case::{
     CODE_REQUIRED, DUPLICATE_CODE, NAME_REQUIRED, ServiceTypeUseCase,
 };
 
-fn use_case(state: &AppState) -> ServiceTypeUseCase {
+fn use_case(state: &AppState) -> ServiceTypeUseCase<ServiceTypeGateway> {
     ServiceTypeUseCase::new(ServiceTypeGateway::new(state.conn.as_ref().clone()))
 }
 

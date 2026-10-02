@@ -210,13 +210,11 @@ impl ChecklistRunUseCase {
                 .find_by_id(answer.checklist_template_item_id)
                 .await
                 .map_err(database_error)?;
-            let belongs = item.as_ref().is_some_and(|i| {
+            let Some(item) = item.filter(|i| {
                 i.checklist_template_id == run.checklist_template_id && i.tenant_id == run.tenant_id
-            });
-            if !belongs {
+            }) else {
                 return Err(BusinessError::new(ANSWER_NOT_A_TEMPLATE_ITEM.to_string()));
-            }
-            let item = item.unwrap();
+            };
             item_info.insert(
                 answer.checklist_template_item_id,
                 (item.description, item.generates_work_order),

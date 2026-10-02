@@ -9,6 +9,7 @@
 
 use business::commons::functions::string_to_bytes;
 use business::commons::password;
+use business::domain::access_token::AccessToken;
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::use_cases::account_invite_use_case::AccountInviteUseCase;
@@ -190,10 +191,14 @@ fn user() -> User {
     }
 }
 
+fn issue_token(user: User) -> AccessToken {
+    AuthenticationUseCase::generate_access_token(user).expect("valid test user issues tokens")
+}
+
 #[tokio::test]
 async fn an_access_token_validates_and_a_refresh_token_does_not() {
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let valid = AuthenticationUseCase::validate(
         &db_returning(vec![vec![row(&argon(), true)]]),
         issued.access_token.clone(),
@@ -219,7 +224,7 @@ async fn an_access_token_validates_and_a_refresh_token_does_not() {
 #[tokio::test]
 async fn a_refresh_token_mints_a_new_access_token_but_an_access_token_cannot_refresh() {
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let refreshed = AuthenticationUseCase::refresh_token(
         &db_returning(vec![vec![row(&argon(), true)]]),
         issued.refresh_token.clone().unwrap(),
@@ -240,7 +245,7 @@ async fn a_refresh_token_mints_a_new_access_token_but_an_access_token_cannot_ref
 async fn disabling_an_account_ends_its_live_session() {
     // HRM-042: a token issued before the account was disabled stops working.
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let result = AuthenticationUseCase::validate(
         &db_returning(vec![vec![row(&argon(), false)]]),
         issued.access_token,
@@ -268,7 +273,7 @@ async fn an_access_token_does_not_follow_its_address_to_another_account() {
     // the account was resolved by address, the disabled holder's token came
     // back to life -- and ran as the *original* user, in the original tenant.
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let result = AuthenticationUseCase::validate(
         &db_returning(vec![vec![successor_row()]]),
         issued.access_token,
@@ -286,7 +291,7 @@ async fn a_refresh_token_does_not_mint_a_session_for_another_person() {
     // worse -- it minted a *new* 3-hour session for the successor account, in
     // the successor's tenant, for the whole 7-day refresh lifetime.
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let result = AuthenticationUseCase::refresh_token(
         &db_returning(vec![vec![successor_row()]]),
         issued.refresh_token.clone().unwrap(),
@@ -303,7 +308,7 @@ async fn a_token_stops_working_once_its_account_is_renamed() {
     // The check that makes the above hold in both directions: the token still
     // names the id, but it no longer describes the account.
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user());
+    let issued = issue_token(user());
     let renamed = user_entity::Model {
         email: "owner-renamed@example.com".into(),
         ..row(&argon(), true)
@@ -453,7 +458,7 @@ async fn invitation_acceptance_rejects_bad_input() {
     );
 
     // A real access token is not an invitation (HRM-053).
-    let access = AuthenticationUseCase::generate_access_token(user()).access_token;
+    let access = issue_token(user()).access_token;
     let found = db_returning(vec![vec![row(&argon(), true)]]);
     assert!(
         AccountInviteUseCase::accept(&found, &access, "Long#Enough99")
@@ -486,7 +491,7 @@ async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
     // tenant; a protected request uses those claims. The account was moved to
     // tenant 99 and demoted after the token was issued -- the token still wins.
     secrets();
-    let issued = AuthenticationUseCase::generate_access_token(user()); // TenantOwner, tenant 42
+    let issued = issue_token(user()); // TenantOwner, tenant 42
     let mut moved = row(&argon(), true);
     moved.tenant_id = Some(99);
     moved.role = "TenantUser".into();
@@ -513,7 +518,7 @@ async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
     // account and mints fresh claims.
     let refreshed = AuthenticationUseCase::refresh_token(
         &db_returning(vec![vec![moved]]),
-        AuthenticationUseCase::generate_access_token(user())
+        issue_token(user())
             .refresh_token
             .unwrap(),
     )
@@ -529,7 +534,7 @@ async fn a_sysadmin_token_carries_no_tenant() {
     let mut admin = user();
     admin.role = Role::SysAdmin;
     admin.tenant_id = None;
-    let token = AuthenticationUseCase::generate_access_token(admin);
+    let token = issue_token(admin);
     assert_eq!(token.tenant_id, None);
     let mut row_admin = row(&argon(), true);
     row_admin.role = "SysAdmin".into();
@@ -539,4 +544,15 @@ async fn a_sysadmin_token_carries_no_tenant() {
             .await
             .unwrap();
     assert_eq!((caller.role, caller.tenant_id), (Role::SysAdmin, None));
+}
+
+#[test]
+fn token_generation_refuses_a_user_without_persisted_identity() {
+    secrets();
+    let mut invalid = user();
+    invalid.id = None;
+
+    let result = AuthenticationUseCase::generate_access_token(invalid);
+
+    assert_eq!(result.expect_err("an id is required to mint identity claims").message, "User identity is incomplete");
 }

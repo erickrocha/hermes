@@ -376,9 +376,12 @@ pub async fn update(
     // tenant; only the other fields in the payload take effect.
     if can_reassign_role(&current_user, &domain.role, domain.tenant_id) {
         if domain.role == Role::TenantOwner {
-            let tenant_id = domain
-                .tenant_id
-                .expect("can_reassign_role requires Some for TenantOwner");
+            let Some(tenant_id) = domain.tenant_id else {
+                return Err(ExceptionResponse::BadRequest(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            };
             let tenant_use_case =
                 TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
             if tenant_use_case.find_by_id(tenant_id).await.is_err() {
@@ -422,7 +425,9 @@ pub async fn change_password(
 ) -> HttpResponse<StatusCode> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
-    let user_id = current_user.id.unwrap();
+    let user_id = current_user.id.ok_or_else(|| {
+        ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials)
+    })?;
 
     match use_case
         .change_password(user_id, payload.current_password, payload.new_password)
