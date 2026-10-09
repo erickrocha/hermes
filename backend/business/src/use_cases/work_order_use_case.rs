@@ -197,6 +197,12 @@ impl WorkOrderUseCase {
             WorkOrderStatus::PartiallyResolved
         } else if any_pending {
             WorkOrderStatus::Open
+        } else if *current == WorkOrderStatus::AwaitingParts {
+            // `TRM-649`: nothing awaits a part any more, so the order leaves "awaiting parts" -- the
+            // received part is no longer what holds the repair. (Concluding stays an administrative
+            // act, `TRM-208`; `Open` here is the in-execution state.) Without this, an order whose only
+            // pendency was the purchase placeholder stayed `AwaitingParts` for ever after receipt.
+            WorkOrderStatus::Open
         } else {
             current.clone()
         }
@@ -259,7 +265,7 @@ impl WorkOrderUseCase {
         self.recomputed_after(work_order, updated_item).await
     }
 
-    async fn loaded(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
+    pub(crate) async fn loaded(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {
         let existing = self.store.find_work_order(work_order_id).await?;
         match existing {
             Some(work_order) => Ok(work_order),
@@ -267,7 +273,7 @@ impl WorkOrderUseCase {
         }
     }
 
-    async fn loaded_item(&self, item_id: i64) -> Result<WorkOrderItem, BusinessError> {
+    pub(crate) async fn loaded_item(&self, item_id: i64) -> Result<WorkOrderItem, BusinessError> {
         let existing = self.store.find_work_order_item(item_id).await?;
         match existing {
             Some(item) => Ok(item),
@@ -455,5 +461,59 @@ impl WorkOrderUseCase {
             status,
             WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled
         )
+    }
+}
+
+#[cfg(test)]
+mod recompute_status_tests {
+    use super::*;
+
+    fn item(status: WorkOrderItemStatus) -> WorkOrderItem {
+        WorkOrderItem {
+            id: None,
+            uuid: None,
+            tenant_id: None,
+            work_order_id: 1,
+            description: "x".into(),
+            item_type: None,
+            status,
+            observation: None,
+            resolved_by: None,
+            resolved_at: None,
+            resolution_description: None,
+            purchase_order_id: None,
+            is_purchase_placeholder: false,
+            preventive_plan_id: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    }
+
+    /// `TRM-649`: when the last item awaiting a part is settled, the order leaves `AwaitingParts`.
+    #[test]
+    fn an_order_leaves_awaiting_parts_when_nothing_awaits_a_part_any_more() {
+        let resolved = item(WorkOrderItemStatus::Resolved);
+        let only_settled = vec![resolved.clone()];
+        assert_eq!(
+            WorkOrderUseCase::recompute_status(
+                &WorkOrderStatus::AwaitingParts,
+                &resolved,
+                &only_settled
+            ),
+            WorkOrderStatus::Open
+        );
+        // still held while another item awaits
+        let held = vec![resolved.clone(), item(WorkOrderItemStatus::AwaitingParts)];
+        assert_eq!(
+            WorkOrderUseCase::recompute_status(&WorkOrderStatus::AwaitingParts, &resolved, &held),
+            WorkOrderStatus::AwaitingParts
+        );
+        // conclusion is never derived: an Open order with only settled items stays Open
+        assert_eq!(
+            WorkOrderUseCase::recompute_status(&WorkOrderStatus::Open, &resolved, &only_settled),
+            WorkOrderStatus::Open
+        );
     }
 }

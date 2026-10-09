@@ -24,6 +24,16 @@ pub const PENDENCY_REQUIRES_WORK_ORDER: &str =
 
 #[async_trait]
 pub trait PurchaseOrderWorkOrderService: Send + Sync {
+    /// Checks, before anything is written, that `item_id` is a pendency of `work_order_id`. Raising an
+    /// order saves it first and links the pendency after, so a bad pendency found only at the linking
+    /// step used to leave the order behind. The default accepts, for services that cannot look.
+    async fn check_pendency(
+        &self,
+        _work_order_id: i64,
+        _item_id: i64,
+    ) -> Result<(), BusinessError> {
+        Ok(())
+    }
     async fn add_item(
         &self,
         work_order_id: i64,
@@ -80,6 +90,14 @@ impl PurchaseOrderUseCase {
             .find_part(purchase_order.part_id)
             .await?
             .ok_or_else(|| BusinessError::new(PART_NOT_FOUND.to_string()))?;
+        if let (Some(work_order_id), Some(item_id)) = (
+            purchase_order.work_order_id,
+            purchase_order.work_order_item_id,
+        ) {
+            self.work_orders
+                .check_pendency(work_order_id, item_id)
+                .await?;
+        }
         if let Some(work_order_id) = purchase_order.work_order_id {
             let existing = self
                 .gateway
@@ -241,6 +259,17 @@ impl PurchaseOrderUseCase {
 
 #[async_trait]
 impl PurchaseOrderWorkOrderService for WorkOrderUseCase {
+    async fn check_pendency(&self, work_order_id: i64, item_id: i64) -> Result<(), BusinessError> {
+        self.loaded(work_order_id).await?;
+        let item = self.loaded_item(item_id).await?;
+        if item.work_order_id != work_order_id {
+            return Err(BusinessError::new(
+                crate::use_cases::work_order_use_case::ITEM_NOT_ON_THIS_WORK_ORDER.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn add_item(
         &self,
         work_order_id: i64,
