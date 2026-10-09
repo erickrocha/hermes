@@ -85,6 +85,9 @@ impl ChecklistTemplateStore for ChecklistTemplateDatabaseGateway {
         let mut saved_items = Vec::with_capacity(items.len());
         for mut item in items {
             item.checklist_template_id = template.id.unwrap_or_default();
+            // An item belongs to its template's tenant. A tenant-bound caller gets this stamped on save;
+            // the platform administrator has no tenant of their own, so it must come from the template.
+            item.tenant_id = template.tenant_id;
             match ChecklistTemplateItemEntityMapper::build_active_model(item)
                 .save(&transaction)
                 .await
