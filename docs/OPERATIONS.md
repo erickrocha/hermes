@@ -75,7 +75,7 @@ nobody's name in it is the failure mode this requirement exists to prevent.
 | 5 | **A container is restarting repeatedly** | `docker compose ps` shows restarts climbing | High | _tech lead_ |
 | 6 | **The API refused to start** — `Refusing to start:` or `Database schema is N migration(s) behind` in the log | Log inspection after every deploy | High | _cutover lead_ |
 | 7 | **Login failures spike** | Traefik access log, 401 rate | Medium — credential stuffing | _tech lead_ |
-| 8 | **PinME ingestion failing** (`EPIC-FT-01`) | API log: tracking gateway errors | Medium — telemetry stale, not an outage | _tech lead_ |
+| 8 | **Traccar/GPS ingestion failing** (`EPIC-FT-01`) | API log: tracking gateway errors | Medium — telemetry stale, not an outage | _tech lead_ |
 | 9 | **Invitation email failing** (`EPIC-IA-07`) | API log: the loud SMTP warning | Low — accounts still work, links need hand-delivery | _product owner_ |
 
 **Conditions 1 and 2 need an external checker** — something not on this VPS,

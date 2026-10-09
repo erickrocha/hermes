@@ -13,7 +13,9 @@ use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
-use business::domain::authorization::{can_access_tenant, can_create_tenant, can_set_tenant_plan};
+use business::domain::authorization::{
+    can_access_tenant, can_create_tenant, can_set_tenant_plan, can_update_tenant,
+};
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
@@ -166,7 +168,7 @@ fn unreadable_tenants(locale: Locale) -> ExceptionResponse {
     ),
     request_body = TenantJson,
     responses(
-        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = TenantJson),
+        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser (own tenant only). Driver and Mechanic are refused with 403 (D-22).", body = TenantJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -183,6 +185,12 @@ pub async fn update_by_uuid(
     Json(payload): Json<TenantJson>,
 ) -> HttpResponse<Json<TenantJson>> {
     let id = resolve_uuid(&state, &locale, &current_user, uuid).await?;
+    if !can_update_tenant(&current_user, id) {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
     update_tenant(&state, locale, id, payload).await
 }
 

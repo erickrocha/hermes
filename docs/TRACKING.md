@@ -25,8 +25,8 @@ differently. It is recorded here.
 
 | Property | Value |
 |---|---|
-| Provider | **PinME** — `https://api.pinme.io/api` |
-| Family | **Traccar-compatible** |
+| Provider | **Self-hosted Traccar** (`D-15` amendment 2026-10-09); trackers are VITANA VIT-4100-R. Originally PinME — `https://api.pinme.io/api`, a hosted Traccar-compatible service, which `operacao-trm` still uses |
+| Family | **Traccar** (REST API: `/devices`, `/positions`, `/reports/events`) |
 | Authentication | **HTTP Basic on every call** — `Authorization: Basic base64(email:password)`. There is no `/session`, no token exchange and no bearer token |
 | Direction | **Pull.** Hermes asks; the provider never calls Hermes |
 | Update frequency | Device-driven. Positions are read on demand; a fix older than **5 minutes** is not treated as current |

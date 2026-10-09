@@ -49,6 +49,15 @@ pub fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
     user.tenant_id == Some(tenant_id) || is_unbound_sys_admin(user)
 }
 
+/// `PUT /tenant/uuid/{uuid}` -- editing the tenant's own record. `D-22`: a
+/// driver and a mechanic never reach tenant administration, so they are
+/// refused even inside their own tenant. Whether a plain `TenantUser` may
+/// edit it is an open owner question (`tenancy_plans_acceptance.py`,
+/// `tenant_user_put_own_tenant`), deliberately left as it was.
+pub fn can_update_tenant(user: &User, tenant_id: i64) -> bool {
+    can_access_tenant(user, tenant_id) && !matches!(user.role, Role::Driver | Role::Mechanic)
+}
+
 /// `POST /tenant` -- only an unbound platform administrator may create a
 /// tenant (PD-019).
 pub fn can_create_tenant(user: &User) -> bool {
@@ -709,6 +718,15 @@ mod tests {
         assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, None)));
         assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, Some(1))));
         assert!(!is_unbound_sys_admin(&user(Role::TenantUser, Some(1))));
+    }
+
+    #[test]
+    fn driver_and_mechanic_never_update_a_tenant() {
+        assert!(can_update_tenant(&user(Role::SysAdmin, None), 1));
+        assert!(can_update_tenant(&user(Role::TenantOwner, Some(1)), 1));
+        assert!(!can_update_tenant(&user(Role::TenantOwner, Some(2)), 1));
+        assert!(!can_update_tenant(&user(Role::Driver, Some(1)), 1));
+        assert!(!can_update_tenant(&user(Role::Mechanic, Some(1)), 1));
     }
 
     #[test]

@@ -20,6 +20,15 @@ pub trait UserLookupStore: Send + Sync {
 
 #[async_trait]
 pub trait UserStore: UserLookupStore {
+    /// The authentication-time lookup by immutable id. Authentication runs
+    /// before any tenant scope exists, so an implementation backed by the
+    /// database must not go through `tenant_select` (see
+    /// `UserGateway::find_by_user_id`); `get_by_id` would answer "not found"
+    /// under D-05's deny-by-default scope. The default suits in-memory stores,
+    /// which have no scope.
+    async fn get_for_authentication(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        self.get_by_id(id).await
+    }
     async fn save(&self, user: User) -> Result<User, BusinessError>;
     async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError>;
     async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError>;
@@ -66,6 +75,13 @@ impl UserLookupStore for UserGateway {
 
 #[async_trait]
 impl UserStore for UserGateway {
+    async fn get_for_authentication(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        let model = Self::find_by_user_id(&self.db, id)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
     async fn save(&self, user: User) -> Result<User, BusinessError> {
         let active_model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::persist(self, user)
             .await

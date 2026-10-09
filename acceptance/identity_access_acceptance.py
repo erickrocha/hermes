@@ -53,7 +53,7 @@ STORIES = {
     "EPIC-IA-09-S03": ["IA-093", "IA-094"], "EPIC-IA-09-S04": ["IA-095"],
     "EPIC-IA-09-S05": ["IA-096", "IA-097"], "EPIC-IA-09-S06": ["IA-098"], "EPIC-IA-09-S07": ["IA-099"],
 }
-NOT_BUILT = {"EPIC-IA-09-S04": "per-endpoint role statement in the OpenAPI contract not yet written (plan: pending)"}
+NOT_BUILT = {}   # EPIC-IA-09-S04 was built 2026-09-25 (per-endpoint **Roles:** statements); IA-095 now runs
 SUPERSEDED = {
     "EPIC-IA-06-S02": "HRM-045 descoped in the 2026-09-18 ratification walk (first_login redundant under D-07)",
     "EPIC-IA-08-S01": "EPIC-IA-08 descoped (D-04, leftovers); the replacement property (no public /signup, /legal/documents) is still checked",
@@ -1228,8 +1228,17 @@ def operational_roles(fx):
           f"covers the role picker and the hidden Tenants/Users menu; recorded in the log)",
           f"labels {labels}; enum {enum}")
 
-    # IA-095 -- EPIC-IA-09-S04 (per-endpoint role statement in OpenAPI) is not built
-    record("IA-095", "NOT RUN", "EPIC-IA-09-S04 not built (plan: pending) -- no per-endpoint role statement to test")
+    # IA-095 -- EPIC-IA-09-S04: every operation states who may reach it (HRMS-132). Checks the marker is
+    # present; whether the named roles are right is what the matrix above (IA-091/092/096/097) probes.
+    s_oa, oa = http("GET", "/api-docs/openapi.json")
+    ops = [(m.upper(), path) for path, item in (oa.get("paths", {}) if s_oa == 200 else {}).items()
+           for m, op in item.items() if m in ("get", "put", "post", "delete", "patch")
+           and not any("**Roles:**" in (r.get("description") or "") for r in op.get("responses", {}).values())]
+    total = sum(1 for item in (oa.get("paths", {}) if s_oa == 200 else {}).values()
+                for m in item if m in ("get", "put", "post", "delete", "patch"))
+    check("IA-095", s_oa == 200 and total > 0 and not ops,
+          f"all {total} documented operations carry a **Roles:** statement",
+          f"OpenAPI status {s_oa}; operations without a **Roles:** statement: {ops}")
 
 
 def role_matrix_regression():

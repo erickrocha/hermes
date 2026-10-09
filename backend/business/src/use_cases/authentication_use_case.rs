@@ -110,7 +110,7 @@ impl AuthenticationUseCase {
             return Err(BusinessError::new("Invalid credentials".to_string()));
         }
 
-        let found = self.users.get_by_id(user_id).await.map_err(|err| {
+        let found = self.users.get_for_authentication(user_id).await.map_err(|err| {
             log::error!(
                 "[AuthenticationUseCase::{}] Database error for user id {}: {}",
                 context,
