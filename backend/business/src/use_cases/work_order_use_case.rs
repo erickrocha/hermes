@@ -83,6 +83,10 @@ impl WorkOrderUseCase {
             description,
             origin: WorkOrderOrigin::Manual,
             status: WorkOrderStatus::Open,
+            // `HRMS-700`: the opening time is the system's. A client-sent time is not trusted: it
+            // would also backdate the kilometre entry this order records and so change which
+            // reading is "latest".
+            opened_at: None,
             ..work_order
         })
     }
