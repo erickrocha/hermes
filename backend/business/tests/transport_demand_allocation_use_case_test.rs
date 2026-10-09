@@ -7,7 +7,7 @@ use business::gateway::transport_demand_allocation_gateway::TransportDemandAlloc
 use business::gateway::user_gateway::UserLookupStore;
 use business::gateway::vehicle_gateway::VehicleLookupStore;
 use business::use_cases::transport_demand_allocation_use_case::{
-    NOT_A_DRIVER, NOT_A_TENANT_VEHICLE, TransportDemandAllocationUseCase,
+    ENDS_BEFORE_IT_STARTS, NOT_A_DRIVER, NOT_A_TENANT_VEHICLE, TransportDemandAllocationUseCase,
 };
 use chrono::NaiveDate;
 use sea_orm::prelude::async_trait::async_trait;
@@ -227,4 +227,34 @@ async fn allocation_rejects_a_vehicle_from_another_tenant() {
         .expect_err("cross-tenant vehicle is refused");
 
     assert_eq!(error.message, NOT_A_TENANT_VEHICLE);
+}
+
+#[tokio::test]
+async fn allocation_rejects_an_end_date_before_its_start_date_and_accepts_the_boundary_and_open_ended()
+ {
+    let uc = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)));
+
+    let mut inverted = allocation();
+    inverted.end_date = NaiveDate::from_ymd_opt(2026, 9, 30);
+    let error = uc
+        .create(inverted.clone())
+        .await
+        .expect_err("an allocation that ends before it starts is refused");
+    assert_eq!(error.message, ENDS_BEFORE_IT_STARTS);
+
+    let mut same_day = allocation();
+    same_day.end_date = Some(same_day.start_date);
+    uc.create(same_day)
+        .await
+        .expect("a one-day allocation is valid");
+
+    let created = uc
+        .create(allocation())
+        .await
+        .expect("an open-ended allocation is valid");
+    let error = uc
+        .update(created.id.expect("id"), inverted)
+        .await
+        .expect_err("an edit cannot invert the range either");
+    assert_eq!(error.message, ENDS_BEFORE_IT_STARTS);
 }

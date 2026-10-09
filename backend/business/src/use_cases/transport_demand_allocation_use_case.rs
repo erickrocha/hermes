@@ -14,6 +14,8 @@ pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this
 pub const DAYS_OF_WEEK_UNREADABLE: &str =
     "The days of the week must be a list of weekdays (Mon, Tue, ... or 1-7)";
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
+/// `HRMS-604`: an allocation covers a range of dates; one that ends before it starts covers none.
+pub const ENDS_BEFORE_IT_STARTS: &str = "The allocation ends before it starts";
 
 pub struct TransportDemandAllocationUseCase {
     gateway: Box<dyn TransportDemandAllocationStore>,
@@ -80,6 +82,12 @@ impl TransportDemandAllocationUseCase {
                 && crate::use_cases::effective_schedule::parse_days_of_week(d).is_none()
         }) {
             return Err(BusinessError::new(DAYS_OF_WEEK_UNREADABLE.to_string()));
+        }
+        if allocation
+            .end_date
+            .is_some_and(|end| end < allocation.start_date)
+        {
+            return Err(BusinessError::new(ENDS_BEFORE_IT_STARTS.to_string()));
         }
         let driver = self.users.get_by_id(allocation.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {

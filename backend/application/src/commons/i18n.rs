@@ -139,6 +139,10 @@ pub enum ErrorKey {
     /// `HRMS-606` (`C-024`): an exception type outside `Cancellation`/
     /// `Deallocation`/`Substitution`. Required, so absent counts as unknown.
     InvalidScheduleExceptionType,
+    /// `HRMS-604`: an allocation whose end date is before its start date.
+    AllocationEndsBeforeItStarts,
+    /// `HRMS-610`: the platform administrator asked for a schedule without choosing a tenant.
+    TenantMustBeNamed,
     /// `HRMS-607` (`C-024`, `D-24(f)`): a trip status outside `Scheduled`/
     /// `Conflict`/`PendingSchedule`/`Cancelled`.
     InvalidTripStatus,
@@ -311,6 +315,8 @@ impl ErrorKey {
             ErrorKey::InvalidVehicleStatus => "InvalidVehicleStatus",
             ErrorKey::InvalidGarageTagOrigin => "InvalidGarageTagOrigin",
             ErrorKey::InvalidScheduleExceptionType => "InvalidScheduleExceptionType",
+            ErrorKey::AllocationEndsBeforeItStarts => "AllocationEndsBeforeItStarts",
+            ErrorKey::TenantMustBeNamed => "TenantMustBeNamed",
             ErrorKey::InvalidTripStatus => "InvalidTripStatus",
             ErrorKey::DuplicateTrip => "DuplicateTrip",
             ErrorKey::ExtraTripForbidden => "ExtraTripForbidden",
@@ -413,6 +419,8 @@ impl ErrorKey {
             ErrorKey::InvalidVehicleStatus => "invalid-vehicle-status",
             ErrorKey::InvalidGarageTagOrigin => "invalid-garage-tag-origin",
             ErrorKey::InvalidScheduleExceptionType => "invalid-schedule-exception-type",
+            ErrorKey::AllocationEndsBeforeItStarts => "allocation-ends-before-it-starts",
+            ErrorKey::TenantMustBeNamed => "tenant-must-be-named",
             ErrorKey::InvalidTripStatus => "invalid-trip-status",
             ErrorKey::DuplicateTrip => "duplicate-trip",
             ErrorKey::ExtraTripForbidden => "extra-trip-forbidden",
@@ -690,6 +698,8 @@ mod tests {
             ErrorKey::TransportDemandNotFound,
             ErrorKey::DuplicateScheduleEntry,
             ErrorKey::InvalidScheduleExceptionType,
+            ErrorKey::AllocationEndsBeforeItStarts,
+            ErrorKey::TenantMustBeNamed,
             ErrorKey::InvalidTripStatus,
             ErrorKey::DuplicateTrip,
             ErrorKey::ExtraTripForbidden,

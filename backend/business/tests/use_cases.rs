@@ -2162,6 +2162,64 @@ async fn a_trip_with_the_same_order_code_and_date_in_the_same_tenant_is_refused_
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
 
+/// `HRMS-608`: the preview says, row by row, what the import would do -- an
+/// existing order code *and* date updates, anything else creates -- and
+/// writes nothing.
+#[tokio::test]
+async fn a_trip_import_preview_names_creates_and_updates_and_writes_nothing() {
+    let db = mock()
+        .append_query_results([
+            vec![extra_trip_row(1, 42, "ORD-100")],
+            Vec::<entity::extra_trip_entity::Model>::new(),
+        ])
+        .into_connection();
+    let mut second = new_trip(Some(42));
+    second.order_code = "ORD-200".into();
+    let plan = run_with_user(
+        Some(owner(42)),
+        trip_use_case(&db).preview(vec![new_trip(Some(42)), second]),
+    )
+    .await
+    .expect("a valid batch previews");
+    assert_eq!(plan.len(), 2);
+    assert_eq!((plan[0].row, plan[0].update), (0, true), "ORD-100 on that date exists");
+    assert_eq!((plan[1].row, plan[1].update), (1, false), "ORD-200 is new");
+    let statements = format!("{:?}", log(db));
+    assert!(!statements.contains("INSERT") && !statements.contains("UPDATE"));
+}
+
+/// `HRMS-608`: a row whose references could not be resolved is rejected *as that
+/// row* -- its original position survives -- and the batch still reports every
+/// other bad row too, writing nothing.
+#[tokio::test]
+async fn an_unresolved_row_is_named_with_its_original_position_alongside_other_bad_rows() {
+    use business::use_cases::extra_trip_import::{
+        ExtraTripImportError, TripImportBatch, TripImportRejection, TripRejectionReason,
+    };
+    let db = mock().into_connection();
+    let mut blank = new_trip(Some(42));
+    blank.order_code = "  ".into();
+    let batch = TripImportBatch {
+        rows: vec![(0, new_trip(Some(42))), (3, blank)],
+        rejections: vec![TripImportRejection::new(1, TripRejectionReason::NotATenantVehicle)],
+    };
+    let refused = run_with_user(Some(owner(42)), trip_use_case(&db).import_batch(batch))
+        .await
+        .expect_err("a batch with bad rows is refused");
+    let ExtraTripImportError::Rejected(rejections) = refused else {
+        panic!("expected itemised rejections");
+    };
+    assert_eq!(
+        rejections.iter().map(|r| (r.row, r.reason)).collect::<Vec<_>>(),
+        vec![
+            (1, TripRejectionReason::NotATenantVehicle),
+            (3, TripRejectionReason::OrderCodeRequired)
+        ],
+        "rows 2 and 4 of the file, in file order"
+    );
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
 fn extra_trip_row(id: i64, tenant_id: i64, order_code: &str) -> entity::extra_trip_entity::Model {
     entity::extra_trip_entity::Model {
         id,

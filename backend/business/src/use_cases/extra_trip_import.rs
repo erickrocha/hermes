@@ -63,6 +63,17 @@ impl TripImportRejection {
     }
 }
 
+/// A batch as the use case receives it: the rows that could be turned into trips,
+/// each with its **original position** in the file, and the rejections already
+/// known before any business rule runs (a row naming a vehicle, customer or driver
+/// that cannot be resolved for its tenant). Keeping the original positions is what
+/// lets every bad row be named, however it failed.
+#[derive(Debug, Clone, Default)]
+pub struct TripImportBatch {
+    pub rows: Vec<(usize, crate::domain::extra_trip::ExtraTrip)>,
+    pub rejections: Vec<TripImportRejection>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtraTripImportError {
     Rejected(Vec<TripImportRejection>),

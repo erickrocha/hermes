@@ -57,3 +57,25 @@ pub struct ExtraTripJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaced_by_uuid: Option<String>,
 }
+
+/// `HRMS-608`: what an import would do, row by row, with nothing written.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TripImportPreviewJson {
+    /// Trips the import would create.
+    pub created: u64,
+    /// Existing trips (same order code and date) the import would update.
+    pub updated: u64,
+    pub rows: Vec<TripImportPreviewRowJson>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TripImportPreviewRowJson {
+    /// Position in the file, starting at 1.
+    pub row: usize,
+    pub order_code: String,
+    pub trip_date: chrono::NaiveDate,
+    /// `Create` or `Update`.
+    pub action: String,
+}

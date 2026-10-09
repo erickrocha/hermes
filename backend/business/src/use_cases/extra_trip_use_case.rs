@@ -6,7 +6,7 @@ use crate::gateway::extra_trip_gateway::{ExtraTripStore, ExtraTripStoreError};
 use crate::gateway::user_gateway::UserLookupStore;
 use crate::gateway::vehicle_gateway::VehicleLookupStore;
 use crate::use_cases::extra_trip_import::{
-    ExtraTripImportError, TripImportRejection, TripRejectionReason,
+    ExtraTripImportError, TripImportBatch, TripImportRejection, TripRejectionReason,
 };
 use crate::use_cases::reference_import::{ImportOutcome, find_duplicate_keys};
 
@@ -168,10 +168,79 @@ impl ExtraTripUseCase {
         &self,
         rows: Vec<ExtraTrip>,
     ) -> Result<ImportOutcome, ExtraTripImportError> {
-        let mut prepared = Vec::with_capacity(rows.len());
-        let mut rejections = Vec::new();
+        self.import_batch(Self::batch_of(rows)).await
+    }
 
-        for (index, row) in rows.into_iter().enumerate() {
+    /// The rows of `rows`, numbered by position, with no rejection known yet.
+    fn batch_of(rows: Vec<ExtraTrip>) -> TripImportBatch {
+        TripImportBatch {
+            rows: rows.into_iter().enumerate().collect(),
+            rejections: Vec::new(),
+        }
+    }
+
+    /// `import`, for a batch whose rows keep their original positions and which may
+    /// already carry rejections (see `TripImportBatch`).
+    pub async fn import_batch(
+        &self,
+        batch: TripImportBatch,
+    ) -> Result<ImportOutcome, ExtraTripImportError> {
+        let prepared = self.prepare_import(batch).await?;
+        let rows = prepared.into_iter().map(|(_, trip)| trip).collect();
+        // PD-027 all-or-nothing: validation alone cannot promise it, so the
+        // write itself is one transaction -- `CityUseCase::import`'s own
+        // reasoning.
+        let (created, updated) = self.gateway.import(rows).await.map_err(|error| {
+            ExtraTripImportError::unavailable("ExtraTripUseCase::import", error.message)
+        })?;
+        Ok(ImportOutcome { created, updated })
+    }
+
+    /// `HRMS-608`: what `import` would do with this batch, **without writing
+    /// anything**. It runs the same checks, so a batch that would be rejected is
+    /// rejected here with the same rows named; a batch that would be accepted
+    /// says, row by row, whether it creates a trip or updates one. Advisory: a
+    /// trip recorded between the preview and the import can change an answer.
+    pub async fn preview(
+        &self,
+        rows: Vec<ExtraTrip>,
+    ) -> Result<Vec<TripImportPlan>, ExtraTripImportError> {
+        self.preview_batch(Self::batch_of(rows)).await
+    }
+
+    /// `preview`, for a batch that keeps original positions (see `import_batch`).
+    pub async fn preview_batch(
+        &self,
+        batch: TripImportBatch,
+    ) -> Result<Vec<TripImportPlan>, ExtraTripImportError> {
+        let prepared = self.prepare_import(batch).await?;
+        let mut plan = Vec::with_capacity(prepared.len());
+        for (row, trip) in prepared {
+            let existing = self
+                .gateway
+                .find_by_code_and_date(&trip.order_code, trip.trip_date, trip.tenant_id)
+                .await
+                .map_err(|e| ExtraTripImportError::unavailable("ExtraTripUseCase::preview", e.message))?;
+            plan.push(TripImportPlan {
+                row,
+                order_code: trip.order_code,
+                trip_date: trip.trip_date,
+                update: existing.is_some(),
+            });
+        }
+        Ok(plan)
+    }
+
+    /// The checks `import` and `preview` share: every row is validated first
+    /// and every rejection is collected, so the caller sees all of them.
+    async fn prepare_import(
+        &self,
+        batch: TripImportBatch,
+    ) -> Result<Vec<(usize, ExtraTrip)>, ExtraTripImportError> {
+        let mut prepared = Vec::with_capacity(batch.rows.len());
+        let mut rejections = batch.rejections;
+
+        for (index, row) in batch.rows {
             if row.order_code.trim().is_empty() {
                 rejections.push(TripImportRejection::new(
                     index,
@@ -214,16 +283,18 @@ impl ExtraTripUseCase {
             rejections.sort_by_key(|r| r.row);
             return Err(ExtraTripImportError::Rejected(rejections));
         }
-
-        // PD-027 all-or-nothing: validation alone cannot promise it, so the
-        // write itself is one transaction -- `CityUseCase::import`'s own
-        // reasoning.
-        let rows = prepared.into_iter().map(|(_, trip)| trip).collect();
-        let (created, updated) = self.gateway.import(rows).await.map_err(|error| {
-            ExtraTripImportError::unavailable("ExtraTripUseCase::import", error.message)
-        })?;
-        Ok(ImportOutcome { created, updated })
+        Ok(prepared)
     }
+}
+
+/// One row of a previewed import: where it sits in the file, which trip it names
+/// and whether applying it would update an existing trip (otherwise it creates one).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TripImportPlan {
+    pub row: usize,
+    pub order_code: String,
+    pub trip_date: chrono::NaiveDate,
+    pub update: bool,
 }
 
 fn store_error(error: ExtraTripStoreError) -> BusinessError {

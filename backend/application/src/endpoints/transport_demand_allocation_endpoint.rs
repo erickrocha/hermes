@@ -19,7 +19,7 @@ use business::gateway::transport_demand_allocation_gateway::TransportDemandAlloc
 use business::gateway::user_gateway::UserGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::use_cases::transport_demand_allocation_use_case::{
-    NOT_A_DRIVER, NOT_A_TENANT_VEHICLE, TransportDemandAllocationUseCase,
+    ENDS_BEFORE_IT_STARTS, NOT_A_DRIVER, NOT_A_TENANT_VEHICLE, TransportDemandAllocationUseCase,
 };
 use business::use_cases::user_use_case::UserUseCase;
 use business::use_cases::vehicle_use_case::VehicleUseCase;
@@ -37,6 +37,7 @@ fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         NOT_A_DRIVER => ExceptionResponse::BadRequest(locale, ErrorKey::NotADriver),
         NOT_A_TENANT_VEHICLE => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+        ENDS_BEFORE_IT_STARTS => ExceptionResponse::BadRequest(locale, ErrorKey::AllocationEndsBeforeItStarts),
         _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
     }
 }

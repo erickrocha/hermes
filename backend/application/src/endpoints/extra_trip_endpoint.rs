@@ -5,7 +5,9 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::extra_trip_json::ExtraTripJson;
+use crate::endpoints::json::extra_trip_json::{
+    ExtraTripJson, TripImportPreviewJson, TripImportPreviewRowJson,
+};
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::reference_json::ImportResultJson;
 use crate::endpoints::transport_demand_endpoint::{
@@ -29,6 +31,7 @@ use business::use_cases::customer_use_case::CustomerUseCase;
 use business::use_cases::extra_trip_use_case::{
     DUPLICATE_TRIP, ExtraTripUseCase, NOT_A_DRIVER, NOT_A_TENANT_CUSTOMER, NOT_A_TENANT_VEHICLE,
 };
+use business::use_cases::extra_trip_import::{TripImportBatch, TripImportRejection, TripRejectionReason};
 use business::use_cases::user_use_case::UserUseCase;
 use business::use_cases::vehicle_use_case::VehicleUseCase;
 use std::str::FromStr;
@@ -382,7 +385,7 @@ async fn find_visible(
     request_body = Vec<ExtraTripJson>,
     responses(
         (status = 200, description = "Import applied (HRMS-608). **Roles:** SysAdmin (unbound; every row must name its tenant); TenantOwner (own tenant only).", body = ImportResultJson),
-        (status = 400, description = "Nothing was written; the message names each rejected row, or a row's uuid/status could not be resolved", body = BadRequestErrorJson),
+        (status = 400, description = "Nothing was written; the message names every rejected row (including a row naming a driver, vehicle or customer that cannot be resolved for its tenant); an unrecognised status refuses the whole request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller's role may not record trips for a row's tenant", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -395,53 +398,9 @@ pub async fn import(
     Extension(current_user): Extension<User>,
     Json(payload): Json<Vec<ExtraTripJson>>,
 ) -> HttpResponse<Json<ImportResultJson>> {
-    let mut rows = Vec::with_capacity(payload.len());
-    for item in payload {
-        let tenant_id = current_user.tenant_id.or(item.tenant_id);
-        if !can_create_extra_trip(&current_user, tenant_id) {
-            return Err(ExceptionResponse::Forbidden(
-                locale,
-                ErrorKey::ExtraTripForbidden,
-            ));
-        }
-        reject_unknown_trip_status(&item.status, &locale)?;
-
-        let (customer_id, driver_id, second_driver_id, vehicle_id) =
-            resolve_relations(&state, &locale, tenant_id, &item).await?;
-
-        rows.push(ExtraTrip {
-            id: None,
-            uuid: None,
-            tenant_id,
-            order_code: item.order_code,
-            trip_date: item.trip_date,
-            customer_id,
-            start_time: item.start_time,
-            return_date: item.return_date,
-            return_time: item.return_time,
-            destination: item.destination,
-            origin_city: item.origin_city,
-            stops: item.stops,
-            preferred_vehicle_type: item.preferred_vehicle_type,
-            driver_id,
-            second_driver_id,
-            vehicle_id,
-            freight_value_cents: item.freight_value_cents,
-            payment: item.payment,
-            status: TripStatus::from_str(&item.status).unwrap_or_default(),
-            origin: item.origin,
-            import_batch_id: item.import_batch_id,
-            imported_at: item.imported_at,
-            replaced_by_id: None,
-            created_at: None,
-            created_by: None,
-            updated_at: None,
-            updated_by: None,
-        });
-    }
-
+    let batch = import_rows(&state, &locale, &current_user, payload).await?;
     use_case(&state)
-        .import(rows)
+        .import_batch(batch)
         .await
         .map(|outcome| {
             Json(ImportResultJson {
@@ -450,4 +409,140 @@ pub async fn import(
             })
         })
         .map_err(|error| ExceptionResponse::BadRequestMessage(translate_extra_trip_import_error(&locale, &error)))
+}
+
+/// Turns an import body into trips, checking each row's tenant and resolving its
+/// relations *before* any business rule runs. Shared by `import` and
+/// `import_preview`, so the two cannot disagree about what a row means.
+async fn import_rows(
+    state: &AppState,
+    locale: &Locale,
+    current_user: &User,
+    payload: Vec<ExtraTripJson>,
+) -> Result<TripImportBatch, ExceptionResponse> {
+    let mut batch = TripImportBatch::default();
+    for (index, item) in payload.into_iter().enumerate() {
+        let tenant_id = current_user.tenant_id.or(item.tenant_id);
+        if !can_create_extra_trip(current_user, tenant_id) {
+            return Err(ExceptionResponse::Forbidden(
+                locale.clone(),
+                ErrorKey::ExtraTripForbidden,
+            ));
+        }
+        reject_unknown_trip_status(&item.status, locale)?;
+
+        // A row naming something that cannot be resolved for its tenant is rejected
+        // *as that row* -- the caller is told which one -- instead of aborting the
+        // whole batch with an answer that names none. Unknown and another tenant's
+        // are the same answer, so nothing reveals that a record exists elsewhere.
+        let relations = resolve_row_relations(state, locale, tenant_id, &item).await;
+        let (customer_id, driver_id, second_driver_id, vehicle_id) = match relations {
+            Ok(relations) => relations,
+            Err(reason) => {
+                batch.rejections.push(TripImportRejection::new(index, reason));
+                continue;
+            }
+        };
+
+        batch.rows.push((
+            index,
+            ExtraTrip {
+                id: None,
+                uuid: None,
+                tenant_id,
+                order_code: item.order_code,
+                trip_date: item.trip_date,
+                customer_id,
+                start_time: item.start_time,
+                return_date: item.return_date,
+                return_time: item.return_time,
+                destination: item.destination,
+                origin_city: item.origin_city,
+                stops: item.stops,
+                preferred_vehicle_type: item.preferred_vehicle_type,
+                driver_id,
+                second_driver_id,
+                vehicle_id,
+                freight_value_cents: item.freight_value_cents,
+                payment: item.payment,
+                status: TripStatus::from_str(&item.status).unwrap_or_default(),
+                origin: item.origin,
+                import_batch_id: item.import_batch_id,
+                imported_at: item.imported_at,
+                replaced_by_id: None,
+                created_at: None,
+                created_by: None,
+                updated_at: None,
+                updated_by: None,
+            },
+        ));
+    }
+    Ok(batch)
+}
+
+/// The import's version of `resolve_relations`: the first relation that does not resolve
+/// becomes the row's rejection reason instead of an error that ends the request.
+async fn resolve_row_relations(
+    state: &AppState,
+    locale: &Locale,
+    tenant_id: Option<i64>,
+    payload: &ExtraTripJson,
+) -> Result<(Option<i64>, Option<i64>, Option<i64>, Option<i64>), TripRejectionReason> {
+    let customer_id = resolve_customer_id(state, locale, tenant_id, payload.customer_uuid.clone())
+        .await
+        .map_err(|_| TripRejectionReason::NotATenantCustomer)?;
+    let driver_id = resolve_driver_id(state, locale, payload.driver_uuid.clone())
+        .await
+        .map_err(|_| TripRejectionReason::NotADriver)?;
+    let second_driver_id = resolve_driver_id(state, locale, payload.second_driver_uuid.clone())
+        .await
+        .map_err(|_| TripRejectionReason::NotADriver)?;
+    let vehicle_id = resolve_vehicle_id(state, locale, payload.vehicle_uuid.clone())
+        .await
+        .map_err(|_| TripRejectionReason::NotATenantVehicle)?;
+    Ok((customer_id, driver_id, second_driver_id, vehicle_id))
+}
+
+/// `HRMS-608`: what `POST /extra-trip/import` would do with this same body --
+/// which rows create a trip, which update one, which would be rejected -- with
+/// **nothing written**. The review a caller needs before committing a batch.
+#[utoipa::path(
+    post,
+    tag = "Extra Trip",
+    path = "/extra-trip/import/preview",
+    request_body = Vec<ExtraTripJson>,
+    responses(
+        (status = 200, description = "What the import would do, row by row; nothing was written (HRMS-608). **Roles:** SysAdmin (unbound; every row must name its tenant); TenantOwner (own tenant only).", body = TripImportPreviewJson),
+        (status = 400, description = "The import would be rejected, with the same message naming every rejected row; an unrecognised status refuses the whole request. Nothing was written", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not record trips for a row's tenant", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn import_preview(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Json(payload): Json<Vec<ExtraTripJson>>,
+) -> HttpResponse<Json<TripImportPreviewJson>> {
+    let batch = import_rows(&state, &locale, &current_user, payload).await?;
+    let plan = use_case(&state)
+        .preview_batch(batch)
+        .await
+        .map_err(|error| ExceptionResponse::BadRequestMessage(translate_extra_trip_import_error(&locale, &error)))?;
+    let updated = plan.iter().filter(|p| p.update).count() as u64;
+    Ok(Json(TripImportPreviewJson {
+        created: plan.len() as u64 - updated,
+        updated,
+        rows: plan
+            .into_iter()
+            .map(|p| TripImportPreviewRowJson {
+                row: p.row + 1,
+                order_code: p.order_code,
+                trip_date: p.trip_date,
+                action: if p.update { "Update" } else { "Create" }.to_string(),
+            })
+            .collect(),
+    }))
 }
