@@ -37,7 +37,11 @@ impl VehicleUseCase {
             vehicle.plate
         );
 
-        let vehicle = Self::validated(vehicle)?;
+        let mut vehicle = Self::validated(vehicle)?;
+        // `odometer_km` is the cache of the official kilometre record
+        // (`km_evolution`, `C-025`); a vehicle is never born with one it was
+        // handed -- the first reading arrives as a `km_evolution` entry.
+        vehicle.odometer_km = None;
         // The tenant the row will actually be written to: `enforce_tenant`
         // (D-06) replaces the payload's with a tenant-bound caller's own.
         let owning_tenant = match entity::audit::tenant_scope() {
@@ -77,7 +81,9 @@ impl VehicleUseCase {
             tracker_device_id: vehicle.tracker_device_id,
             prefix: vehicle.prefix,
             vehicle_type: vehicle.vehicle_type,
-            odometer_km: vehicle.odometer_km,
+            // Read-only through this API: `km_evolution` is the only writer
+            // (`HRMS-650`, `D-29`), so an edit carries the stored value forward.
+            odometer_km: existing.odometer_km,
             wheel_type: vehicle.wheel_type,
             spare_tire_count: vehicle.spare_tire_count,
             spare_tire_type: vehicle.spare_tire_type,

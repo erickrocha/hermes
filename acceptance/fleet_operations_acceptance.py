@@ -52,6 +52,8 @@ STORIES = {
     "EPIC-FO-03-S02": ["FO-042", "FO-043"],
     "EPIC-FO-03-S03": ["FO-044", "FO-045"],
     "EPIC-FO-03-S04": ["FO-046"],
+    "EPIC-FO-05-S01": ["FO-070"],
+    "EPIC-FO-06-S01": ["FO-071"],
 }
 RESULTS = {}
 
@@ -163,6 +165,8 @@ def mine():
 def cleanup():
     ids = ",".join(map(str, CREATED_TENANTS)) or "0"
     tenants = f"SELECT id FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAFO%'"
+    sql(f"DELETE FROM km_evolution WHERE vehicle_id IN "
+        f"(SELECT id FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%' OR tenant_id IN ({tenants}))")
     sql(f"DELETE FROM vehicle_assignment WHERE tenant_id IN ({tenants}) OR vehicle_id IN "
         f"(SELECT id FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%')")
     sql(f"DELETE FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
@@ -459,11 +463,19 @@ def s05(fx):
     page_schema = "PageJson_VehicleJson" in fx.openapi.get("components", {}).get("schemas", {})
     # EPIC-FO-02 (HRMS-928) added exactly one operation, GET .../tracking; FO-024 checks it in detail.
     # EPIC-FO-03 (HRMS-933) added the four assignment operations; FO-044 checks them in detail.
-    contract = (vp == {"/vehicle": ["get", "post"], "/vehicle/uuid/{uuid}": ["get", "put"],
-                       "/vehicle/uuid/{uuid}/tracking": ["get"],
-                       "/vehicle/uuid/{uuid}/assignment": ["get", "post"],
-                       "/vehicle/uuid/{uuid}/assignment/end": ["put"],
-                       "/vehicle/uuid/{uuid}/assignments": ["get"]} and tagged
+    # Paths under /vehicle that belong to other slices (their own suites check them). Listed by name, so a /vehicle
+    # operation nobody accounted for still fails this scenario: C-030 expenses, presence, C-025 kilometre record/possession.
+    other_slices = {"/vehicle-expense", "/vehicle-expense/uuid/{uuid}", "/vehicle-presence",
+                    "/vehicle/uuid/{uuid}/km-evolution", "/vehicle/uuid/{uuid}/km-evolutions",
+                    "/vehicle/uuid/{uuid}/possession"}
+    fo_contract = {"/vehicle": ["get", "post"], "/vehicle/uuid/{uuid}": ["get", "put"],
+                   "/vehicle/uuid/{uuid}/tracking": ["get"],
+                   "/vehicle/uuid/{uuid}/assignment": ["get", "post"],
+                   "/vehicle/uuid/{uuid}/assignment/end": ["put"],
+                   "/vehicle/uuid/{uuid}/assignments": ["get"]}
+    unaccounted = sorted(set(vp) - set(fo_contract) - other_slices)
+    tagged = all("Vehicle" in o.get("tags", []) and o.get("security") for p, _, o in ops if p in fo_contract)
+    contract = ({p: vp.get(p) for p in fo_contract} == fo_contract and not unaccounted and tagged
                 and "PD-034" in d404 and "tenant" in d409 and page_schema)
     # tenant B has one vehicle so far; give it 4 more -> 5 total
     for i in range(4):
@@ -485,7 +497,7 @@ def s05(fx):
           f"OpenAPI documents {vp}, tag Vehicle + bearer on every op, 404 cites PD-034, 409 is per-tenant, "
           f"PageJson_VehicleJson schema; paging over {total} vehicles: page0 2 items, totalPages {pg0.get('totalPages')}, "
           f"last page {total - 4}, past-the-end empty, default 25, 0->25, 10000 clamped to 200, pages disjoint",
-          f"paths {vp} tagged={tagged} 404='{d404[:60]}' 409='{d409[:60]}' page_schema={page_schema}; "
+          f"paths {vp} unaccounted={unaccounted} tagged={tagged} 404='{d404[:60]}' 409='{d409[:60]}' page_schema={page_schema}; "
           f"page0 {s0} {pg0 if not envelope else (len(pg0['items']), pg0['totalItems'], pg0['totalPages'])}; "
           f"page2 {len(pg2['items']) if envelope else pg2}; page9 {len(pg9['items']) if envelope else pg9}; "
           f"default {pgd.get('pageSize') if isinstance(pgd, dict) else pgd}; 0->{pgz.get('pageSize') if isinstance(pgz, dict) else pgz}; "
@@ -981,12 +993,25 @@ def fo2_track(fx):
         after = snapshot()
         reads_made = stub.n() - n_before
         changed = sorted(t for t in before if before[t] != after.get(t))
-        check("FO-028", [tuple(c) for c in cols] == [("vehicle", "tracker_device_id")] and not tbls
+        # Tracking-shaped by name, but not provider telemetry: kilometre readings a person or the km_evolution record
+        # wrote (C-025, HRMS-650), and a user id. Named exactly, with the reason, so a NEW column of this shape still fails.
+        not_telemetry = {
+            ("vehicle", "odometer_km"): "cache of the official kilometre record; km_evolution is its only writer (owner, 2026-10-09)",
+            ("checklist_run", "odometer_km"): "reading the driver enters on a checklist (C-025)",
+            ("technical_inspection", "odometer_km"): "reading recorded at an inspection (C-027)",
+            ("work_order", "odometer_km"): "reading recorded on a work order (C-026)",
+            ("fuel_entry", "odometer_km"): "reading recorded with a fuelling (C-029)",
+            ("fuel_entry", "odometer_override_note"): "free-text reason for a manual odometer override (C-029)",
+            ("fuel_entry", "reported_by_user_id"): "which user reported the fuelling; a user id, not a position (C-029)",
+        }
+        telemetry_shaped = sorted({tuple(c) for c in cols} - set(not_telemetry))
+        check("FO-028", telemetry_shaped == [("vehicle", "tracker_device_id")] and not tbls
               and reads_made >= 21 and not changed,
-              f"schema: the only tracking-shaped column is vehicle.tracker_device_id, no tracking table; {len(codes)} "
+              f"schema: the only tracking-shaped column is vehicle.tracker_device_id (the {len(not_telemetry)} odometer/"
+              f"user-id columns are named non-telemetry), no tracking table; {len(codes)} "
               f"tracking reads (answers {sorted(set(codes))}, {reads_made} live provider calls) left every table's "
               f"CHECKSUM unchanged ({sorted(before)})",
-              f"columns {cols}; tables {tbls}; reads {codes} provider calls {reads_made}; tables changed {changed}")
+              f"columns {cols} (tracking-shaped beyond the allow-list: {telemetry_shaped}); tables {tbls}; reads {codes} provider calls {reads_made}; tables changed {changed}")
 
         # FO-025 (last: it ends by stopping the stub): the provider unconfigured or down is a 503, not a guess
         outs = {"dev API, TRACKING_API_* unset": dev503}
@@ -1242,6 +1267,104 @@ def fo3(fx):
 
 
 # ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- EPIC-FO-05 (C-022, the AD-036 cut)
+def fo5(fx):
+    """FO-070: the cut holds, and the check that holds it can fail. The mutation edits a real source file
+    and always puts it back byte for byte."""
+    if fx.skip_cargo:
+        record("FO-070", "BLOCKED", "--skip-cargo")
+        return
+    target = os.path.join(BACKEND, "business", "src", "use_cases", "vehicle_tracking_use_case.rs")
+    args = ["test", "-p", "business", "--test", "ad036_boundary"]
+    p0, f0, rc0, _ = cargo_count(args[1:] if args[0] == "test" else args)
+    original = open(target, "rb").read()
+    outcomes = {}
+    try:
+        for label, line in (("garage in code", "\n#[allow(dead_code)]\nfn _qa_fo_070() { let _ = \"garage\"; }\n"),
+                            ("fuel in code", "\n#[allow(dead_code)]\nfn _qa_fo_070() { let _ = \"fuel\"; }\n"),
+                            ("garage and fuel in a comment only", "\n// qa-fo-070: garage and fuel named here only\n")):
+            open(target, "wb").write(original + line.encode())
+            p, f, rc, tail = cargo_count(args[1:])
+            outcomes[label] = (rc, p, f)
+    finally:
+        open(target, "wb").write(original)
+    p1, f1, rc1, _ = cargo_count(args[1:])
+    restored = open(target, "rb").read() == original
+    check("FO-070", rc0 == 0 and p0 >= 2 and f0 == 0
+          and outcomes["garage in code"][0] != 0 and outcomes["fuel in code"][0] != 0
+          and outcomes["garage and fuel in a comment only"][0] == 0 and rc1 == 0 and restored,
+          f"ad036_boundary passes with {p0} tests run; a line of code naming garage, and one naming fuel, each make it "
+          f"fail; the same words in a comment leave it passing; source restored and green again ({p1} tests)",
+          f"clean rc={rc0} passed={p0} failed={f0}; mutations (rc, passed, failed) {outcomes}; after restore rc={rc1} "
+          f"passed={p1}; restored={restored}")
+
+
+# ---------------------------------------------------------------- EPIC-FO-06 (C-023, vehicle parity fields)
+PARITY = {"prefix": "qa-fo-pfx", "vehicleType": "Truck 6x2", "odometerKm": 123456.5, "wheelType": "Dual",
+          "spareTireCount": 2, "spareTireType": "295/80R22.5", "spareTireNotes": "qa-fo spare in the rack",
+          "garageTag": "qa-fo-bay-3", "garageTagOrigin": "Tracker"}
+SNAKE = {"prefix": "prefix", "vehicleType": "vehicle_type", "odometerKm": "odometer_km", "wheelType": "wheel_type",
+         "spareTireCount": "spare_tire_count", "spareTireType": "spare_tire_type",
+         "spareTireNotes": "spare_tire_notes", "garageTag": "garage_tag", "garageTagOrigin": "garage_tag_origin"}
+
+
+def fo6(fx):
+    """FO-071: the parity fields are optional, round-trip, and the origin vocabulary is closed."""
+    oa, ob = fx.ownerA["token"], fx.ownerB["token"]
+    cols = ", ".join(SNAKE.values())
+    # odometerKm is read-only through the vehicle API: sent here, it must be ignored (km_evolution is the only writer)
+    s_bare, bare = post_vehicle(oa, veh(f"{PLATE}71A", odometerKm=999999.0))
+    bare_nulls = s_bare == 201 and all(bare.get(k) is None for k in PARITY)
+    bare_db = vrow(bare["uuid"], cols) if s_bare == 201 else None
+    writable = {k: v for k, v in PARITY.items() if k != "odometerKm"}
+    s_full, full = post_vehicle(oa, veh(f"{PLATE}71B", odometerKm=777.0, **writable))
+    got = http("GET", f"/vehicle/uuid/{full['uuid']}", token=oa) if s_full == 201 else (0, {})
+    created_no_odo = s_full == 201 and full.get("odometerKm") is None
+    round_trip = s_full == 201 and got[0] == 200 and got[1].get("odometerKm") is None and all(
+        got[1].get(k) == v for k, v in writable.items())
+    # the official reading arrives as a km_evolution entry (the only writer); it fills the cache
+    s_km, _ = http("POST", f"/vehicle/uuid/{full['uuid']}/km-evolution", token=oa,
+                   body={"km": 5000.0, "origin": "InitialRegistration"}) if round_trip else (0, None)
+    got2 = http("GET", f"/vehicle/uuid/{full['uuid']}", token=oa)[1] if s_km == 201 else {}
+    db_row = vrow(full["uuid"], cols) if s_full == 201 else None
+    expected_db = [str(PARITY[k]) if k != "odometerKm" else "5000" for k in SNAKE]
+    db_ok = db_row is not None and [x[:-2] if x.endswith(".0") else x for x in db_row] == expected_db \
+        and got2.get("odometerKm") == 5000.0
+    # an edit cannot overwrite the cache, nor erase it by leaving it out
+    s_up, up = edit(oa, got2, prefix="qa-fo-pfx2", odometerKm=1.0) if db_ok else (0, {})
+    s_blank, blank = edit(oa, got2, prefix="qa-fo-pfx2", odometerKm=None) if db_ok else (0, {})
+    changed_only = s_up == 200 and s_blank == 200 and up.get("prefix") == "qa-fo-pfx2" and up.get("odometerKm") == 5000.0 \
+        and blank.get("odometerKm") == 5000.0 and all(
+            up.get(k) == v for k, v in writable.items() if k != "prefix")
+    accepted = {}
+    for i, origin in enumerate(("Manual", "Tracker", "Automatic")):
+        s, p = post_vehicle(oa, veh(f"{PLATE}71O{i}", garageTagOrigin=origin))
+        accepted[origin] = (s, p.get("garageTagOrigin") if isinstance(p, dict) else None)
+    before = one("SELECT COUNT(*) FROM vehicle")
+    refused = {}
+    for i, origin in enumerate(("tracker", "Rastreador", "Auto", "")):
+        s, p = post_vehicle(oa, veh(f"{PLATE}71R{i}", garageTagOrigin=origin))
+        refused[origin] = (s, ek(p))
+    after = one("SELECT COUNT(*) FROM vehicle")
+    s_np, _ = post_vehicle(oa, {"model": f"{TAG}-noplate", "status": "Active", **PARITY})
+    s_b, vb = post_vehicle(ob, veh(f"{PLATE}71X", **PARITY))
+    s_x, _ = http("GET", f"/vehicle/uuid/{vb['uuid']}", token=oa) if s_b == 201 else (0, None)
+    check("FO-071", bare_nulls and bare_db is not None and all(x == 'NULL' for x in bare_db)   # the sql helper prints NULL as text
+          and created_no_odo and round_trip and db_ok and changed_only
+          and all(v[0] == 201 and v[1] == k for k, v in accepted.items())
+          and all(v == (400, "InvalidGarageTagOrigin") for v in refused.values()) and before == after
+          and s_np in (400, 422) and s_x == 404,
+          "a bare vehicle carries every parity field as null (response and row), even when odometerKm is sent; a full one "
+          "round-trips every writable field through POST, GET and the database; odometerKm is read-only: ignored on create, "
+          "filled only by a km_evolution entry (5000), and neither overwritten nor erased by a PUT; Manual/Tracker/Automatic accepted; tracker, Rastreador, Auto "
+          "and '' refused 400 InvalidGarageTagOrigin with nothing stored; a missing plate is still refused; tenant B's "
+          "vehicle is 404 for owner A",
+          f"bare {s_bare} nulls={bare_nulls} db={bare_db}; full {s_full} created_no_odo={created_no_odo} "
+          f"round_trip={round_trip}; km_evolution {s_km}; db={db_row} db_ok={db_ok}; put {s_up}/{s_blank} "
+          f"changed_only={changed_only}; accepted {accepted}; refused {refused} rows "
+          f"{before}->{after}; no plate {s_np}; cross-tenant {s_x}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", help="write results to this file")
@@ -1249,7 +1372,7 @@ def main():
     ap.add_argument("--skip-cargo", action="store_true", help="omit the two cargo test targets (FO-005, FO-011)")
     ap.add_argument("--skip-scratch", action="store_true", help="do not start the stub provider + scratch API (FO-022..028)")
     a = ap.parse_args()
-    print(f"Hermes fleet-operations acceptance (EPIC-FO-01, -02, -03) -- API {BASE}")
+    print(f"Hermes fleet-operations acceptance (EPIC-FO-01, -02, -03, -05, -06) -- API {BASE}")
     if http("GET", "/api-docs/openapi.json")[0] != 200:
         sys.exit(f"API not reachable at {BASE}")
     BASELINE["all"] = counts()
@@ -1264,7 +1387,7 @@ def main():
     fx.skip_scratch = a.skip_scratch
     try:
         seed(fx)
-        for story in (s01, s02, s03, s04, s05, s06, fo2_link, fo2_track, fo3):
+        for story in (s01, s02, s03, s04, s05, s06, fo2_link, fo2_track, fo3, fo5, fo6):
             print(f"[{story.__name__}]")
             try:
                 story(fx)

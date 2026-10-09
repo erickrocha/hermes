@@ -28,8 +28,9 @@ pub struct VehicleJson {
     pub prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vehicle_type: Option<String>,
-    /// Read-only in practice today: no writer exists yet (`C-025`). Not
-    /// rejected if sent, simply carried through like any other field.
+    /// Read-only. The cache of the official kilometre record, kept by
+    /// `km_evolution` (`C-025`) alone. A value sent on create or edit is
+    /// ignored, not rejected, so a client may send a record back unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub odometer_km: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

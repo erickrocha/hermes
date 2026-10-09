@@ -194,6 +194,50 @@ async fn vehicle_use_case_normalizes_creates_finds_and_pages_through_its_store()
 }
 
 #[tokio::test]
+async fn the_odometer_is_never_written_through_create_or_update() {
+    let mut handed = vehicle("ABC1D23", "Truck", Some(42));
+    handed.odometer_km = Some(999_999.0);
+    let use_case = VehicleUseCase::new(MemoryVehicleStore::default());
+    let created = use_case.create(handed).await.expect("vehicle is stored");
+    assert_eq!(
+        created.odometer_km, None,
+        "a new vehicle is not born with a handed-in odometer"
+    );
+
+    // Stand in for `km_evolution`, the only writer: it saves the cached reading through the store.
+    let store = MemoryVehicleStore::default();
+    let mut seeded = vehicle("XYZ4E56", "Truck", Some(42));
+    seeded.odometer_km = Some(1234.5);
+    let seeded = store
+        .save(seeded)
+        .await
+        .unwrap_or_else(|_| panic!("seeded"));
+    let id = seeded.id.expect("store assigned id");
+    let use_case = VehicleUseCase::new(store);
+
+    let mut edit = vehicle("XYZ4E56", "Truck", Some(42));
+    edit.odometer_km = Some(1.0);
+    let updated = use_case.update(id, edit).await.expect("vehicle is updated");
+    assert_eq!(
+        updated.odometer_km,
+        Some(1234.5),
+        "an edit cannot overwrite the official reading"
+    );
+
+    let mut blank = vehicle("XYZ4E56", "Truck", Some(42));
+    blank.odometer_km = None;
+    let updated = use_case
+        .update(id, blank)
+        .await
+        .expect("vehicle is updated");
+    assert_eq!(
+        updated.odometer_km,
+        Some(1234.5),
+        "an edit that omits it cannot erase it either"
+    );
+}
+
+#[tokio::test]
 async fn vehicle_use_case_keeps_tenant_and_uuid_when_updating() {
     let use_case = VehicleUseCase::new(MemoryVehicleStore::default());
     let created = use_case
