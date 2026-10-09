@@ -430,7 +430,8 @@ pub async fn receipt(
             Ok((status, Json(json(&state, entry).await)))
         }
         Err(e) if e.message.starts_with(ODOMETER_OUTSIDE_WINDOW) => {
-            Err(ExceptionResponse::Conflict(locale, ErrorKey::OdometerOutsideWindow))
+            let detail = e.message.strip_prefix(ODOMETER_OUTSIDE_WINDOW).unwrap_or_default().trim_start_matches(": ").to_string();
+            Err(ExceptionResponse::ConflictDetail(locale, ErrorKey::OdometerOutsideWindow, detail))
         }
         Err(e) if e.message == NOT_A_DRIVER => Err(ExceptionResponse::BadRequest(locale, ErrorKey::NotADriver)),
         Err(e) if e.message == PREFIX_MISMATCH => {

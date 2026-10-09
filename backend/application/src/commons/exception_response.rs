@@ -33,6 +33,12 @@ pub enum ExceptionResponse {
     /// administrador da plataforma; se um dia o operador for do tenant, os
     /// motivos precisam virar chaves com parâmetros.
     BadRequestMessage(String),
+
+    /// 409 whose translated message is followed by figures the caller needs to
+    /// correct the request (the receipt's odometer window, `TRM-540`). The
+    /// figures are a fixed-format, language-neutral tail, so the translated
+    /// part stays in the caller's language.
+    ConflictDetail(Locale, ErrorKey, String),
 }
 
 impl IntoResponse for ExceptionResponse {
@@ -40,6 +46,12 @@ impl IntoResponse for ExceptionResponse {
         if let ExceptionResponse::BadRequestMessage(message) = self {
             let payload = ErrorResponseJson::new("ImportRejected".to_string(), message);
             return (axum::http::StatusCode::BAD_REQUEST, Json(payload)).into_response();
+        }
+
+        if let ExceptionResponse::ConflictDetail(locale, key, detail) = self {
+            let message = format!("{} ({detail})", translate(locale, key));
+            let payload = ErrorResponseJson::new(key.as_str().to_string(), message);
+            return (axum::http::StatusCode::CONFLICT, Json(payload)).into_response();
         }
 
         let (status, locale, key) = match self {
@@ -64,7 +76,9 @@ impl IntoResponse for ExceptionResponse {
             ExceptionResponse::ServiceUnavailable(locale, key) => {
                 (axum::http::StatusCode::SERVICE_UNAVAILABLE, locale, key)
             }
-            ExceptionResponse::BadRequestMessage(..) => unreachable!("handled above"),
+            ExceptionResponse::BadRequestMessage(..) | ExceptionResponse::ConflictDetail(..) => {
+                unreachable!("handled above")
+            }
         };
 
         let payload = ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key));
