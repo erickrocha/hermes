@@ -13,6 +13,10 @@ import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsP
 import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
 import { SettingsPage } from './pages/SettingsPage'
 import { CostReportsPage, canSeeCosts } from './pages/CostPages'
+import { customRoutes } from './routes'
+import { NotFoundPage } from './pages/NotFoundPage'
+import { resourceConfigs } from './features/resources'
+import { ResourceEditRoute, ResourceListRoute, ResourceNewRoute } from './components/organisms/ResourceRoutes'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
 function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
@@ -57,6 +61,12 @@ export default function App() {
     <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
     <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
-    <Route path="*" element={<Navigate to="/" replace />} />
+    {customRoutes.map((route) => <Route key={route.path} path={route.path} element={<Protected allow={route.allow}>{route.element}</Protected>} />)}
+    {resourceConfigs.flatMap((config) => [
+      <Route key={`${config.route}-list`} path={`/${config.route}`} element={<Protected allow={(s) => config.read(s)}><ResourceListRoute config={config} /></Protected>} />,
+      ...(config.create ? [<Route key={`${config.route}-new`} path={`/${config.route}/new`} element={<Protected allow={(s) => config.create!(s)}><ResourceNewRoute config={config} /></Protected>} />] : []),
+      ...(config.edit ? [<Route key={`${config.route}-edit`} path={`/${config.route}/:uuid/edit`} element={<Protected allow={(s) => config.edit!(s)}><ResourceEditRoute config={config} /></Protected>} />] : []),
+    ])}
+    <Route path="*" element={session ? <Protected><NotFoundPage /></Protected> : <Navigate to="/login" replace />} />
   </Routes>
 }

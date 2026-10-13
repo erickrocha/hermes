@@ -18,6 +18,7 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `garage_core_acceptance.py` | Garage catalogue, triage, presence, validity, call, queue and automation (`EPIC-GA-01…06`, scenarios `GA-010…064`) — API + dev DB; `GA-064` needs `GARAGE_ROLLOVER_INTERVAL_SECONDS=3` on the API |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 | `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
+| `operations_console_walkthrough.cjs` | The operations screens of the console (`BO-090…106`) — Chrome headless against the console `:5173` and the API `:8080`, after `KEEP_FIXTURES=1 cost_report_acceptance.py`; clean up with `CLEAN_ONLY=1` on the same script |
 | `brand_contrast_audit.py` | Brand palette audit + customer review sheet (`EPIC-XF-10-S09`) — **not a scenario suite**, an advisory report |
 
 ## Garage monitor (`garage_monitor_acceptance.py`, scenarios `GA-070…074`)

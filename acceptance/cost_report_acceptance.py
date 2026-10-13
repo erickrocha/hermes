@@ -31,8 +31,15 @@ def hexid(uuid):
 
 def cleanup_extra():
     ids = ",".join(r[0] for r in b.rows(f"SELECT id FROM tenant WHERE business_name LIKE '{b.TAG}-%'")) or "0"
-    for t in ("work_order_posting", "work_order_item", "work_order_pendency", "work_order", "part", "vehicle_expense", "extra_trip"):
-        sql(f"DELETE FROM {t} WHERE tenant_id IN ({ids})", check=False)
+    # Children before parents. The tail is what operations_console_walkthrough.cjs leaves behind; two passes settle the
+    # one cycle (a checklist answer names the work order it opened, which names its run).
+    tables = ("purchase_order", "stock_movement", "checklist_answer", "work_order_posting", "work_order_item", "work_order_pendency", "work_order", "checklist_run",
+              "checklist_template_item", "checklist_template", "customer_day_off", "daily_schedule", "schedule_exception", "transport_demand_allocation", "transport_demand", "customer",
+              "technical_inspection_item", "technical_inspection", "inspection_model_item", "inspection_model", "preventive_plan_extension", "preventive_plan_alert", "preventive_plan",
+              "maintenance_plan", "part", "vehicle_expense", "extra_trip", "holiday", "internal_tank", "fuel_gauge_setting", "vehicle_assignment", "service_type", "priced_service")
+    for _ in range(2):
+        for t in tables:
+            sql(f"DELETE FROM {t} WHERE tenant_id IN ({ids})", check=False)
 
 
 def run():

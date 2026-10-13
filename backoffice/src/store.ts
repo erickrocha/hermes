@@ -1,3 +1,6 @@
+import { allResources } from './features/registry'
+import { lookupReducer } from './features/lookupSlice'
+import { panelReducer } from './features/panelSlice'
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { api, apiMessage, normalizeSession } from './api'
 import { emptyPage } from './types'
@@ -103,7 +106,9 @@ const dataSlice = createSlice({
   },
 })
 
-export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer } })
+// Uma slice por feature (resourceSlice) mais os seletores (lookup): o registro único mantém o store e os testes de acordo.
+const featureReducers = Object.fromEntries(allResources.map((resource) => [resource.name, resource.reducer]))
+export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, ...featureReducers } })
 export const { logout, clearAuthError } = authSlice.actions
 export const { clearDataError, clearCities } = dataSlice.actions
 export type RootState = ReturnType<typeof store.getState>

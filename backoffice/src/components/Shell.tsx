@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Building2, ChevronDown, Coins, CreditCard, Gauge, LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { type LucideIcon, Building2, ChevronDown, Coins, CreditCard, Gauge, LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +9,7 @@ import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
 import { canSeeCosts } from '../pages/CostPages'
+import { operationNav } from '../features/navigation'
 import { canSeeProfiles, canSeeTenants, canSeeUsers } from '../pages/ManagementPages'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
@@ -32,11 +33,12 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => { dispatch(loadPermissions()) }, [dispatch, session.userId])
   useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
-  const links = [
+  const links: { to: string; label: string; icon: LucideIcon; group?: string }[] = [
     { to: '/', label: t('dashboard'), icon: Gauge },
     ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
+    ...operationNav.filter((item) => item.visible(session)).map((item) => ({ to: item.to, label: t(item.labelKey), icon: item.icon, group: item.groupKey })),
     ...(canSeeCosts(session) ? [{ to: '/costs', label: t('costs'), icon: Coins }] : []),
     ...(canSeeProfiles(session) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
@@ -48,7 +50,7 @@ export function Shell({ children }: { children: ReactNode }) {
     {mobile && <button className="sidebar-backdrop" aria-label={t('close')} onClick={() => setMobile(false)} />}
     <aside className={`sidebar ${mobile ? 'open' : ''}`}>
       <div className="sidebar-brand"><Logo /><button className="mobile-close" onClick={() => setMobile(false)}><X /></button></div>
-      <nav>{links.map(({ to, label, icon: Icon }) => <NavLink end={to === '/'} key={to} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
+      <nav>{links.map(({ to, label, icon: Icon, group }, index) => <Fragment key={to}>{group && group !== links[index - 1]?.group && <span className="nav-group">{t(group)}</span>}<NavLink end={to === '/'} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink></Fragment>)}</nav>
       <div className="sidebar-foot"><span>Hermes</span><small>v0.1</small></div>
     </aside>
     <div className="app-main">
