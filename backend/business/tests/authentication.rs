@@ -9,7 +9,7 @@
 
 use business::commons::functions::string_to_bytes;
 use business::commons::password;
-use business::domain::access_token::AccessToken;
+use business::domain::access_token::{AccessToken, Claims, DeviceClaims, PrincipalType};
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::user_gateway::UserGateway;
@@ -43,6 +43,8 @@ fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
         enabled,
         blocked_reason: None,
         profile_id: None,
+        cpf: None,
+        principal_function: None,
         tenant_id: Some(42),
         role: "TenantOwner".into(),
         created_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),
@@ -188,6 +190,8 @@ fn user() -> User {
         name: Some("Owner".into()),
         password: argon(),
         enabled: true,
+        cpf: None,
+        principal_function: None,
         tenant_id: Some(42),
         role: Role::TenantOwner,
         created_at: None,
@@ -199,6 +203,35 @@ fn user() -> User {
 
 fn issue_token(user: User) -> AccessToken {
     AuthenticationUseCase::generate_access_token(user).expect("valid test user issues tokens")
+}
+
+#[test]
+fn device_claims_are_distinct_from_user_claims() {
+    let device_claims = DeviceClaims {
+        sub: "device-uuid".into(),
+        exp: 1_800_000_000,
+        device_id: 9,
+        device_uuid: "device-uuid".into(),
+        tenant_id: 42,
+        credential_version: 1,
+        principal_type: PrincipalType::Device,
+    };
+    let device_json = serde_json::to_value(device_claims).expect("device claims serialize");
+    assert_eq!(device_json["principal_type"], "device");
+    assert!(serde_json::from_value::<Claims>(device_json).is_err());
+
+    let user_claims = Claims::builder()
+        .with_sub("owner@example.com")
+        .exp(1_800_000_000)
+        .uuid(UUID)
+        .name("Owner")
+        .user_id(5)
+        .role(Role::TenantOwner)
+        .tenant_id(Some(42))
+        .build()
+        .expect("user claims build");
+    let user_json = serde_json::to_value(user_claims).expect("user claims serialize");
+    assert!(serde_json::from_value::<DeviceClaims>(user_json).is_err());
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import './i18n'
 import { api } from './api'
-import App from './App'
+import { App } from './App'
 import { emptyPage } from './types'
 import type { Session } from './types'
 

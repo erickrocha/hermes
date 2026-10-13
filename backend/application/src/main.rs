@@ -41,6 +41,7 @@ use crate::routes::technical_inspection_routes::technical_inspection_routes;
 use crate::routes::tenant_rule_setting_routes::tenant_rule_setting_routes;
 use crate::routes::inspection_model_routes::inspection_model_routes;
 use crate::routes::internal_tank_routes::internal_tank_routes;
+use crate::routes::garage_device_routes::garage_device_routes;
 use axum::Router;
 use axum::http::{Method, header};
 use axum::routing::get;
@@ -217,6 +218,11 @@ impl Modify for SecurityAddon {
         endpoints::garage_attendance_endpoint::call_list,
         endpoints::garage_attendance_endpoint::monitor_cards,
         endpoints::garage_attendance_endpoint::monitor_matrix,
+        endpoints::garage_device_endpoint::list,
+        endpoints::garage_device_endpoint::issue_pairing_code,
+        endpoints::garage_device_endpoint::reissue_pairing_code,
+        endpoints::garage_device_endpoint::pair,
+        endpoints::garage_device_endpoint::revoke,
         endpoints::garage_call_endpoint::call,
         endpoints::garage_call_endpoint::cancel,
         endpoints::garage_call_endpoint::get_active,
@@ -341,6 +347,11 @@ impl Modify for SecurityAddon {
             endpoints::json::inspection_model_json::InspectionModelJson,
             endpoints::json::internal_tank_json::InternalTankJson,
             endpoints::json::internal_tank_json::TankStockJson,
+            endpoints::json::garage_device_json::IssueGarageDeviceJson,
+            endpoints::json::garage_device_json::PairGarageDeviceJson,
+            endpoints::json::garage_device_json::GarageDeviceJson,
+            endpoints::json::garage_device_json::GarageDevicePairingCodeJson,
+            endpoints::json::garage_device_json::GarageDeviceCredentialJson,
             endpoints::json::vehicle_json::VehicleJson,
             endpoints::json::vehicle_assignment_json::VehicleAssignmentJson,
             endpoints::json::vehicle_assignment_json::AssignDriverRequest,
@@ -481,6 +492,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/garage-service", garage_service_model_routes(state.clone()))
         .nest("/access-profile", access_profile_routes(state.clone()))
         .nest("/garage-attendance", garage_attendance_routes(state.clone()))
+        .nest("/garage-device", garage_device_routes(state.clone()))
         .nest("/garage-call", garage_call_routes(state.clone()))
         .nest("/schedule", schedule_routes(state.clone()))
         .nest("/vehicle-presence", vehicle_presence_routes(state.clone()))
@@ -651,6 +663,7 @@ mod openapi_contract_tests {
             "garage_service_model_routes" => "/garage-service",
             "access_profile_routes" => "/access-profile",
             "garage_attendance_routes" => "/garage-attendance",
+            "garage_device_routes" => "/garage-device",
             "garage_call_routes" => "/garage-call",
             "schedule_routes" => "/schedule",
             "vehicle_presence_routes" => "/vehicle-presence",

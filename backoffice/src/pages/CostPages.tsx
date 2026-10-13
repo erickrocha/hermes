@@ -1,23 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Download } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { api, apiMessage } from '../api'
+import { useDispatch } from 'react-redux'
+import { Controller, useForm } from 'react-hook-form'
+import { yupResolver } from '@hookform/resolvers/yup'
+import * as yup from 'yup'
+import type { AppDispatch } from '../store'
+import { downloadCostReport, fetchCostVehicles, fetchSupplierClosing, fetchSuppliers, fetchVehicleCost } from '../features/costSlice'
+import type { SupplierClosing, VehicleCost, VehicleOption } from '../services/costService'
 import { Combobox } from '../components/Combobox'
 import { Loading, PageHeader } from '../components/UI'
-import type { Page, Session } from '../types'
+import type { Session } from '../types'
 
 // C-030 EPIC-SP-07/08 (HRMS-804…810): a vehicle's cost and result over a period, and the supplier closing report,
 // each with its CSV. Read-only; the office (owner and tenant user) reads them, the platform administrator has no tenant.
 export const canSeeCosts = (session: Session) =>
   session.role !== 'SysAdmin' && (session.permissions ? session.permissions.includes('cost-report.vehicle.read') : session.role === 'TenantOwner' || session.role === 'TenantUser')
-
-interface Named { name: string; amount: number }
-interface VehicleCost {
-  plate: string; bySource: { workOrderPostingsCents: number; externalServicesCents: number; fuelCents: number; expensesCents: number }
-  totalCostCents: number; byServiceType: Named[]; servicesPerformed: Named[]; revenueCents: number; resultCents?: number
-}
-interface SupplierClosing { lines: { date: string; invoiceNumber?: string; service: string; workOrderType?: string; plate: string; invoiceCents: number }[]; totalCents: number }
-interface VehicleOption { uuid: string; plate: string; model?: string }
 
 const isoDay = (date: Date) => date.toISOString().slice(0, 10)
 const monthStart = () => { const now = new Date(); return isoDay(new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1))) }
@@ -27,40 +25,27 @@ function useMoney() {
   return (cents: number) => (cents / 100).toLocaleString(i18n.resolvedLanguage || i18n.language, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-async function download(url: string, params: Record<string, string>) {
-  const response = await api.get<Blob>(url, { params, responseType: 'blob' })
-  const name = /filename="([^"]+)"/.exec(String(response.headers['content-disposition'] ?? ''))?.[1] ?? 'report.csv'
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(response.data)
-  link.download = name
-  link.click()
-  URL.revokeObjectURL(link.href)
-}
-
-function Period({ from, to, setFrom, setTo }: { from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
-  const { t } = useTranslation()
-  return <><label>{t('periodFrom')}<input type="date" required value={from} onChange={(e) => setFrom(e.target.value)} /></label><label>{t('periodTo')}<input type="date" required value={to} onChange={(e) => setTo(e.target.value)} /></label></>
-}
-
 function VehicleCostTab() {
-  const { t } = useTranslation(); const money = useMoney()
-  const [vehicles, setVehicles] = useState<VehicleOption[]>([]); const [vehicle, setVehicle] = useState<string | null>(null)
-  const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(isoDay(new Date()))
+  const { t } = useTranslation(); const money = useMoney(); const dispatch = useDispatch<AppDispatch>()
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([])
   const [cost, setCost] = useState<VehicleCost | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { api.get<Page<VehicleOption>>('/vehicle', { params: { page: 0, pageSize: 200 } }).then(({ data }) => setVehicles(data.items)).catch((cause) => setError(apiMessage(cause, t('loadError')))) }, [t])
-  const query = { from, to }
-  const run = async () => {
+  const schema = yup.object({ vehicle: yup.string().required(t('genericError')), from: yup.string().required(t('genericError')), to: yup.string().required(t('genericError')) })
+  const { control, register, handleSubmit, getValues, watch } = useForm<{ vehicle: string | null; from: string; to: string }>({ resolver: yupResolver(schema) as never, defaultValues: { vehicle: null, from: monthStart(), to: isoDay(new Date()) } })
+  const vehicle = watch('vehicle')
+  useEffect(() => { dispatch(fetchCostVehicles()).unwrap().then(setVehicles).catch((cause) => setError(String(cause || t('loadError')))) }, [dispatch, t])
+  const run = handleSubmit(async ({ vehicle: selectedVehicle, from, to }) => {
+    if (!selectedVehicle) return
     if (!vehicle) return
     setLoading(true); setError(''); setCost(null)
-    try { setCost((await api.get<VehicleCost>(`/cost-report/vehicle/uuid/${vehicle}`, { params: query })).data) } catch (cause) { setError(apiMessage(cause, t('loadError'))) } finally { setLoading(false) }
-  }
+    try { setCost(await dispatch(fetchVehicleCost({ vehicle: selectedVehicle, params: { from, to } })).unwrap()) } catch (cause) { setError(String(cause || t('loadError'))) } finally { setLoading(false) }
+  })
   const sources: [string, number][] = cost ? [[t('costPostings'), cost.bySource.workOrderPostingsCents], [t('costExternal'), cost.bySource.externalServicesCents], [t('costFuel'), cost.bySource.fuelCents], [t('costExpenses'), cost.bySource.expensesCents]] : []
   return <>
-    <form className="toolbar form-inline" onSubmit={(e) => { e.preventDefault(); void run() }}>
-      <label>{t('vehicle')}<Combobox filterable value={vehicle} options={vehicles.map((v) => ({ value: v.uuid, label: v.model ? `${v.plate} · ${v.model}` : v.plate }))} onChange={(value) => setVehicle(value as string | null)} /></label>
-      <Period from={from} to={to} setFrom={setFrom} setTo={setTo} />
+    <form className="toolbar form-inline" onSubmit={run}>
+      <label>{t('vehicle')}<Controller control={control} name="vehicle" render={({ field }) => <Combobox filterable value={field.value} options={vehicles.map((v) => ({ value: v.uuid, label: v.model ? `${v.plate} · ${v.model}` : v.plate }))} onChange={field.onChange} />} /></label>
+      <label>{t('periodFrom')}<input type="date" required {...register('from')} /></label><label>{t('periodTo')}<input type="date" required {...register('to')} /></label>
       <button className="btn primary" type="submit" disabled={!vehicle || loading}>{t('generate')}</button>
-      <button className="btn secondary" type="button" disabled={!vehicle} onClick={() => download(`/cost-report/vehicle/uuid/${vehicle}/export`, query).catch((cause) => setError(apiMessage(cause, t('loadError'))))}><Download size={16} />{t('downloadCsv')}</button>
+      <button className="btn secondary" type="button" disabled={!vehicle} onClick={() => dispatch(downloadCostReport({ path: `/cost-report/vehicle/uuid/${vehicle}/export`, params: { from: getValues('from'), to: getValues('to') } })).unwrap().catch((cause) => setError(String(cause || t('loadError'))))}><Download size={16} />{t('downloadCsv')}</button>
     </form>
     {error && <p className="form-error">{error}</p>}
     {loading && <Loading />}
@@ -79,23 +64,24 @@ function VehicleCostTab() {
 }
 
 function SupplierTab() {
-  const { t } = useTranslation(); const money = useMoney()
-  const [suppliers, setSuppliers] = useState<string[]>([]); const [supplier, setSupplier] = useState<string | null>(null)
-  const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(isoDay(new Date()))
+  const { t } = useTranslation(); const money = useMoney(); const dispatch = useDispatch<AppDispatch>()
+  const [suppliers, setSuppliers] = useState<string[]>([])
   const [closing, setClosing] = useState<SupplierClosing | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('')
-  useEffect(() => { api.get<string[]>('/cost-report/suppliers').then(({ data }) => setSuppliers(data)).catch((cause) => setError(apiMessage(cause, t('loadError')))) }, [t])
-  const query = { supplier: supplier ?? '', from, to }
-  const run = async () => {
-    if (!supplier) return
+  const schema = yup.object({ supplier: yup.string().required(t('genericError')), from: yup.string().required(t('genericError')), to: yup.string().required(t('genericError')) })
+  const { control, register, handleSubmit, getValues, watch } = useForm<{ supplier: string | null; from: string; to: string }>({ resolver: yupResolver(schema) as never, defaultValues: { supplier: null, from: monthStart(), to: isoDay(new Date()) } })
+  const supplier = watch('supplier')
+  useEffect(() => { dispatch(fetchSuppliers()).unwrap().then(setSuppliers).catch((cause) => setError(String(cause || t('loadError')))) }, [dispatch, t])
+  const run = handleSubmit(async ({ supplier: selectedSupplier, from, to }) => {
+    if (!selectedSupplier) return
     setLoading(true); setError(''); setClosing(null)
-    try { setClosing((await api.get<SupplierClosing>('/cost-report/supplier-closing', { params: query })).data) } catch (cause) { setError(apiMessage(cause, t('loadError'))) } finally { setLoading(false) }
-  }
+    try { setClosing(await dispatch(fetchSupplierClosing({ supplier: selectedSupplier, from, to })).unwrap()) } catch (cause) { setError(String(cause || t('loadError'))) } finally { setLoading(false) }
+  })
   return <>
-    <form className="toolbar form-inline" onSubmit={(e) => { e.preventDefault(); void run() }}>
-      <label>{t('supplier')}<Combobox filterable value={supplier} options={suppliers.map((s) => ({ value: s, label: s }))} onChange={(value) => setSupplier(value as string | null)} /></label>
-      <Period from={from} to={to} setFrom={setFrom} setTo={setTo} />
+    <form className="toolbar form-inline" onSubmit={run}>
+      <label>{t('supplier')}<Controller control={control} name="supplier" render={({ field }) => <Combobox filterable value={field.value} options={suppliers.map((s) => ({ value: s, label: s }))} onChange={field.onChange} />} /></label>
+      <label>{t('periodFrom')}<input type="date" required {...register('from')} /></label><label>{t('periodTo')}<input type="date" required {...register('to')} /></label>
       <button className="btn primary" type="submit" disabled={!supplier || loading}>{t('generate')}</button>
-      <button className="btn secondary" type="button" disabled={!supplier} onClick={() => download('/cost-report/supplier-closing/export', query).catch((cause) => setError(apiMessage(cause, t('loadError'))))}><Download size={16} />{t('downloadCsv')}</button>
+      <button className="btn secondary" type="button" disabled={!supplier} onClick={() => dispatch(downloadCostReport({ path: '/cost-report/supplier-closing/export', params: { supplier: supplier ?? '', from: getValues('from'), to: getValues('to') } })).unwrap().catch((cause) => setError(String(cause || t('loadError'))))}><Download size={16} />{t('downloadCsv')}</button>
     </form>
     {error && <p className="form-error">{error}</p>}
     {loading && <Loading />}

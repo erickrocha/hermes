@@ -2,6 +2,12 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
 const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 export const api = axios.create({ baseURL, headers: { 'Content-Type': 'application/json' } })
+export const publicApi = axios.create({ baseURL, headers: { 'Content-Type': 'application/json' } })
+
+publicApi.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  config.headers['Accept-Language'] = localStorage.getItem('i18nextLng') || 'pt-BR'
+  return config
+})
 
 const clearSession = () => { localStorage.removeItem('hermes.session'); window.dispatchEvent(new Event('hermes:logout')) }
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {

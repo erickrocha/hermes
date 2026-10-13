@@ -55,6 +55,9 @@ export interface User {
   cpf?: string | null
   principalFunction?: string | null
 }
+export interface AccessProfile { uuid?: string; name: string; baseRole: 'TenantUser' | 'Driver' | 'Mechanic'; active: boolean; permissions: string[] }
+export interface Permission { code: string; module: string; own: boolean; defaultFor: string[] }
+export interface EffectiveProfile { role: string; profileUuid?: string; profileName?: string; permissions: string[] }
 export interface Province { id: number; acronym: string; name: string; countryCode: string }
 export interface City { id: number; provinceId: number; name: string }
 

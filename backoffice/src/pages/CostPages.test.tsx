@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { Provider } from 'react-redux'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '../i18n'
 import { api } from '../api'
+import { store } from '../store'
 import { CostReportsPage, canSeeCosts } from './CostPages'
 import type { Session } from '../types'
 
@@ -35,7 +37,7 @@ describe('cost reports (C-030, HRMS-804…810)', () => {
   })
 
   it('shows a vehicle\'s cost by source, the classification heading and the result', async () => {
-    render(<MemoryRouter><CostReportsPage /></MemoryRouter>)
+    render(<Provider store={store}><MemoryRouter><CostReportsPage /></MemoryRouter></Provider>)
     fireEvent.focus(await screen.findByRole('textbox'))
     fireEvent.click(await screen.findByRole('option', { name: /ABC1D23/ }))
     fireEvent.click(screen.getByRole('button', { name: /generate|gerar|generar/i }))
@@ -46,7 +48,7 @@ describe('cost reports (C-030, HRMS-804…810)', () => {
   })
 
   it('lists the supplier closing lines with their total', async () => {
-    render(<MemoryRouter><CostReportsPage /></MemoryRouter>)
+    render(<Provider store={store}><MemoryRouter><CostReportsPage /></MemoryRouter></Provider>)
     fireEvent.click(screen.getByRole('tab', { name: /supplier closing|fechamento|cierre/i }))
     fireEvent.focus(await screen.findByRole('textbox'))
     fireEvent.click(await screen.findByRole('option', { name: 'Oficina Sul' }))

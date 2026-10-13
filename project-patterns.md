@@ -4,7 +4,7 @@
 - **State Management:** Use ONLY Redux for global state. Do not create standalone Context APIs.
 - **Requests:** Use the Axios instances configured in the project. Never use native `fetch`.
 - **Components:** Create only functional components. Exports must be named (do not use `export default`).
-- **Style Management:** Use TailwindCSS for styling. Do not use inline styles or separate CSS files.
+- **Style Management:** Use SCSS as the primary styling layer. TailwindCSS may complement SCSS for established utility patterns when it avoids custom CSS; do not reimplement utilities Tailwind already provides. Do not use inline styles or ad-hoc plain CSS files. Define colors, typography, spacing, radii, and other visual values as theme tokens (CSS custom properties, SCSS variables/maps, or Tailwind theme values), not component-specific literals, so the visual theme can change without changing application/component code.
 - **Component Architecture:** Use Atomic Design for component architecture.
 - **Testing:** Create tests for all components. Use React Testing Library for testing.
 - **Type Definition:** Use TypeScript for type definition.
@@ -19,7 +19,7 @@
 - **Form Submission:** Use React Hook Form for form submission.
 - **Form Reset:** Use React Hook Form for form reset.
 - **Form Clearing:** Use React Hook Form for form clearing.
-- **Visual behaviors:** Every button in the app should have hover effects and disabled state styles, use the styles defined in the project. Pages do add or edit, should use navigaion, not modals. Should have breadcrumbs for all pages. Every page should display loading, error, empty, and success states for data fetching. Cancel button aligned on the left and save on the right. Always evict overflow on layouts. Avoid using scrollbars, evict overflow. The page should display 404 error if the route is not found. Always work with SCSS and if possible flex layout.
+- **Visual behaviors:** Every button in the app should have hover effects and disabled state styles, using the styles defined in the project. Add/edit pages should use navigation, not modals. Add breadcrumbs to all pages. Every page should display loading, error, empty, and success states for data fetching. Align Cancel on the left and Save on the right. Prevent unintended layout overflow and avoid unnecessary scrollbars. Display a 404 page when a route is not found. Prefer flex layouts where they fit the design.
 
 ## Backend (Rust)
 - **Structure:** Keep submodules isolated. Should apply clean architecture pattern.

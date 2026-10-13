@@ -22,6 +22,7 @@ use business::domain::enums::GarageServiceState as ServiceState;
 use business::domain::enums::{GarageAttendanceOrigin, GarageServiceState};
 use business::domain::garage_attendance::GarageAttendance;
 use business::domain::garage_service::GarageService;
+use business::use_cases::garage_device_use_case::DevicePrincipal;
 use business::domain::user::User;
 use business::gateway::garage_attendance_gateway::GarageAttendanceGateway;
 use business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway;
@@ -481,7 +482,8 @@ fn queue_json(e: &business::use_cases::garage_queue_use_case::QueueEntry) -> Gar
 pub async fn monitor(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    _current_user: Option<Extension<User>>,
+    _device: Option<Extension<DevicePrincipal>>,
 ) -> HttpResponse<Json<Vec<GarageMonitorEntryJson>>> {
     use business::use_cases::garage_readiness::{departure_readiness, urgent_animation};
     let now = chrono::Utc::now().naive_utc();
@@ -534,7 +536,8 @@ pub async fn monitor(
 pub async fn monitor_cards(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    _current_user: Option<Extension<User>>,
+    _device: Option<Extension<DevicePrincipal>>,
 ) -> HttpResponse<Json<GarageMonitorCardsJson>> {
     match queue_use_case(&state).cards().await {
         Ok((cards, not_shown)) => Ok(Json(GarageMonitorCardsJson {
@@ -570,7 +573,8 @@ pub async fn monitor_cards(
 pub async fn call_list(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    _current_user: Option<Extension<User>>,
+    _device: Option<Extension<DevicePrincipal>>,
 ) -> HttpResponse<Json<Vec<GarageCallListEntryJson>>> {
     match queue_use_case(&state).call_list().await {
         Ok(entries) => Ok(Json(
@@ -607,7 +611,8 @@ pub async fn call_list(
 pub async fn monitor_matrix(
     state: State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    _current_user: Option<Extension<User>>,
+    _device: Option<Extension<DevicePrincipal>>,
 ) -> HttpResponse<Json<GarageMatrixJson>> {
     match queue_use_case(&state).matrix().await {
         Ok(m) => Ok(Json(GarageMatrixJson {

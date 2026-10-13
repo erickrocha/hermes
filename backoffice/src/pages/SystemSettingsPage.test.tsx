@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { Provider } from 'react-redux'
 import '../i18n'
 import { api } from '../api'
+import { store } from '../store'
 import { SystemSettingsPage } from './SystemSettingsPage'
 import { emptyPage } from '../types'
 
@@ -15,7 +17,7 @@ describe('SystemSettingsPage CSV import', () => {
   })
 
   const loadCsv = async (text: string) => {
-    render(<SystemSettingsPage />)
+    render(<Provider store={store}><SystemSettingsPage /></Provider>)
     const input = await screen.findByLabelText(/import csv|importar csv/i)
     const file = new File([text], 'provinces.csv', { type: 'text/csv' })
     // jsdom's FileReader needs the text available synchronously enough for

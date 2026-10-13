@@ -43,6 +43,7 @@ pub mod garage_fuelling_mark_gateway;
 pub mod garage_queue_gateway;
 pub mod garage_service_gateway;
 pub mod garage_service_log_gateway;
+pub mod garage_device_gateway;
 pub mod fuel_gauge_setting_gateway;
 pub mod preventive_plan_alert_gateway;
 pub mod preventive_plan_extension_gateway;

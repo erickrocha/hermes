@@ -45,6 +45,7 @@ pub mod vehicle_presence_event;
 pub mod garage_attendance;
 pub mod garage_service;
 pub mod garage_service_log;
+pub mod garage_device;
 pub mod fuel_gauge_setting;
 pub mod preventive_plan;
 pub mod preventive_plan_alert;

@@ -318,10 +318,10 @@ pub(crate) async fn find_visible(
     // `C-032` (`HRMS-860`, `D-27` 5): a driver reaches the vehicle they are assigned to and no other -- the
     // same 404 as a vehicle in another tenant. Every vehicle-scoped endpoint passes through here, so the
     // driver's odometer, checklists, fuel receipts, assignment and tracking all follow.
-    if let Some(own) = driver_vehicle_ids(state, locale, current_user).await? {
-        if !vehicle.id.is_some_and(|id| own.contains(&id)) {
-            return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::VehicleNotFound));
-        }
+    if let Some(own) = driver_vehicle_ids(state, locale, current_user).await?
+        && !vehicle.id.is_some_and(|id| own.contains(&id))
+    {
+        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::VehicleNotFound));
     }
 
     Ok(vehicle)

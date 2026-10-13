@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Provider } from 'react-redux'
 import '../i18n'
-import { api } from '../api'
+import { publicApi } from '../api'
+import { store } from '../store'
 import { AcceptInvitePage } from './AuthPages'
 
 // EPIC-BO-04 client half of EPIC-IA-07/D-07: this is the page the emailed
@@ -12,22 +14,22 @@ describe('AcceptInvitePage', () => {
   beforeEach(() => vi.restoreAllMocks())
 
   it('rejects a link with no token before ever calling the API', () => {
-    const post = vi.spyOn(api, 'post')
+    const post = vi.spyOn(publicApi, 'post')
     render(
-      <MemoryRouter initialEntries={['/accept-invite']}>
+      <Provider store={store}><MemoryRouter initialEntries={['/accept-invite']}>
         <Routes><Route path="/accept-invite" element={<AcceptInvitePage />} /></Routes>
-      </MemoryRouter>
+      </MemoryRouter></Provider>
     )
     expect(screen.getByText(/invalid invitation link|link de convite inválido/i)).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
 
   it('submits the token from the URL together with the chosen password', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
+    const post = vi.spyOn(publicApi, 'post').mockResolvedValue({ data: {} } as never)
     render(
-      <MemoryRouter initialEntries={['/accept-invite?token=abc.def.ghi']}>
+      <Provider store={store}><MemoryRouter initialEntries={['/accept-invite?token=abc.def.ghi']}>
         <Routes><Route path="/accept-invite" element={<AcceptInvitePage />} /></Routes>
-      </MemoryRouter>
+      </MemoryRouter></Provider>
     )
     fireEvent.change(screen.getByLabelText(/^new password$|^nova senha$/i), { target: { value: 'a-strong-password' } })
     fireEvent.change(screen.getByLabelText(/confirm new password|confirmar nova senha/i), { target: { value: 'a-strong-password' } })
@@ -38,11 +40,11 @@ describe('AcceptInvitePage', () => {
   })
 
   it('rejects a password shorter than 8 characters without calling the API', () => {
-    const post = vi.spyOn(api, 'post')
+    const post = vi.spyOn(publicApi, 'post')
     render(
-      <MemoryRouter initialEntries={['/accept-invite?token=abc.def.ghi']}>
+      <Provider store={store}><MemoryRouter initialEntries={['/accept-invite?token=abc.def.ghi']}>
         <Routes><Route path="/accept-invite" element={<AcceptInvitePage />} /></Routes>
-      </MemoryRouter>
+      </MemoryRouter></Provider>
     )
     fireEvent.change(screen.getByLabelText(/^new password$|^nova senha$/i), { target: { value: 'short' } })
     fireEvent.change(screen.getByLabelText(/confirm new password|confirmar nova senha/i), { target: { value: 'short' } })

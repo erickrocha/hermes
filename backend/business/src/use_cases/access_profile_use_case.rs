@@ -41,10 +41,11 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
     pub async fn update(&self, edited: AccessProfile) -> Result<AccessProfile, BusinessError> {
         let current = self.find_by_uuid(edited.uuid.clone().unwrap_or_default()).await?;
         // a profile in use cannot be deactivated or moved to another role under its holders
-        if let Some(id) = current.id {
-            if (!edited.active || edited.base_role != current.base_role) && self.store.users_holding(id).await? > 0 {
-                return Err(BusinessError::new(PROFILE_IN_USE.to_string()));
-            }
+        if let Some(id) = current.id
+            && (!edited.active || edited.base_role != current.base_role)
+            && self.store.users_holding(id).await? > 0
+        {
+            return Err(BusinessError::new(PROFILE_IN_USE.to_string()));
         }
         let profile = self
             .validated(AccessProfile { id: current.id, tenant_id: current.tenant_id, ..edited }, current.id)

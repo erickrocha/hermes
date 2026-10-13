@@ -4,6 +4,7 @@ import type { Role, Session } from './types'
 import { CustomerDayOffPage, CustomerDetailPage, DemandAllocationPage, DemandDailyPage, DemandDetailPage, DemandExceptionPage, VehicleAssignPage, VehicleDetailPage, VehicleOdometerPage } from './pages/FleetPages'
 import { ChecklistRunNewPage, ChecklistTemplateDetailPage, TechnicalInspectionNewPage } from './pages/ChecklistPages'
 import { GarageCallCancelPage, GarageCallPage, GarageMonitorPage, GaragePage, GarageOpenPage, GarageTriagePage } from './pages/GaragePages'
+import { GarageDevicesPage } from './pages/GarageDevicesPage'
 import { PreventiveAlertPage, PreventiveExtensionPage, PreventivePlanDetailPage } from './pages/PreventivePages'
 import { SchedulePage, TripImportPage } from './pages/SchedulePages'
 import { FuelEntryNewPage, FuelGaugePage, FuelPage, FuelReceiptPage, FuelReportPage, FuelRestorePage, FuelSettingsPage, FuelUnifyPage, InternalTankConfigPage, InternalTankPage, RuleSettingsPage } from './pages/FuelPages'
@@ -51,6 +52,7 @@ export const customRoutes: AppRoute[] = [
   { path: '/garage/call', element: <GarageCallPage />, allow: (s) => can(s, 'garage.call.create', OWNER_MECHANIC) },
   { path: '/garage/call/cancel', element: <GarageCallCancelPage />, allow: (s) => can(s, 'garage.call.cancel', OWNER_MECHANIC) },
   { path: '/garage/monitor', element: <GarageMonitorPage />, allow: (s) => can(s, 'garage.monitor.read', READERS) },
+  { path: '/garage/devices', element: <GarageDevicesPage />, allow: (s) => s.role === 'TenantOwner' },
   { path: '/garage/triage/:uuid', element: <GarageTriagePage />, allow: (s) => can(s, 'garage.triage.read', READERS) },
   { path: '/schedule', element: <SchedulePage />, allow: (s) => can(s, 'schedule.effective.read', OFFICE) },
   { path: '/extra-trips/import', element: <TripImportPage />, allow: (s) => can(s, 'extra-trip.import', OWNER) },

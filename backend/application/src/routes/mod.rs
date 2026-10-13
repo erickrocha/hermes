@@ -31,3 +31,4 @@ pub mod technical_inspection_routes;
 pub mod tenant_rule_setting_routes;
 pub mod inspection_model_routes;
 pub mod internal_tank_routes;
+pub mod garage_device_routes;

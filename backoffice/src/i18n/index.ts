@@ -64,4 +64,4 @@ export const currentLanguage = (language = i18n.resolvedLanguage || i18n.languag
 export const localeCountryCode = (language = i18n.resolvedLanguage || i18n.language) =>
   language?.toLowerCase().startsWith('pt') ? 'BR' : 'US'
 
-export default i18n
+export { i18n }

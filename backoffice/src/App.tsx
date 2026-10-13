@@ -33,7 +33,7 @@ function Protected({ children, sysAdmin = false, allow }: { children: ReactNode;
   return <Shell><ErrorBoundary key={location.pathname}>{children}</ErrorBoundary></Shell>
 }
 
-export default function App() {
+export function App() {
   const dispatch = useDispatch<AppDispatch>()
   const session = useSelector((state: RootState) => state.auth.session)
   useEffect(() => { const onLogout = () => dispatch(logout()); window.addEventListener('hermes:logout', onLogout); return () => window.removeEventListener('hermes:logout', onLogout) }, [dispatch])

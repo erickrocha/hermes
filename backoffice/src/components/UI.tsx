@@ -18,6 +18,7 @@ export function Breadcrumbs() {
     { pattern: '/plans/:uuid/edit', parent: '/plans', parentLabel: 'plans', label: 'editPlan' },
     { pattern: '/users/new', parent: '/users', parentLabel: 'users', label: 'newUser' },
     { pattern: '/users/:uuid/edit', parent: '/users', parentLabel: 'users', label: 'editUser' },
+    { pattern: '/garage/devices', parent: '/garage', parentLabel: 'garage', label: 'garageDevices' },
   ].find((route) => matchPath(route.pattern, pathname))
   const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings', '/costs': 'costs', ...sectionLabels }
   const current = routes?.label || lists[pathname]

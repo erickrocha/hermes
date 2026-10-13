@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Pencil, Plus, RefreshCw, Upload, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { api, apiMessage } from '../api'
+import { useForm } from 'react-hook-form'
+import { yupResolver } from '@hookform/resolvers/yup'
+import * as yup from 'yup'
+import { useDispatch } from 'react-redux'
+import type { AppDispatch } from '../store'
+import { fetchReferenceRows, importReferenceRows, saveReferenceRow } from '../features/referenceDataSlice'
+import type { ReferenceRow } from '../services/referenceDataService'
 import { matchColumns, parseCsv } from '../csv'
 import { DataTable } from '../components/DataTable'
 import { Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
@@ -78,6 +84,8 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
   const [editing, setEditing] = useState<Row | null>(null)
   const [importRows, setImportRows] = useState<Row[] | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const schema = useMemo(() => yup.object(Object.fromEntries(spec.fields.map((field) => [field.key, field.required ? yup.string().required(t('genericError')) : yup.string().optional()]))), [spec.fields, t])
+  const { register, handleSubmit, reset, formState: { errors: validationErrors } } = useForm<Row>({ resolver: yupResolver(schema) as never })
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(search), 300)
@@ -85,20 +93,19 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
   }, [search])
   useEffect(() => { setPageIndex(0) }, [debounced])
 
+  const dispatch = useDispatch<AppDispatch>()
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const { data } = await api.get<Page<Row>>(spec.listPath, {
-        params: { page: pageIndex, pageSize: 25, search: debounced || undefined },
-      })
+      const data = await dispatch(fetchReferenceRows({ path: spec.listPath, params: { page: pageIndex, pageSize: 25, search: debounced || undefined } })).unwrap()
       setPage(data)
       setError('')
     } catch (cause) {
-      setError(apiMessage(cause, t('genericError')))
+      setError(String(cause || t('genericError')))
     } finally {
       setLoading(false)
     }
-  }, [spec.listPath, pageIndex, debounced, t])
+  }, [dispatch, spec.listPath, pageIndex, debounced, t])
 
   useEffect(() => { load() }, [load])
 
@@ -113,23 +120,24 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
       header: () => t('actions'),
       cell: ({ row }: { row: { original: Row } }) => (
         <div className="row-actions">
-          <button onClick={() => setEditing(row.original)} aria-label={t('edit')}><Pencil size={16} /></button>
+          <button onClick={() => startEditing(row.original)} aria-label={t('edit')}><Pencil size={16} /></button>
         </div>
       ),
     },
   ], [spec.fields, t])
 
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
+  const save = handleSubmit(async (row) => {
     if (!editing) return
     try {
-      await api.post(spec.savePath, coerce(spec, editing))
+      await dispatch(saveReferenceRow({ path: spec.savePath, row: coerce(spec, row) as ReferenceRow })).unwrap()
       setEditing(null)
       load()
     } catch (cause) {
-      setError(apiMessage(cause, t('genericError')))
+      setError(String(cause || t('genericError')))
     }
-  }
+  })
+
+  const startEditing = (row: Row) => { reset(row); setEditing(row) }
 
   const pickFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -158,10 +166,10 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
   const confirmImport = async () => {
     if (!importRows) return
     try {
-      const { data } = await api.post<{ created: number; updated: number }>(
-        spec.importPath,
-        importRows.map((row) => coerce(spec, row)),
-      )
+      const data = await dispatch(importReferenceRows({
+        path: spec.importPath,
+        rows: importRows.map((row) => coerce(spec, row) as ReferenceRow),
+      })).unwrap()
       setImportRows(null)
       setError('')
       setPageIndex(0)
@@ -170,7 +178,7 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
     } catch (cause) {
       // O servidor recusa o lote inteiro e diz qual linha: é o texto que
       // permite corrigir na grade, então ele aparece inteiro.
-      setError(apiMessage(cause, t('genericError')))
+      setError(String(cause || t('genericError')))
     }
   }
 
@@ -222,7 +230,7 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
         <div className="page-actions">
           <button className="btn secondary" onClick={load}><RefreshCw size={16} />{t('refresh')}</button>
           <button className="btn secondary" onClick={() => fileInput.current?.click()}><Upload size={16} />{t('importCsv')}</button>
-          <button className="btn primary" onClick={() => setEditing(blankRow(spec))}><Plus size={17} />{t('add')}</button>
+          <button className="btn primary" onClick={() => startEditing(blankRow(spec))}><Plus size={17} />{t('add')}</button>
         </div>
         <input ref={fileInput} type="file" accept=".csv,text/csv" hidden onChange={pickFile} aria-label={t('importCsv')} />
       </div>
@@ -233,11 +241,8 @@ function ResourcePanel({ spec }: { spec: ResourceSpec }) {
             {spec.fields.map((field) => (
               <label key={field.key}>
                 {t(field.label)}
-                <input
-                  required={field.required}
-                  value={String(editing[field.key] ?? '')}
-                  onChange={(event) => setEditing({ ...editing, [field.key]: event.target.value })}
-                />
+                <input required={field.required} {...register(field.key)} />
+                {validationErrors[field.key]?.message && <small className="form-error">{String(validationErrors[field.key]?.message)}</small>}
               </label>
             ))}
           </Form>

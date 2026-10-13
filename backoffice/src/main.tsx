@@ -5,7 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { store } from './store'
 import './i18n'
 import './styles/main.scss'
-import App from './App'
+import { App } from './App'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode><Provider store={store}><BrowserRouter><App /></BrowserRouter></Provider></StrictMode>,

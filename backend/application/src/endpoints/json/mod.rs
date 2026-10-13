@@ -47,3 +47,4 @@ pub mod technical_inspection_json;
 pub mod tenant_rule_setting_json;
 pub mod inspection_model_json;
 pub mod internal_tank_json;
+pub mod garage_device_json;

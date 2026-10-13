@@ -35,6 +35,7 @@ export function GaragePage() {
       {can(session, 'garage.call.create', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/garage/call">{t('callToBase')}</Link>}
       {can(session, 'garage.call.cancel', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/garage/call/cancel">{t('cancelCall')}</Link>}
       {can(session, 'garage.monitor.read', [...READERS]) && <Link className="btn secondary" to="/garage/monitor">{t('garageMonitor')}</Link>}
+      {session?.role === 'TenantOwner' && <Link className="btn secondary" to="/garage/devices">{t('garageDevices')}</Link>}
       {can(session, 'garage.service-catalogue.read', [...OFFICE]) && <Link className="btn secondary" to="/garage-services">{t('garageServices')}</Link>}</>} />
     <PanelSection titleKey="yardQueue" loading={queue.loading} error={queue.error} empty={rows(queue.data).length === 0}>
       <div className="table-card"><table>

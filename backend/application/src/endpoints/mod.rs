@@ -39,4 +39,5 @@ pub mod technical_inspection_endpoint;
 pub mod tenant_rule_setting_endpoint;
 pub mod inspection_model_endpoint;
 pub mod internal_tank_endpoint;
+pub mod garage_device_endpoint;
 pub mod welcome_endpoint;

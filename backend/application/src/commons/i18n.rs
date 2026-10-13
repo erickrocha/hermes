@@ -96,6 +96,10 @@ pub enum ErrorKey {
     /// DEF-BO-05: a role that may not create users. Distinct from a malformed
     /// request, which is what the caller used to be told.
     UserCreationForbidden,
+    /// D-16/HRMS-418: device credentials belong to tenant owners, not users
+    /// who can only read or operate the garage.
+    DeviceManagementForbidden,
+    GarageDeviceNotFound,
     /// DEF-XF-02: a failure the caller cannot act on, but must be told about.
     /// Used where an empty result would otherwise be indistinguishable from a
     /// broken query.
@@ -311,6 +315,8 @@ impl ErrorKey {
             ErrorKey::CityNotFound => "CityNotFound",
             ErrorKey::ProvinceNotFound => "ProvinceNotFound",
             ErrorKey::UserCreationForbidden => "UserCreationForbidden",
+            ErrorKey::DeviceManagementForbidden => "DeviceManagementForbidden",
+            ErrorKey::GarageDeviceNotFound => "GarageDeviceNotFound",
             ErrorKey::UnexpectedError => "UnexpectedError",
             ErrorKey::VehicleNotFound => "VehicleNotFound",
             ErrorKey::VehicleForbidden => "VehicleForbidden",
@@ -421,6 +427,8 @@ impl ErrorKey {
             ErrorKey::CityNotFound => "city-not-found",
             ErrorKey::ProvinceNotFound => "province-not-found",
             ErrorKey::UserCreationForbidden => "user-creation-forbidden",
+            ErrorKey::DeviceManagementForbidden => "device-management-forbidden",
+            ErrorKey::GarageDeviceNotFound => "garage-device-not-found",
             ErrorKey::UnexpectedError => "unexpected-error",
             ErrorKey::VehicleNotFound => "vehicle-not-found",
             ErrorKey::VehicleForbidden => "vehicle-forbidden",

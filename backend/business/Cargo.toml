@@ -46,6 +46,14 @@ name = "authentication"
 required-features = ["mock"]
 
 [[test]]
+name = "garage_device_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_device_gateway_test"
+required-features = ["mock"]
+
+[[test]]
 name = "tenant_use_case_test"
 required-features = ["mock"]
 
