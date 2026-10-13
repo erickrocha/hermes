@@ -25,6 +25,7 @@ pub mod user_endpoint;
 pub mod vehicle_endpoint;
 pub mod vehicle_assignment_endpoint;
 pub mod vehicle_expense_endpoint;
+pub mod cost_report_endpoint;
 pub mod fuel_entry_endpoint;
 pub mod fuel_gauge_setting_endpoint;
 pub mod garage_attendance_endpoint;

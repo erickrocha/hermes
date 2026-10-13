@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Building2, ChevronDown, CreditCard, Gauge, LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
+import { Building2, ChevronDown, Coins, CreditCard, Gauge, LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
@@ -8,6 +8,7 @@ import { loadCurrentTenant, loadPermissions, logout } from '../store'
 import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
+import { canSeeCosts } from '../pages/CostPages'
 import { canSeeProfiles, canSeeTenants, canSeeUsers } from '../pages/ManagementPages'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
@@ -36,6 +37,7 @@ export function Shell({ children }: { children: ReactNode }) {
     ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
+    ...(canSeeCosts(session) ? [{ to: '/costs', label: t('costs'), icon: Coins }] : []),
     ...(canSeeProfiles(session) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
     // de planos -- só o SysAdmin desacoplado de tenant administra.

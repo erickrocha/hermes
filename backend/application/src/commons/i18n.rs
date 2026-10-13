@@ -249,6 +249,8 @@ pub enum ErrorKey {
     DuplicateAccessProfile,
     /// `HRMS-861`: another person of the tenant already holds this CPF.
     DuplicatePersonDocument,
+    /// `HRMS-804…810`: the cost reports are the office's to read.
+    CostReportForbidden,
     /// `HRMS-853`/`854`: the caller's access profile does not hold the permission the operation asks for.
     PermissionNotInProfile,
     /// `HRMS-958`: no such triage, or it belongs to another tenant.
@@ -376,6 +378,7 @@ impl ErrorKey {
             ErrorKey::AccessProfileNotFound => "AccessProfileNotFound",
             ErrorKey::DuplicateAccessProfile => "DuplicateAccessProfile",
             ErrorKey::DuplicatePersonDocument => "DuplicatePersonDocument",
+            ErrorKey::CostReportForbidden => "CostReportForbidden",
             ErrorKey::PermissionNotInProfile => "PermissionNotInProfile",
             ErrorKey::GarageAttendanceNotFound => "GarageAttendanceNotFound",
             ErrorKey::GarageAttendanceAlreadyActive => "GarageAttendanceAlreadyActive",
@@ -485,6 +488,7 @@ impl ErrorKey {
             ErrorKey::AccessProfileNotFound => "access-profile-not-found",
             ErrorKey::DuplicateAccessProfile => "duplicate-access-profile",
             ErrorKey::DuplicatePersonDocument => "duplicate-person-document",
+            ErrorKey::CostReportForbidden => "cost-report-forbidden",
             ErrorKey::PermissionNotInProfile => "permission-not-in-profile",
             ErrorKey::GarageAttendanceNotFound => "garage-attendance-not-found",
             ErrorKey::GarageAttendanceAlreadyActive => "garage-attendance-already-active",
@@ -770,6 +774,7 @@ mod tests {
             ErrorKey::AccessProfileNotFound,
             ErrorKey::DuplicateAccessProfile,
             ErrorKey::DuplicatePersonDocument,
+            ErrorKey::CostReportForbidden,
             ErrorKey::PermissionNotInProfile,
             ErrorKey::GarageAttendanceNotFound,
             ErrorKey::GarageAttendanceAlreadyActive,

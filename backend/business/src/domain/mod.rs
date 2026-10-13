@@ -37,6 +37,7 @@ pub mod vehicle_expense;
 pub mod fuel_entry;
 pub mod garage_service_model;
 pub mod access_profile;
+pub mod cost_report;
 pub mod operation_permission;
 pub mod permission;
 pub mod garage_call;

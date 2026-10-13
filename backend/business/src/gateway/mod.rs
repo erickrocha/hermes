@@ -53,4 +53,5 @@ pub mod tenant_rule_setting_gateway;
 pub mod technical_inspection_gateway;
 pub mod technical_inspection_workflow_gateway;
 pub mod technical_inspection_item_gateway;
+pub mod cost_report_gateway;
 pub mod internal_tank_gateway;

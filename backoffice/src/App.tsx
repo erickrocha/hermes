@@ -12,6 +12,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canSeeProfiles, canSeeTenants, canSeeUsers } from './pages/ManagementPages'
 import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
 import { SettingsPage } from './pages/SettingsPage'
+import { CostReportsPage, canSeeCosts } from './pages/CostPages'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
 function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
@@ -51,6 +52,7 @@ export default function App() {
     <Route path="/profiles" element={<Protected allow={canSeeProfiles}><ProfilesPage /></Protected>} />
     <Route path="/profiles/new" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
     <Route path="/profiles/:uuid/edit" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/costs" element={<Protected allow={canSeeCosts}><CostReportsPage /></Protected>} />
     <Route path="/users" element={<Protected allow={canSeeUsers}><UsersPage /></Protected>} />
     <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
     <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />

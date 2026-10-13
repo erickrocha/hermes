@@ -79,6 +79,12 @@ pub fn can_read_tenant_configuration(user: &User) -> bool {
     is_unbound_sys_admin(user) || (user.role == Role::TenantOwner && user.tenant_id.is_some())
 }
 
+/// `C-030` `HRMS-804…810`: what a vehicle costs and earns is the office's to read -- the platform administrator,
+/// the tenant owner and the tenant user -- never a driver's or a mechanic's.
+pub fn can_read_cost_reports(user: &User) -> bool {
+    is_unbound_sys_admin(user) || (user.tenant_id.is_some() && matches!(user.role, Role::TenantOwner | Role::TenantUser))
+}
+
 /// `POST /tenant` -- only an unbound platform administrator may create a
 /// tenant (PD-019).
 pub fn can_create_tenant(user: &User) -> bool {

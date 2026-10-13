@@ -28,6 +28,7 @@ use crate::routes::user_routes::user_routes;
 use crate::routes::vehicle_routes::vehicle_routes;
 use crate::routes::vehicle_expense_routes::vehicle_expense_routes;
 use crate::routes::fuel_entry_routes::fuel_entry_routes;
+use crate::routes::cost_report_routes::cost_report_routes;
 use crate::routes::fuel_gauge_setting_routes::fuel_gauge_setting_routes;
 use crate::routes::garage_attendance_routes::garage_attendance_routes;
 use crate::routes::garage_call_routes::garage_call_routes;
@@ -183,6 +184,12 @@ impl Modify for SecurityAddon {
         endpoints::fuel_entry_endpoint::list_all,
         endpoints::fuel_entry_endpoint::sync,
         endpoints::fuel_entry_endpoint::report,
+        endpoints::cost_report_endpoint::vehicle_cost,
+        endpoints::cost_report_endpoint::vehicle_cost_export,
+        endpoints::cost_report_endpoint::work_order_cost,
+        endpoints::cost_report_endpoint::suppliers,
+        endpoints::cost_report_endpoint::supplier_closing,
+        endpoints::cost_report_endpoint::supplier_closing_export,
         endpoints::fuel_entry_endpoint::average,
         endpoints::fuel_entry_endpoint::receipt,
         endpoints::fuel_entry_endpoint::gauge,
@@ -246,6 +253,12 @@ impl Modify for SecurityAddon {
     components(
         schemas(
             endpoints::json::user_json::UserJson,
+            endpoints::cost_report_endpoint::VehicleCostJson,
+            endpoints::cost_report_endpoint::CostBySourceJson,
+            endpoints::cost_report_endpoint::NamedAmountJson,
+            endpoints::cost_report_endpoint::WorkOrderCostJson,
+            endpoints::cost_report_endpoint::SupplierLineJson,
+            endpoints::cost_report_endpoint::SupplierClosingJson,
             endpoints::json::login_request::LoginRequest,
             endpoints::auth_endpoint::AcceptInviteJson,
             endpoints::json::change_password_request::ChangePasswordRequest,
@@ -405,6 +418,8 @@ async fn start() -> anyhow::Result<()> {
     log::info!("Starting server...");
 
     let cors = CorsLayer::new()
+        // The console reads the CSV's file name from this header (C-030, HRMS-809/810).
+        .expose_headers([header::CONTENT_DISPOSITION])
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -461,6 +476,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/vehicle-expense", vehicle_expense_routes(state.clone()))
         .nest("/fuel-entry", fuel_entry_routes(state.clone()))
         .nest("/preventive-plan", preventive_plan_routes(state.clone()))
+        .nest("/cost-report", cost_report_routes(state.clone()))
         .nest("/fuel-gauge-settings", fuel_gauge_setting_routes(state.clone()))
         .nest("/garage-service", garage_service_model_routes(state.clone()))
         .nest("/access-profile", access_profile_routes(state.clone()))
@@ -630,6 +646,7 @@ mod openapi_contract_tests {
             "vehicle_expense_routes" => "/vehicle-expense",
             "fuel_entry_routes" => "/fuel-entry",
             "preventive_plan_routes" => "/preventive-plan",
+            "cost_report_routes" => "/cost-report",
             "fuel_gauge_setting_routes" => "/fuel-gauge-settings",
             "garage_service_model_routes" => "/garage-service",
             "access_profile_routes" => "/access-profile",

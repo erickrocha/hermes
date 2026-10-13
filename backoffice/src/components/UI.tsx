@@ -18,7 +18,7 @@ export function Breadcrumbs() {
     { pattern: '/users/new', parent: '/users', parentLabel: 'users', label: 'newUser' },
     { pattern: '/users/:uuid/edit', parent: '/users', parentLabel: 'users', label: 'editUser' },
   ].find((route) => matchPath(route.pattern, pathname))
-  const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings' }
+  const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings', '/costs': 'costs' }
   const current = routes?.label || lists[pathname]
   return <nav className="breadcrumbs" aria-label={t('breadcrumbs')}><ol><li>{pathname === '/' ? <span aria-current="page">{t('dashboard')}</span> : <Link to="/">{t('dashboard')}</Link>}</li>{routes?.parent && <li><Link to={routes.parent}>{t(routes.parentLabel)}</Link></li>}{current && pathname !== '/' && <li><span aria-current="page">{t(current)}</span></li>}</ol></nav>
 }

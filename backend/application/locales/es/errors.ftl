@@ -119,4 +119,5 @@ access-profile-forbidden = Solo el propietario del tenant gestiona los perfiles 
 access-profile-not-found = Perfil de acceso no encontrado
 duplicate-access-profile = Este tenant ya tiene un perfil de acceso con este nombre
 permission-not-in-profile = Su perfil de acceso no permite esto
+cost-report-forbidden = No puede ver los informes de costos
 duplicate-person-document = Este tenant ya tiene una persona con este CPF

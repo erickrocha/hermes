@@ -18,6 +18,7 @@ pub mod user_routes;
 pub mod vehicle_routes;
 pub mod vehicle_expense_routes;
 pub mod fuel_entry_routes;
+pub mod cost_report_routes;
 pub mod fuel_gauge_setting_routes;
 pub mod garage_attendance_routes;
 pub mod garage_call_routes;
