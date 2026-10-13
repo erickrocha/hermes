@@ -14,7 +14,7 @@ use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::authorization::{
-    can_access_tenant, can_create_tenant, can_set_tenant_plan, can_update_tenant,
+    can_access_tenant, can_create_tenant, can_read_tenant_configuration, can_set_tenant_plan, can_update_tenant,
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
@@ -68,7 +68,7 @@ pub async fn add(
         ("uuid" = String, Path, description = "Tenant UUID")
     ),
     responses(
-        (status = 200, description = "Tenant found. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = TenantJson),
+        (status = 200, description = "Tenant found. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant, full record); TenantUser, Driver, Mechanic (own tenant only, the summary: name and country).", body = TenantJson),
         (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -85,7 +85,8 @@ pub async fn get_by_uuid(
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     match use_case.find_by_uuid(uuid).await {
         Ok(tenant) if can_access_tenant(&current_user, tenant.id.unwrap_or_default()) => {
-            Ok(Json(TenantMapper::json(tenant)))
+            let json = TenantMapper::json(tenant);
+            Ok(Json(if can_read_tenant_configuration(&current_user) { json } else { json.summary() }))
         }
         Ok(_) => Err(ExceptionResponse::NotFound(
             locale,
@@ -104,7 +105,7 @@ pub async fn get_by_uuid(
     path = "/tenant",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of tenants (PD-028). **Roles:** SysAdmin (all tenants); TenantOwner, TenantUser, Driver, Mechanic (own tenant only, at most one row).", body = PageJson<TenantJson>),
+        (status = 200, description = "A page of tenants (PD-028). **Roles:** SysAdmin (all tenants); TenantOwner (full record), TenantUser, Driver, Mechanic (the summary: name and country) -- own tenant only, at most one row.", body = PageJson<TenantJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -126,7 +127,11 @@ pub async fn list_all(
     if let Some(tenant_id) = current_user.tenant_id {
         return match use_case.find_by_id(tenant_id).await {
             Ok(tenant) => Ok(Json(PageJson::new(
-                vec![TenantMapper::json(tenant)],
+                vec![if can_read_tenant_configuration(&current_user) {
+                    TenantMapper::json(tenant)
+                } else {
+                    TenantMapper::json(tenant).summary()
+                }],
                 0,
                 page_size,
                 1,
@@ -322,7 +327,7 @@ async fn set_tenant_plan(
         ("uuid" = String, Path, description = "Tenant UUID")
     ),
     responses(
-        (status = 200, description = "Tenant's current plan, if one is set. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = Option<BusinessPlanJson>),
+        (status = 200, description = "Tenant's current plan, if one is set. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only). Other roles are refused with 403 (`D-27` 8).", body = Option<BusinessPlanJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
@@ -337,6 +342,9 @@ pub async fn get_active_plan_by_uuid(
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<Option<BusinessPlanJson>>> {
     let id = resolve_uuid(&state, &locale, &current_user, uuid).await?;
+    if !can_read_tenant_configuration(&current_user) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue));
+    }
     active_plan(&state, locale, id).await
 }
 

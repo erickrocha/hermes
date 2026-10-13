@@ -17,6 +17,7 @@ use business::domain::authorization::{
     CreationTenant, can_administer_user, can_create_user_with_role, can_read_user_record,
     can_reassign_role,
 };
+use business::commons::tax_id::{TaxIdOutcome, validate_and_normalize};
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::tenant_gateway::TenantGateway;
@@ -108,6 +109,7 @@ pub async fn add(
     domain.password = AccountInviteUseCase::unguessable_secret();
 
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
+    check_person_cpf(&state, &use_case, &locale, None, &mut domain).await?;
     let created = match use_case.create(domain).await {
         Ok(user) => user,
         Err(_) => {
@@ -398,6 +400,7 @@ pub async fn update(
         domain.tenant_id = existing.tenant_id;
     }
 
+    check_person_cpf(&state, &use_case, &locale, Some(id), &mut domain).await?;
     match use_case.update(id, domain).await {
         Ok(user) => Ok(Json(UserMapper::json(user))),
         Err(_) => Err(ExceptionResponse::BadRequest(
@@ -444,4 +447,40 @@ pub async fn change_password(
             ErrorKey::RequiredParameterMissing,
         )),
     }
+}
+
+/// `HRMS-861` (`D-27` 6): the CPF is validated by the tenant country's rule where one exists (`PD-022`),
+/// kept digits-only, and unique within the tenant. `self_id` is the account being edited, if any.
+async fn check_person_cpf(
+    state: &AppState,
+    use_case: &UserUseCase,
+    locale: &Locale,
+    self_id: Option<i64>,
+    domain: &mut User,
+) -> Result<(), ExceptionResponse> {
+    let Some(raw) = domain.cpf.take() else {
+        return Ok(());
+    };
+    let bad = || ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue);
+    let tenant_id = domain.tenant_id.ok_or_else(bad)?;
+    let tenant = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()))
+        .find_by_id(tenant_id)
+        .await
+        .map_err(|_| bad())?;
+    let cpf = match validate_and_normalize(tenant.country_code.as_deref().unwrap_or("BR"), &raw) {
+        TaxIdOutcome::Valid(digits) if digits.len() == 11 => digits,
+        TaxIdOutcome::Valid(_) | TaxIdOutcome::Invalid => return Err(bad()),
+        TaxIdOutcome::Unsupported => raw,
+    };
+    let taken = use_case
+        .find_all_by_tenant_id(tenant_id)
+        .await
+        .map_err(|_| bad())?
+        .iter()
+        .any(|u| u.cpf.as_deref() == Some(cpf.as_str()) && u.id != self_id);
+    if taken {
+        return Err(ExceptionResponse::Conflict(locale.clone(), ErrorKey::DuplicatePersonDocument));
+    }
+    domain.cpf = Some(cpf);
+    Ok(())
 }

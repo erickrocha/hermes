@@ -247,6 +247,10 @@ pub enum ErrorKey {
     AccessProfileNotFound,
     /// `HRMS-851`: the tenant already has a profile of this normalised name.
     DuplicateAccessProfile,
+    /// `HRMS-861`: another person of the tenant already holds this CPF.
+    DuplicatePersonDocument,
+    /// `HRMS-853`/`854`: the caller's access profile does not hold the permission the operation asks for.
+    PermissionNotInProfile,
     /// `HRMS-958`: no such triage, or it belongs to another tenant.
     GarageAttendanceNotFound,
     /// `HRMS-958`: the vehicle already has an active triage.
@@ -371,6 +375,8 @@ impl ErrorKey {
             ErrorKey::AccessProfileForbidden => "AccessProfileForbidden",
             ErrorKey::AccessProfileNotFound => "AccessProfileNotFound",
             ErrorKey::DuplicateAccessProfile => "DuplicateAccessProfile",
+            ErrorKey::DuplicatePersonDocument => "DuplicatePersonDocument",
+            ErrorKey::PermissionNotInProfile => "PermissionNotInProfile",
             ErrorKey::GarageAttendanceNotFound => "GarageAttendanceNotFound",
             ErrorKey::GarageAttendanceAlreadyActive => "GarageAttendanceAlreadyActive",
             ErrorKey::GarageAttendanceClosed => "GarageAttendanceClosed",
@@ -478,6 +484,8 @@ impl ErrorKey {
             ErrorKey::AccessProfileForbidden => "access-profile-forbidden",
             ErrorKey::AccessProfileNotFound => "access-profile-not-found",
             ErrorKey::DuplicateAccessProfile => "duplicate-access-profile",
+            ErrorKey::DuplicatePersonDocument => "duplicate-person-document",
+            ErrorKey::PermissionNotInProfile => "permission-not-in-profile",
             ErrorKey::GarageAttendanceNotFound => "garage-attendance-not-found",
             ErrorKey::GarageAttendanceAlreadyActive => "garage-attendance-already-active",
             ErrorKey::GarageAttendanceClosed => "garage-attendance-closed",
@@ -761,6 +769,8 @@ mod tests {
             ErrorKey::AccessProfileForbidden,
             ErrorKey::AccessProfileNotFound,
             ErrorKey::DuplicateAccessProfile,
+            ErrorKey::DuplicatePersonDocument,
+            ErrorKey::PermissionNotInProfile,
             ErrorKey::GarageAttendanceNotFound,
             ErrorKey::GarageAttendanceAlreadyActive,
             ErrorKey::GarageAttendanceClosed,

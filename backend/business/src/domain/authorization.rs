@@ -73,6 +73,12 @@ pub fn can_record_odometer(actor: &User, vehicle_tenant_id: Option<i64>) -> bool
         || (actor.role == Role::Driver && actor.tenant_id.is_some() && actor.tenant_id == vehicle_tenant_id)
 }
 
+/// `D-27` 8 (`HRMS-857`): the tenant's full record and its configuration (rule and gauge settings) are read by the
+/// tenant owner and the platform administrator alone; everyone else gets the summary the console themes itself from.
+pub fn can_read_tenant_configuration(user: &User) -> bool {
+    is_unbound_sys_admin(user) || (user.role == Role::TenantOwner && user.tenant_id.is_some())
+}
+
 /// `POST /tenant` -- only an unbound platform administrator may create a
 /// tenant (PD-019).
 pub fn can_create_tenant(user: &User) -> bool {
@@ -717,6 +723,8 @@ mod tests {
             enabled: true,
             tenant_id,
             role,
+            cpf: None,
+            principal_function: None,
             created_at: None,
             created_by: None,
             updated_at: None,

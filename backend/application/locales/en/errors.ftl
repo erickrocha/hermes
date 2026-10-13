@@ -118,3 +118,5 @@ not-a-driver = The person named is not an active driver of this company
 access-profile-forbidden = Only the tenant owner may manage access profiles
 access-profile-not-found = Access profile not found
 duplicate-access-profile = This tenant already has an access profile with this name
+permission-not-in-profile = Your access profile does not allow this
+duplicate-person-document = This tenant already has a person with this CPF

@@ -24,6 +24,7 @@ export const login = createAsyncThunk('auth/login', async (credentials: { email:
   try { const body = new URLSearchParams(credentials); const { data } = await api.post('/login', body, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }); return normalizeSession(data) as Session }
   catch (error) { return rejectWithValue(apiMessage(error, 'Invalid credentials')) }
 })
+export const loadPermissions = createAsyncThunk('auth/permissions', async () => (await api.get<{ permissions: string[] }>('/access-profile/mine')).data.permissions)
 export const changePassword = createAsyncThunk('auth/password', async (payload: { currentPassword: string; newPassword: string }, { rejectWithValue }) => {
   try { await api.put('/user/change-password', payload); return true } catch (error) { return rejectWithValue(apiMessage(error, 'Unable to change password')) }
 })
@@ -34,6 +35,7 @@ const authSlice = createSlice({
   extraReducers: (builder) => builder
     .addCase(login.pending, (state) => { state.loading = true; state.error = '' })
     .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
+    .addCase(loadPermissions.fulfilled, (state, action) => { if (state.session) { state.session.permissions = action.payload; localStorage.setItem('hermes.session', JSON.stringify(state.session)) } })
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
 })
 

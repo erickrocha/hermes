@@ -77,6 +77,8 @@
   "active": "Active",
   "inactive": "Inactive",
   "temporaryPassword": "Temporary password",
+  "cpf": "CPF",
+  "principalFunction": "Principal function",
   "inviteNotice": "An invitation email will be sent so this person can set their own password.",
   "global": "Global",
   "planName": "Plan name",

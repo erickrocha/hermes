@@ -81,6 +81,8 @@ impl Mapper<User, UserJson> for UserMapper {
             password: None,
             enabled: user.enabled,
             role: user.role.to_string(),
+            cpf: user.cpf,
+            principal_function: user.principal_function,
             tenant_id: user.tenant_id,
             created_at: user.created_at,
             created_by: user.created_by,
@@ -100,6 +102,8 @@ impl Mapper<User, UserJson> for UserMapper {
             // Endpoints call `reject_unknown_role` first (DEF-XF-06); this
             // default is never reached with an unknown value.
             role: Role::from_str(&u.role).unwrap_or_default(),
+            cpf: optional_text(u.cpf),
+            principal_function: optional_text(u.principal_function),
             tenant_id: u.tenant_id,
             created_at: u.created_at,
             created_by: u.created_by,

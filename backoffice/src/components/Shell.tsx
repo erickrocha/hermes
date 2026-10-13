@@ -4,11 +4,11 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
-import { loadCurrentTenant, logout } from '../store'
+import { loadCurrentTenant, loadPermissions, logout } from '../store'
 import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
-import { canManageProfiles, canManageTenant, canReachAdministration } from '../pages/ManagementPages'
+import { canSeeProfiles, canSeeTenants, canSeeUsers } from '../pages/ManagementPages'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
 
@@ -28,14 +28,15 @@ export function Shell({ children }: { children: ReactNode }) {
   // once the dashboard stopped listing tenants (DEF-BO-07). A SysAdmin has no
   // tenant of their own, so they keep the vendor's default identity.
   useEffect(() => { if (session.tenantUuid) dispatch(loadCurrentTenant(session.tenantUuid)) }, [dispatch, session.tenantUuid])
+  useEffect(() => { dispatch(loadPermissions()) }, [dispatch, session.userId])
   useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
   const links = [
     { to: '/', label: t('dashboard'), icon: Gauge },
-    ...(canManageTenant(session.role) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
+    ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
-    ...(canReachAdministration(session.role) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
-    ...(canManageProfiles(session.role) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
+    ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
+    ...(canSeeProfiles(session) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
     // de planos -- só o SysAdmin desacoplado de tenant administra.
     ...(session.role === 'SysAdmin' ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),

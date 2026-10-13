@@ -37,6 +37,29 @@ pub struct TenantJson {
     pub updated_by: Option<String>,
 }
 
+impl TenantJson {
+    /// `D-27` 8: what every role of the tenant may read -- the name and country the console themes itself from.
+    pub fn summary(self) -> Self {
+        Self {
+            id: self.id,
+            uuid: self.uuid,
+            business_name: self.business_name,
+            company_name: self.company_name,
+            country_code: self.country_code,
+            ..Self::empty()
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            id: None, uuid: None, business_name: None, company_name: None, tax_id: None, email: None, phone: None,
+            website: None, address_line1: None, address_line2: None, locality: None, administrative_area: None,
+            postal_code: None, country_code: None, province: None, city: None, zipcode: None, business_plan_id: None,
+            created_at: None, created_by: None, updated_at: None, updated_by: None,
+        }
+    }
+}
+
 /// Request body for `POST /tenant/{id}/plan` (HRMS-224). Replaces the old
 /// `TenantPlanJson`, which carried a `paymentDate`/`active` pair that no
 /// longer exists — PD-021 keeps no plan history.

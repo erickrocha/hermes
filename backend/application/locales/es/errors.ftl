@@ -118,3 +118,5 @@ not-a-driver = La persona indicada no es un conductor activo de esta empresa
 access-profile-forbidden = Solo el propietario del tenant gestiona los perfiles de acceso
 access-profile-not-found = Perfil de acceso no encontrado
 duplicate-access-profile = Este tenant ya tiene un perfil de acceso con este nombre
+permission-not-in-profile = Su perfil de acceso no permite esto
+duplicate-person-document = Este tenant ya tiene una persona con este CPF

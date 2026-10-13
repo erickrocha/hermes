@@ -16,6 +16,8 @@ pub struct User {
     pub enabled: bool,
     pub tenant_id: Option<i64>,
     pub role: Role,
+    pub cpf: Option<String>,
+    pub principal_function: Option<String>,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -44,6 +46,8 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             role: Set(d.role.to_string()),
             // Owned by `AccessProfileGateway`; an account edit must not clear it.
             profile_id: NotSet,
+            cpf: Set(d.cpf),
+            principal_function: Set(d.principal_function),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -61,6 +65,8 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             enabled: e.enabled,
             tenant_id: e.tenant_id,
             role: Role::from_str(e.role.as_str()).unwrap_or(Role::TenantUser),
+            cpf: e.cpf,
+            principal_function: e.principal_function,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -86,6 +92,8 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                     .take()
                     .and_then(|role| Role::from_str(&role).ok())
                     .unwrap_or(Role::TenantUser),
+                cpf: e.cpf.take().flatten(),
+                principal_function: e.principal_function.take().flatten(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

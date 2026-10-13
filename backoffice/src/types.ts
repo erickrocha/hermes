@@ -12,6 +12,8 @@ export interface Session {
   role: Role
   tenantId?: number | null
   tenantUuid?: string | null
+  // `GET /access-profile/mine`: what the signed-in person may do. Absent until it loads.
+  permissions?: string[]
 }
 
 export interface Tenant {
@@ -50,6 +52,8 @@ export interface User {
   enabled: boolean
   role: Role
   tenantId?: number | null
+  cpf?: string | null
+  principalFunction?: string | null
 }
 export interface Province { id: number; acronym: string; name: string; countryCode: string }
 export interface City { id: number; provinceId: number; name: string }

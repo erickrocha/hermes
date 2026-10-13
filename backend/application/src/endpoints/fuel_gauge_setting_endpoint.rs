@@ -8,7 +8,7 @@ use crate::endpoints::json::fuel_gauge_setting_json::FuelGaugeSettingJson;
 use crate::endpoints::json::internal_tank_json::InternalTankQuery;
 use axum::Json;
 use axum::extract::{Extension, Query, State};
-use business::domain::authorization::can_configure_fuel_gauge;
+use business::domain::authorization::{can_configure_fuel_gauge, can_read_tenant_configuration};
 use business::domain::fuel_gauge_setting::FuelGaugeSetting;
 use business::domain::user::User;
 use business::gateway::fuel_gauge_setting_gateway::FuelGaugeSettingGateway;
@@ -87,8 +87,9 @@ pub async fn configure(
     path = "/fuel-gauge-settings",
     params(InternalTankQuery),
     responses(
-        (status = 200, description = "The caller's own tenant's tank-gauge thresholds, or the platform defaults (no `uuid`) while it has set none. `tenantId` names the tenant for an unbound `SysAdmin`. **Roles:** any authenticated role; own tenant only.", body = FuelGaugeSettingJson),
+        (status = 200, description = "The caller's own tenant's tank-gauge thresholds, or the platform defaults (no `uuid`) while it has set none. `tenantId` names the tenant for an unbound `SysAdmin`. **Roles:** SysAdmin, TenantOwner (own tenant only). Other roles are refused with 403 (`D-27` 8).", body = FuelGaugeSettingJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -99,6 +100,9 @@ pub async fn get_current(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<FuelGaugeSettingJson>> {
+    if !can_read_tenant_configuration(&current_user) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
+    }
     let target = current_user.tenant_id.or(query.tenant_id);
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),

@@ -114,6 +114,8 @@ fn user_model() -> user_entity::Model {
         tenant_id: Some(42),
         role: "TenantOwner".into(),
         profile_id: None,
+        cpf: Some("52998224725".into()),
+        principal_function: Some("Driver".into()),
         created_at: at(),
         created_by: Some("admin".into()),
         updated_at: at(),
@@ -129,6 +131,7 @@ fn user_from_model_carries_every_field() {
     assert_eq!(user.email, "owner@example.com");
     assert_eq!(user.role, Role::TenantOwner);
     assert_eq!(user.tenant_id, Some(42));
+    assert_eq!(user.cpf.as_deref(), Some("52998224725"));
     assert_eq!(user.created_at, Some(at().naive_utc()));
     assert_eq!(user.updated_by.as_deref(), Some("admin"));
 }

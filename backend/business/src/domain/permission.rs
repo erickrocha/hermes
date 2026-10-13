@@ -132,6 +132,10 @@ pub const OWNER_ONLY: &[&str] = &[
     "fuel-gauge-settings.read",
     "fuel-gauge-settings.update",
     "internal-tank.update",
+    "profile.assign",
+    "profile.create",
+    "profile.read",
+    "profile.update",
     "tenant-rule-settings.read",
     "tenant-rule-settings.update",
     "tenant.plan",
@@ -142,6 +146,21 @@ pub const OWNER_ONLY: &[&str] = &[
     "user.update",
 ];
 
+/// The platform administrator's alone; never in a profile.
+pub const PLATFORM: &[&str] = &[
+    "business-plan.create",
+    "business-plan.delete",
+    "business-plan.read",
+    "business-plan.update",
+    "reference-data.city.create",
+    "reference-data.city.import",
+    "reference-data.province.create",
+    "reference-data.province.import",
+    "reference-data.province.manage-read",
+    "tenant.create",
+    "vehicle-presence.publish",
+];
+
 pub const BASELINE: &[&str] = &[
     "reference-data.city.read",
     "reference-data.country.read",
@@ -149,6 +168,15 @@ pub const BASELINE: &[&str] = &[
     "user.change-own-password",
     "user.read-own",
 ];
+
+/// The permission an operation asks for (`HRMS-856`), by HTTP method and route template; `None` for the
+/// public operations and any route not in the table.
+pub fn for_operation(method: &str, path: &str) -> Option<&'static str> {
+    crate::domain::operation_permission::OPERATIONS
+        .iter()
+        .find(|(m, p, _)| *m == method && *p == path)
+        .map(|(_, _, code)| *code)
+}
 
 pub fn find(code: &str) -> Option<&'static Permission> {
     GRANTABLE.iter().find(|p| p.code == code)
@@ -185,6 +213,19 @@ mod tests {
             assert!(seen.insert(p.code), "duplicate {}", p.code);
             assert!(!OWNER_ONLY.contains(&p.code) && !BASELINE.contains(&p.code), "{}", p.code);
         }
+    }
+
+    #[test]
+    fn every_operation_asks_for_a_catalogue_permission() {
+        use crate::domain::operation_permission::OPERATIONS;
+        for (m, p, code) in OPERATIONS {
+            let known = find(code).is_some()
+                || OWNER_ONLY.contains(code)
+                || BASELINE.contains(code)
+                || PLATFORM.contains(code);
+            assert!(known, "{m} {p} asks for unknown permission {code}");
+        }
+        assert_eq!(for_operation("PUT", "/tenant/uuid/{uuid}").or(for_operation("PUT", "/tenant")), Some("tenant.update"));
     }
 
     #[test]

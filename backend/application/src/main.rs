@@ -472,6 +472,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/technical-inspection", technical_inspection_routes(state.clone()))
         .nest("/inspection-model", inspection_model_routes(state.clone()))
         .nest("/internal-tank", internal_tank_routes(state.clone()))
+        .layer(axum::middleware::from_fn(commons::permission_hint::name_missing_permission))
         .layer(cors)
         .with_state(state);
 

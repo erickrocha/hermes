@@ -16,6 +16,10 @@ pub struct UserJson {
     pub enabled: bool,
     #[serde(default)]
     pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpf: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_function: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

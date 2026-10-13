@@ -983,10 +983,10 @@ def fu054(fx):
              "share 0": gauge_settings(oc, setAsideRatio=0)[0], "share above 1": gauge_settings(oc, largeFuellingRatio=1.2)[0]}
     untouched = http("GET", "/tenant-rule-settings", token=oc)[1] == snap_r and http("GET", "/fuel-gauge-settings", token=oc)[1] == snap_g
     check("FU-054", rules_ok and gauge_ok and s1 == 200 and s2 == 200 and one_row and isolated and g1 == 200 and g2 == 200 and g_one and g_iso
-          and all(x == (200, 403, 200, 403) for x in roles.values()) and sysadmin == 200
+          and all(x == (403, 403, 403, 403) for x in roles.values()) and sysadmin == 200
           and all(c in (400, 422) for c in bad_r.values()) and all(c in (400, 422) for c in bad_g.values()) and untouched,
           "a tenant with no setting reads the documented defaults (no uuid) for both the rule thresholds and the gauge; the owner sets either and a second "
-          "PUT updates the same single row; other tenants are unchanged; a mechanic, tenant user and driver read but get 403 setting; a SysAdmin naming "
+          "PUT updates the same single row; other tenants are unchanged; a mechanic, tenant user and driver get 403 reading and setting (D-27 8: the configuration is the owner's); a SysAdmin naming "
           "the tenant can set; invalid values (non-positive distance, window or count, a share above 1, a km/l floor above the ceiling, a margin below 1, "
           "a negative floor, a share of 0 or above 1) are refused and leave the settings unchanged",
           f"defaults rules={rules_ok} gauge={gauge_ok}; set {s1}/{s2} one_row={one_row} isolated={isolated}; gauge {g1}/{g2} one={g_one} iso={g_iso}; roles {roles}; "

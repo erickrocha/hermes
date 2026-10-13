@@ -3,17 +3,18 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
+import type { Session } from './types'
 import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
-import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canManageProfiles, canManageTenant, canReachAdministration } from './pages/ManagementPages'
+import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canSeeProfiles, canSeeTenants, canSeeUsers } from './pages/ManagementPages'
 import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
 import { SettingsPage } from './pages/SettingsPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
-function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (role: string) => boolean }) {
+function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
   const location = useLocation()
   if (!session) return <Navigate to="/login" replace />
@@ -21,7 +22,7 @@ function Protected({ children, sysAdmin = false, allow }: { children: ReactNode;
   // DEF-BO-04: a role check that only lives in the page's action bar is a
   // suggestion -- the URL is still reachable by hand. The guard and the
   // button share one predicate so they cannot disagree.
-  if (allow && !allow(session.role)) return <Navigate to="/" replace />
+  if (allow && !allow(session)) return <Navigate to="/" replace />
   // U-1: keyed by route so navigating away from a page that threw clears the
   // failure instead of stranding the operator on the error card.
   return <Shell><ErrorBoundary key={location.pathname}>{children}</ErrorBoundary></Shell>
@@ -40,19 +41,19 @@ export default function App() {
     <Route path="/accept-invite" element={<AcceptInvitePage />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
-    <Route path="/tenants" element={<Protected allow={canManageTenant}><TenantsPage /></Protected>} />
+    <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:uuid/edit" element={<Protected allow={canManageTenant}><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/edit" element={<Protected allow={canSeeTenants}><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/plans/:uuid/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
-    <Route path="/profiles" element={<Protected allow={canManageProfiles}><ProfilesPage /></Protected>} />
-    <Route path="/profiles/new" element={<Protected allow={canManageProfiles}><ProfileEditorPage /></Protected>} />
-    <Route path="/profiles/:uuid/edit" element={<Protected allow={canManageProfiles}><ProfileEditorPage /></Protected>} />
-    <Route path="/users" element={<Protected allow={canReachAdministration}><UsersPage /></Protected>} />
-    <Route path="/users/new" element={<Protected allow={canCreateUsers}><UserEditorPage /></Protected>} />
-    <Route path="/users/:uuid/edit" element={<Protected allow={canReachAdministration}><UserEditorPage /></Protected>} />
+    <Route path="/profiles" element={<Protected allow={canSeeProfiles}><ProfilesPage /></Protected>} />
+    <Route path="/profiles/new" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/profiles/:uuid/edit" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/users" element={<Protected allow={canSeeUsers}><UsersPage /></Protected>} />
+    <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
+    <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>

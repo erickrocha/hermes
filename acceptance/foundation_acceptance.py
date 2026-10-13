@@ -804,7 +804,18 @@ def doc_scenarios():
     # from a later restore to the original (DEF-XF-07 restored two files).
     # The single documented exception is a migration that could never be applied
     # anywhere, so no database has it recorded (see m20260918_000003's header).
-    never_applicable = {"m20260917_000001_tenant_business_plan_fk.rs"}
+    # The six below are the same case, checked 2026-10-13: as first written they declared `vehicle_id`,
+    # `work_order_id`, `work_order_item_id` and `purchase_order_id` as BIGINT against INTEGER keys, which MariaDB
+    # refuses on a fresh database (1005, errno 150 "Foreign key constraint is incorrectly formed"). They could never
+    # be applied as first written, so no database records that form; the committed `integer` columns are the first
+    # version that ever ran. Restoring the original would break every new deployment.
+    never_applicable = {"m20260917_000001_tenant_business_plan_fk.rs",
+                        "m20260927_000001_create_purchase_order_table.rs",
+                        "m20260927_000002_link_purchase_order_and_work_order_item.rs",
+                        "m20260929_000001_create_vehicle_expense_table.rs",
+                        "m20260929_000002_create_work_order_posting_table.rs",
+                        "m20260929_000003_create_fuel_entry_table.rs",
+                        "m20260929_000006_create_preventive_plan_table.rs"}
     # A fix to `down()` alone changes no applied schema (a database records only what
     # `up()` did). DEF-FO: m20260921's rollback dropped `uq_vehicle_tenant_plate` before the
     # table, which MariaDB refuses (1553, the index backs the tenant foreign key). Its `up()`
@@ -834,7 +845,7 @@ def doc_scenarios():
     missing = sorted({os.path.basename(p) for p in ever_existed
                       if re.match(r"m\d{8}_", os.path.basename(p)) and not os.path.exists(os.path.join(src, os.path.basename(p)))})
     check("XF-047", not edited and not missing,
-          "every migration matches its first commit (one documented never-applicable exception) and none is missing",
+          "every migration matches its first commit (documented never-applicable exceptions) and none is missing",
           f"migrations changed since first commit: {edited}; migrations removed: {missing}")
 
 

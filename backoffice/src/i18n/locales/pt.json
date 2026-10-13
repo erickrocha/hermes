@@ -77,6 +77,8 @@
   "active": "Ativo",
   "inactive": "Inativo",
   "temporaryPassword": "Senha temporária",
+  "cpf": "CPF",
+  "principalFunction": "Função principal",
   "inviteNotice": "Um e-mail de convite será enviado para que a pessoa defina a própria senha.",
   "global": "Global",
   "planName": "Nome do plano",

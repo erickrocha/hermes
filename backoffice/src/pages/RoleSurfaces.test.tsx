@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { configureStore } from '@reduxjs/toolkit'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -67,6 +67,29 @@ describe('role-appropriate surfaces (DEF-BO-09, HRMS-414)', () => {
     const menu = within(container.querySelector('.sidebar nav') as HTMLElement)
     expect(menu.queryByRole('link', { name: /plans|planos/i })).not.toBeInTheDocument()
     expect(menu.queryByRole('link', { name: /system settings|configurações do sistema/i })).not.toBeInTheDocument()
+  })
+
+  // C-032 AC-06-S03 (HRMS-864): once the permissions are known the menu follows them, not the role.
+  it('offers Users and Profiles to whoever holds the administration permissions, and hides them from whoever does not', () => {
+    const menuOf = (who: Session) => within(renderAt('/', who).container.querySelector('.sidebar nav') as HTMLElement)
+    const withOwnerPermissions = menuOf({ ...owner, permissions: ['user.create', 'profile.read', 'tenant.update'] })
+    expect(withOwnerPermissions.getByRole('link', { name: /users|usuários/i })).toBeInTheDocument()
+    expect(withOwnerPermissions.getByRole('link', { name: /profiles|perfis/i })).toBeInTheDocument()
+    cleanup()
+    const tenantUser = menuOf({ ...member, permissions: ['vehicle.read'] })
+    expect(tenantUser.queryByRole('link', { name: /users|usuários/i })).not.toBeInTheDocument()
+    expect(tenantUser.queryByRole('link', { name: /profiles|perfis/i })).not.toBeInTheDocument()
+  })
+
+  it('sends a person to the landing page when the route needs a permission they lack', () => {
+    renderAt('/users', { ...member, permissions: ['vehicle.read'] })
+    expect(screen.queryByRole('heading', { name: /^users$|^usuários$/i })).not.toBeInTheDocument()
+  })
+
+  it('lets the owner enter the CPF and the principal function on the user form', () => {
+    renderAt('/users/new', { ...owner, permissions: ['user.create'] })
+    expect(screen.getByLabelText('CPF')).toBeInTheDocument()
+    expect(screen.getByLabelText(/principal function|função principal/i)).toBeInTheDocument()
   })
 
   it('shows the plan count card only to a SysAdmin', () => {

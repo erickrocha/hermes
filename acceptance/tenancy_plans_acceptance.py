@@ -709,7 +709,8 @@ def epic_04(fx):
         got.append((who, s, (p or {}).get("name") if isinstance(p, dict) else p,
                     (p or {}).get("priceInCents") if isinstance(p, dict) else None))
     sB, _ = http("GET", f"/tenant/uuid/{B['uuid']}/plan", token=fx.ownerA["token"])
-    check("TP-065", all(g[1] == 200 and g[2] == p1["name"] and g[3] == p1["priceInCents"] for g in got) and sB == 404,
+    # D-27 8 (2026-10-13): the plan is tenant configuration -- the owner reads it, a tenant user is refused.
+    check("TP-065", got[0][1] == 200 and got[0][2] == p1["name"] and got[0][3] == p1["priceInCents"] and got[1][1] == 403 and sB == 404,
           f"own plan visible: {got}; tenant B's plan -> {sB}", f"{got}; B -> {sB}")
 
     s, _ = http("POST", f"/tenant/uuid/{A['uuid']}/plan", body={"businessPlanId": p2["id"]}, token=adm)

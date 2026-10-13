@@ -1,10 +1,13 @@
 use crate::AppState;
 use crate::commons::exception_response::ExceptionResponse;
 use crate::commons::i18n::{ErrorKey, Locale};
-use axum::extract::State;
+use axum::extract::{MatchedPath, State};
 use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
 use business::domain::authorization::{is_unbound_sys_admin, lacks_required_tenant};
+use business::domain::permission;
+use business::gateway::access_profile_gateway::AccessProfileGateway;
+use business::use_cases::access_profile_use_case::AccessProfileUseCase;
 use business::gateway::user_gateway::UserGateway;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 
@@ -63,6 +66,26 @@ pub async fn authentication(
         tenant_id: current_user.tenant_id,
         enforce_tenant: !is_unbound_sys_admin(&current_user),
     };
+
+    // `HRMS-853` (`AC-02-S02`): a user who holds an access profile is held to it -- the operation's permission
+    // must be in the profile. A user with no profile is untouched (the role's own checks answer, `IA-100`),
+    // and an operation whose permission is owner-only, platform or unlisted is left to those checks too.
+    if permission::takes_profile(&current_user.role)
+        && let Some(path) = req.extensions().get::<MatchedPath>()
+        && let Some(code) = permission::for_operation(req.method().as_str(), path.as_str())
+        && permission::find(code).is_some()
+    {
+        // Under the caller's own tenant scope: the profile is tenant-owned and unreadable without one.
+        let effective = entity::audit::run_with_user(
+            Some(audit_user.clone()),
+            AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone())).effective(&current_user),
+        )
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?;
+        if effective.profile_uuid.is_some() && !effective.permissions.iter().any(|c| c == code) {
+            return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PermissionNotInProfile));
+        }
+    }
 
     req.extensions_mut().insert(current_user);
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
