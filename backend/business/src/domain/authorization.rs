@@ -49,13 +49,28 @@ pub fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
     user.tenant_id == Some(tenant_id) || is_unbound_sys_admin(user)
 }
 
-/// `PUT /tenant/uuid/{uuid}` -- editing the tenant's own record. `D-22`: a
-/// driver and a mechanic never reach tenant administration, so they are
-/// refused even inside their own tenant. Whether a plain `TenantUser` may
-/// edit it is an open owner question (`tenancy_plans_acceptance.py`,
-/// `tenant_user_put_own_tenant`), deliberately left as it was.
+/// `PUT /tenant/uuid/{uuid}` -- editing the tenant's own record is the tenant
+/// owner's alone (`D-27` 4, 8; `C-032`). A tenant user, a driver and a mechanic
+/// are refused even inside their own tenant. (Before `D-27` a plain `TenantUser`
+/// could edit it -- the open owner question the tenancy suite carried.)
 pub fn can_update_tenant(user: &User, tenant_id: i64) -> bool {
-    can_access_tenant(user, tenant_id) && !matches!(user.role, Role::Driver | Role::Mechanic)
+    is_unbound_sys_admin(user) || (user.role == Role::TenantOwner && user.tenant_id == Some(tenant_id))
+}
+
+/// `C-032` (`HRMS-855`, `D-27` 3, 8): profiles and who holds them belong to the tenant owner of the
+/// tenant, or to the platform administrator naming a tenant. Never to any profile.
+pub fn can_manage_access_profiles(actor: &User, tenant_id: Option<i64>) -> bool {
+    if is_unbound_sys_admin(actor) {
+        return tenant_id.is_some();
+    }
+    actor.role == Role::TenantOwner && actor.tenant_id.is_some() && (tenant_id.is_none() || tenant_id == actor.tenant_id)
+}
+
+/// `C-032` (`HRMS-860`): recording the odometer of a vehicle -- the administrator's, and the driver's on their
+/// own vehicle (reached only through `find_visible`, which scopes a driver to their assignment).
+pub fn can_record_odometer(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
+    can_administer_vehicle(actor, vehicle_tenant_id)
+        || (actor.role == Role::Driver && actor.tenant_id.is_some() && actor.tenant_id == vehicle_tenant_id)
 }
 
 /// `POST /tenant` -- only an unbound platform administrator may create a
@@ -376,7 +391,9 @@ pub fn can_create_checklist_run(actor: &User, target_tenant_id: Option<i64>) -> 
     if is_unbound_sys_admin(actor) {
         return target_tenant_id.is_some();
     }
-    actor.role == Role::TenantOwner
+    // `C-032` (`D-27` 5): submitting the checklist is the driver's central act -- on their own vehicle and as
+    // themselves, which the handler enforces.
+    matches!(actor.role, Role::TenantOwner | Role::Driver)
         && actor.tenant_id.is_some()
         && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
 }
@@ -725,6 +742,7 @@ mod tests {
         assert!(can_update_tenant(&user(Role::SysAdmin, None), 1));
         assert!(can_update_tenant(&user(Role::TenantOwner, Some(1)), 1));
         assert!(!can_update_tenant(&user(Role::TenantOwner, Some(2)), 1));
+        assert!(!can_update_tenant(&user(Role::TenantUser, Some(1)), 1));
         assert!(!can_update_tenant(&user(Role::Driver, Some(1)), 1));
         assert!(!can_update_tenant(&user(Role::Mechanic, Some(1)), 1));
     }
@@ -1372,5 +1390,15 @@ mod tests {
         let member_1 = user(Role::TenantUser, Some(1));
         assert!(can_read_preventive_plan(&member_1, Some(1)));
         assert!(!can_read_preventive_plan(&member_1, Some(2)));
+    }
+
+    #[test]
+    fn a_driver_submits_checklists_and_records_the_odometer_but_administers_nothing() {
+        let driver = user(Role::Driver, Some(1));
+        assert!(can_create_checklist_run(&driver, Some(1)) && !can_create_checklist_run(&driver, Some(2)));
+        assert!(can_record_odometer(&driver, Some(1)) && !can_record_odometer(&driver, Some(2)));
+        assert!(!can_administer_vehicle(&driver, Some(1)) && !can_create_vehicle(&driver, Some(1)));
+        let mechanic = user(Role::Mechanic, Some(1));
+        assert!(!can_create_checklist_run(&mechanic, Some(1)) && !can_record_odometer(&mechanic, Some(1)));
     }
 }

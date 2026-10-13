@@ -8,7 +8,8 @@ import { Shell } from './components/Shell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
-import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canReachAdministration } from './pages/ManagementPages'
+import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canManageProfiles, canManageTenant, canReachAdministration } from './pages/ManagementPages'
+import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
 import { SettingsPage } from './pages/SettingsPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
@@ -39,13 +40,16 @@ export default function App() {
     <Route path="/accept-invite" element={<AcceptInvitePage />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
-    <Route path="/tenants" element={<Protected allow={canReachAdministration}><TenantsPage /></Protected>} />
+    <Route path="/tenants" element={<Protected allow={canManageTenant}><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:uuid/edit" element={<Protected allow={canReachAdministration}><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/edit" element={<Protected allow={canManageTenant}><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
     <Route path="/plans/:uuid/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
+    <Route path="/profiles" element={<Protected allow={canManageProfiles}><ProfilesPage /></Protected>} />
+    <Route path="/profiles/new" element={<Protected allow={canManageProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/profiles/:uuid/edit" element={<Protected allow={canManageProfiles}><ProfileEditorPage /></Protected>} />
     <Route path="/users" element={<Protected allow={canReachAdministration}><UsersPage /></Protected>} />
     <Route path="/users/new" element={<Protected allow={canCreateUsers}><UserEditorPage /></Protected>} />
     <Route path="/users/:uuid/edit" element={<Protected allow={canReachAdministration}><UserEditorPage /></Protected>} />

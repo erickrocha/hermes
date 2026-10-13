@@ -1051,6 +1051,11 @@ def operational_roles(fx):
     # Fixtures for the capability matrix: a vehicle in each tenant, and a plan to aim at
     vA = _vehicle(A["token"], "QAIA9A01")
     vB = _vehicle(B["token"], "QAIA9B01")
+    # C-032 (`D-27` 5): a driver reaches only the vehicle assigned to them -- each driver is given their tenant's vehicle
+    for owner_, veh, drv in ((A, vA, created["Driver"][1]), (B, vB, created["Driver-B"][1])):
+        s_asg, p_asg = http("POST", f"/vehicle/uuid/{veh['uuid']}/assignment", token=owner_["token"], body={"driverUuid": drv["uuid"]})
+        if s_asg != 201:
+            raise RuntimeError(f"assigning {drv.get('email')} to {veh['plate']} -> {s_asg} {p_asg}")
     s_bp, bp = http("POST", "/business-plan", token=adm["token"], body={
         "name": f"{TAG}-plan-op", "priceInCents": 1000, "availableUsers": 5, "periodDays": 30, "paymentDate": "2026-10-01"})
     plan_id = bp.get("id") if isinstance(bp, dict) else 0

@@ -877,7 +877,7 @@ def pm061(fx):
     unchanged = n_rows("technical_inspection") == n_ins
     cross = http("GET", f"/technical-inspection/uuid/{r1.get('uuid')}", token=ob)
     unknown = http("GET", f"/technical-inspection/uuid/{NIL_UUID}", token=ob)
-    check("PM-061", no_work and gen and disch and all(c in (400, 404) for c in bad.values()) and all(c == 403 for c in members.values()) and unchanged
+    check("PM-061", no_work and gen and disch and all(c in (400, 404) for c in bad.values()) and all(c == (404 if who == "driver" else 403) for who, c in members.items()) and unchanged
           and cross[0] == 404 and cross[1] == unknown[1],
           "a model that does not generate work opens and links nothing; an unknown model opens an order as if generating; the pending alerts naming the "
           "inspected model are discharged and those naming another model stay; an unknown vehicle, one of B, no answers and a blank description are "

@@ -1192,7 +1192,8 @@ def fo3(fx):
     sa_assign = asg("POST", vB, adm, fx.dB["uuid"])
     sa_read = asg("GET", vB, adm)[0]
     sa_end = asg("PUT", vB, adm, suffix="assignment/end")[0]
-    roles_ok = all(m == {"GET current": 200, "GET history": 200, "POST assign": 403, "PUT end": 403} for m in matrix.values())
+    # C-032: a driver reaches only the vehicle assigned to them (vA1); another vehicle (vA3) is 404, not 403
+    roles_ok = all(m == {"GET current": 200, "GET history": 200, "POST assign": 404 if who == "Driver" else 403, "PUT end": 403} for who, m in matrix.items())
     paths = fx.openapi.get("paths", {})
     want = {("/vehicle/uuid/{uuid}/assignment", "post"): ("201", "400", "404", "409"),
             ("/vehicle/uuid/{uuid}/assignment", "get"): ("200", "404"),

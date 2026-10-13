@@ -65,6 +65,7 @@ mod m20260930_000008_create_fuel_gauge_setting;
 mod m20260930_000009_create_tenant_rule_setting;
 mod m20260930_000010_add_reference_consumption;
 mod m20260930_000011_create_garage_service_model;
+mod m20261010_000001_create_access_profile;
 mod m20260930_000012_create_garage_attendance_tables;
 mod m20260930_000013_create_vehicle_presence_event;
 mod m20260930_000014_add_garage_validity_settings;
@@ -157,6 +158,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260930_000020_add_garage_fuelling_freshness::Migration),
             Box::new(m20260930_000021_add_garage_utc_offset::Migration),
             Box::new(m20261002_000001_add_garage_service_applicability::Migration),
+            Box::new(m20261010_000001_create_access_profile::Migration),
         ]
     }
 }

@@ -136,6 +136,7 @@ fn user_row(
         password: password.into(),
         enabled: true,
         blocked_reason: None,
+        profile_id: None,
         tenant_id,
         role: role.into(),
         created_at: at(),

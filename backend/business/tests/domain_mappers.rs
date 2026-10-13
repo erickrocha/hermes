@@ -113,6 +113,7 @@ fn user_model() -> user_entity::Model {
         blocked_reason: Some("billing".into()),
         tenant_id: Some(42),
         role: "TenantOwner".into(),
+        profile_id: None,
         created_at: at(),
         created_by: Some("admin".into()),
         updated_at: at(),

@@ -101,7 +101,7 @@ async function step(sid, fn, page) {
     const badges = await owner.$$eval('td .badge.blue', (b) => b.map((x) => x.textContent))
     const rows = await owner.$$eval('tbody tr', (r) => r.length)
     await shot(owner, 'BO-010-owner-users-page1')
-    rec('BO-010', badges.includes('TenantUser') && badges.every((b) => ['TenantUser', 'TenantOwner'].includes(b)),
+    rec('BO-010', badges.includes('Tenant user') && badges.every((b) => ['Tenant user', 'Tenant owner'].includes(b)),
       `owner's user list shows role badges ${[...new Set(badges)].join('/')} (${rows} rows)`)
     rec('BO-060', /1\D+25\D+29/.test(range) && /1\D+2/.test(range) && rows === 25, `pager text "${range.replace(/\s+/g, ' ').trim()}", ${rows} rows`)
     await owner.click('button[aria-label]:has(svg.lucide-chevron-right)')
@@ -156,13 +156,16 @@ async function step(sid, fn, page) {
     await owner.goto(`${BASE}/users/new`)
     await owner.waitForSelector('form')
     const labels = await owner.$$eval('form label', (l) => l.map((x) => x.textContent.trim()))
+    // EPIC-BO-07-S01 (C-016): a tenant owner now picks the role of the account they create
+    // (Tenant user / Driver / Mechanic); what must still be absent is the tenant picker (HRMS-405).
     const hasRolePicker = labels.some((l) => /^Role/.test(l))
+    const hasTenantPicker = labels.some((l) => /^Tenant$/.test(l))
     await owner.fill('form input[type=email]', 'qa-bo-ui-user@hermes.test')
     await owner.fill('form label:first-child input', 'qa-bo ui user')
     await shot(owner, 'BO-012-owner-new-user-form')
     await owner.click('form .form-actions button.btn.primary')
     await owner.waitForURL(/\/users$/, { timeout: 10000 })
-    rec('BO-012', !hasRolePicker, `TM owner's new-user form: role/tenant picker shown=${hasRolePicker}; saved and returned to /users`)
+    rec('BO-012', hasRolePicker && !hasTenantPicker, `TM owner's new-user form: tenant picker shown=${hasTenantPicker}, role picker (operational roles, BO-07) shown=${hasRolePicker}; saved and returned to /users`)
     fx.uiUser = 'qa-bo-ui-user@hermes.test'
   }, owner)
 
@@ -224,7 +227,7 @@ async function step(sid, fn, page) {
     await admin.waitForTimeout(300)
     const opts = await admin.$$eval('.combobox-menu button', (b) => b.map((x) => x.textContent.trim()))
     await shot(admin, 'BO-012-sysadmin-role-options')
-    rec('BO-012', opts.length > 0 && !opts.includes('TenantUser') && opts.every((o) => ['TenantOwner', 'SysAdmin'].includes(o)),
+    rec('BO-012', opts.length > 0 && opts.every((o) => ['Tenant owner', 'Platform administrator'].includes(o)),
       `SysAdmin role options=[${opts.join(', ')}]`)
     await admin.keyboard.press('Escape')
   }, admin)
@@ -416,6 +419,106 @@ async function step(sid, fn, page) {
       seen.map((s) => `${s.locale}: login="${s.title}", nav=${s.nav}, Accept-Language=${s.header}, toggle shows "${s.toggle}"/"${s.langButton}"`).join(' || '))
     rec('BO-042', /ES/i.test(es.langButton), `language switcher offers en/pt only: an es-ES user sees the button labelled "${es.langButton}", one click switches to pt-BR, and Spanish cannot be chosen back from the UI`)
   })
+
+  // EPIC-BO-07 (C-016, HRMS-415..417): the operational roles in the console, in tenant ACME
+  // (kept apart from TM so the pagination counts above are untouched).
+  const acmeOwner = await newPage(browser)
+  await step('BO-070', async () => {
+    await login(acmeOwner, fx.ownerAcme, fx.password)
+    await acmeOwner.goto(`${BASE}/users/new`); await acmeOwner.waitForSelector('form')
+    const labels = await acmeOwner.$$eval('form label', (l) => l.map((x) => x.textContent.trim()))
+    await acmeOwner.click('form label:has-text("Role") .combobox-control')
+    await acmeOwner.waitForTimeout(300)
+    const opts = await acmeOwner.$$eval('.combobox-menu button', (b) => b.map((x) => x.textContent.trim()))
+    await shot(acmeOwner, 'BO-070-owner-role-options')
+    await acmeOwner.click('.combobox-menu button:has-text("Driver")')
+    await acmeOwner.fill('form input[type=email]', 'qa-bo-ui-driver@hermes.test')
+    await acmeOwner.fill('form label:first-child input', 'qa-bo ui driver')
+    await acmeOwner.click('form .form-actions button.btn.primary')
+    await acmeOwner.waitForURL(/\/users$/, { timeout: 10000 })
+    await acmeOwner.waitForSelector('tbody tr', { timeout: 10000 })
+    await acmeOwner.waitForTimeout(800)
+    const rowText = await acmeOwner.$$eval('tbody tr', (r) => r.map((x) => x.textContent))
+    const mine = rowText.find((t) => t.includes('qa-bo-ui-driver')) || ''
+    await shot(acmeOwner, 'BO-070-owner-users-with-driver')
+    const adm = await (await fetch(`${API}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email: fx.admin, password: fx.adminPassword }) })).json()
+    const list = await (await fetch(`${API}/user?page=0&pageSize=200&search=qa-bo-ui-driver`, { headers: { authorization: `Bearer ${adm.accessToken}` } })).json()
+    const stored = (list.items || []).find((u) => u.email === 'qa-bo-ui-driver@hermes.test')
+    fx.uiDriverUuid = stored && stored.uuid
+    rec('BO-070', !labels.some((l) => /^Tenant$/.test(l)) && JSON.stringify(opts) === JSON.stringify(['Tenant user', 'Driver', 'Mechanic'])
+        && /Driver/.test(mine) && stored && stored.role === 'Driver' && String(stored.tenantId) === String(fx.tenants.acme.id),
+      `owner role options=[${opts.join(', ')}], no tenant picker; created a Driver through the form; list row shows "${mine.replace(/\s+/g, ' ').slice(0, 80)}"; API stored role=${stored && stored.role} tenant=${stored && stored.tenantId}`)
+  }, acmeOwner)
+
+  await step('BO-071', async () => {
+    await acmeOwner.goto(`${BASE}/users/${fx.uiDriverUuid}/edit`); await acmeOwner.waitForSelector('form')
+    await acmeOwner.waitForTimeout(600)
+    await acmeOwner.fill('form label:first-child input', 'qa-bo ui driver renamed')
+    await shot(acmeOwner, 'BO-071-edit-driver')
+    await acmeOwner.click('form .form-actions button.btn.primary')
+    await acmeOwner.waitForURL(/\/users$/, { timeout: 10000 })
+    const adm = await (await fetch(`${API}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email: fx.admin, password: fx.adminPassword }) })).json()
+    const list = await (await fetch(`${API}/user?page=0&pageSize=200&search=qa-bo-ui-driver`, { headers: { authorization: `Bearer ${adm.accessToken}` } })).json()
+    const stored = (list.items || []).find((u) => u.email === 'qa-bo-ui-driver@hermes.test')
+    rec('BO-071', stored && stored.name === 'qa-bo ui driver renamed' && stored.role === 'Driver',
+      `edited the driver through the console: name="${stored && stored.name}", role still ${stored && stored.role}`)
+  }, acmeOwner)
+
+
+  // C-032 (HRMS-862/863): the owner defines a profile and gives it to the mechanic, from the console.
+  const apiLogin = async (email, password) => (await (await fetch(`${API}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email, password }) })).json()).accessToken
+  await step('BO-075', async () => {
+    await acmeOwner.goto(`${BASE}/profiles/new`); await acmeOwner.waitForSelector('fieldset.permission-group')
+    await acmeOwner.fill('form label:first-child input', 'qa-bo Oficina')
+    await acmeOwner.click('button:has-text("Start from the role")')
+    const groupsShown = await acmeOwner.$$eval('fieldset.permission-group legend', (l) => l.map((x) => x.textContent))
+    const box = acmeOwner.locator('label.checkbox:has-text("purchase-order.create") input')
+    const hadPurchasing = await box.isChecked()
+    if (hadPurchasing) await box.uncheck()
+    await shot(acmeOwner, 'BO-075-profile-editor')
+    await acmeOwner.click('form .form-actions button.btn.primary')
+    await acmeOwner.waitForURL(/\/profiles$/, { timeout: 10000 })
+    await acmeOwner.waitForSelector('tbody tr')
+    const tok = await apiLogin(fx.ownerAcme, fx.password)
+    const list = await (await fetch(`${API}/access-profile?page=0&pageSize=50`, { headers: { authorization: `Bearer ${tok}` } })).json()
+    const p = (list.items || []).find((x) => x.name === 'qa-bo Oficina')
+    fx.uiProfile = p && p.uuid
+    await shot(acmeOwner, 'BO-075-profiles-list')
+    rec('BO-075', groupsShown.length >= 5 && hadPurchasing && p && p.baseRole === 'Mechanic' && p.permissions.includes('work-order.create') && !p.permissions.includes('purchase-order.create'),
+      `editor shows ${groupsShown.length} module groups; started from the Mechanic default (it held purchase-order.create=${hadPurchasing}), unchecked it and saved; API stored ${p && p.permissions.length} permissions without it`)
+  }, acmeOwner)
+
+  await step('BO-076', async () => {
+    const tok = await apiLogin(fx.ownerAcme, fx.password)
+    const users = await (await fetch(`${API}/user?page=0&pageSize=200&search=qa-bo-mechanic-acme`, { headers: { authorization: `Bearer ${tok}` } })).json()
+    const mech = (users.items || []).find((u) => u.email === fx.mechanicAcme)
+    await acmeOwner.goto(`${BASE}/users/${mech.uuid}/edit`); await acmeOwner.waitForSelector('form select')
+    const opts = await acmeOwner.$$eval('form select option', (o) => o.map((x) => x.textContent.trim()))
+    await acmeOwner.selectOption('form label:has-text("Profile") select', fx.uiProfile)
+    await acmeOwner.waitForSelector('text=Profile saved', { timeout: 8000 })
+    await shot(acmeOwner, 'BO-076-user-profile-picker')
+    const mtok = await apiLogin(fx.mechanicAcme, fx.password)
+    const mine = await (await fetch(`${API}/access-profile/mine`, { headers: { authorization: `Bearer ${mtok}` } })).json()
+    rec('BO-076', opts.includes('Role default') && opts.includes('qa-bo Oficina') && mine.profileName === 'qa-bo Oficina' && !mine.permissions.includes('purchase-order.create') && mine.permissions.includes('work-order.create'),
+      `picker offers [${opts.join(', ')}]; after choosing, the mechanic's own /mine reports profile "${mine.profileName}" with ${mine.permissions.length} permissions, no purchase-order.create`)
+  }, acmeOwner)
+
+  for (const [sid, key, label] of [['BO-072', 'driverAcme', 'Driver'], ['BO-073', 'mechanicAcme', 'Mechanic']]) {
+    const op = await newPage(browser)
+    await step(sid, async () => {
+      await login(op, fx[key], fx.password)
+      const nav = await navLabels(op)
+      const redirects = []
+      for (const p of ['/tenants', '/users', '/users/new', `/tenants/${fx.tenants.acme.uuid}/edit`, '/plans', '/system-settings']) {
+        await op.goto(`${BASE}${p}`); await op.waitForTimeout(600)
+        redirects.push(`${p}->${new URL(op.url()).pathname}`)
+      }
+      await op.goto(`${BASE}/`); await op.waitForSelector('.metric-card')
+      await shot(op, `${sid}-${label.toLowerCase()}-dashboard`)
+      rec(sid, !nav.some((n) => /Tenants|Users|Plans|System settings/i.test(n)) && redirects.every((r) => r.endsWith('->/')),
+        `${label}: nav=[${nav.join(', ')}]; ${redirects.join(' ')}`)
+    }, op)
+  }
 
   fs.writeFileSync(OUT, JSON.stringify(results, null, 1))
   await browser.close()

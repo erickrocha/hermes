@@ -12,6 +12,10 @@ results are logged in `<slice>_test_execution_log.md` next to it.
 | `tenancy_plans_acceptance.py` | Tenancy & Plans (`EPIC-TP-01…05`, scenarios `TP-0xx`) |
 | `fleet_operations_acceptance.py` | Fleet operations (`EPIC-FO-01` `FO-001…011`, `EPIC-FO-02` `FO-020…028`) — API + DB + two cargo targets; FO-02 runs a stub PinME server and a scratch API on port 8095 against the dev DB |
 | `garage_monitor_acceptance.py` | Garage monitor (`EPIC-GA-07`, scenarios `GA-070…074`) — API + dev DB; isolated `qa-ga-` fixtures |
+| `driver_scope_acceptance.py` | The driver's own-records scope (`C-032` `EPIC-AC-04`, `AC-040…044`) — API + dev DB |
+| `access_profile_acceptance.py` | Access profiles (`C-032` phase 1, `AC-010…014`) — API + dev DB; the console half is `BO-075/076` in the backoffice walkthrough |
+| `role_matrix_audit.py` | Every documented operation x the five roles against its `**Roles:**` statement (`IA-100`, `HRMS-130`/`132`) — API + dev DB; matrix written to `evidence/role_matrix.md` |
+| `garage_core_acceptance.py` | Garage catalogue, triage, presence, validity, call, queue and automation (`EPIC-GA-01…06`, scenarios `GA-010…064`) — API + dev DB; `GA-064` needs `GARAGE_ROLLOVER_INTERVAL_SECONDS=3` on the API |
 | `fleet_telemetry_acceptance.py` | Fleet telemetry (`EPIC-FT-01`, scenarios `FT-00x`) — **no API or database needed** |
 | `production_readiness_acceptance.py` | Production readiness (`EPIC-XF-10`, scenarios `PR-0xx`) — **no API or database needed** |
 | `brand_contrast_audit.py` | Brand palette audit + customer review sheet (`EPIC-XF-10-S09`) — **not a scenario suite**, an advisory report |
@@ -179,7 +183,7 @@ What it touches:
 
 ## Backoffice suite (`backoffice_acceptance.py`, scenarios `BO-0xx`)
 
-Covers `EPIC-BO-01…06` plus the PD-027/PD-028 console behaviours.
+Covers `EPIC-BO-01…07` (BO-07: the operational roles, `BO-070…074`) plus the PD-027/PD-028 console behaviours. The walkthrough hard-codes the API on `:8081`, and the API only allows the console origin `http://localhost:5173` (CORS) — run the API with `PORT=8081` and the console with `VITE_API_URL=http://127.0.0.1:8081 vite --port 5173`.
 - **API and static checks** (Python stdlib, reusing this folder's helpers):
   - the server half of each console affordance
   - `npm test` and `npx tsc -b --noEmit` in `backoffice/`

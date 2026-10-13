@@ -133,5 +133,15 @@
   "importReviewHint": "{{count}} rows loaded. Edit anything that looks wrong, then save — the import is all or nothing.",
   "importDone": "Imported: {{created}} created, {{updated}} updated.",
   "importNoColumns": "No recognised columns in this file. Expected: {{expected}}.",
-  "acronym": "Acronym"
+  "acronym": "Acronym",
+  "profiles": "Profiles",
+  "profilesSummary": "What each driver, mechanic and office user may do.",
+  "newProfile": "New profile",
+  "editProfile": "Edit profile",
+  "permissions": "Permissions",
+  "startFromDefault": "Start from the role's default",
+  "ownOnly": "own records only",
+  "profile": "Profile",
+  "roleDefault": "Role default",
+  "profileSaved": "Profile saved"
 }

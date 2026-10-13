@@ -12,7 +12,7 @@ use crate::infrastructure::mapper::reject_unknown_km_origin;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
-use business::domain::authorization::can_administer_vehicle;
+use business::domain::authorization::can_record_odometer;
 use business::domain::enums::KmOrigin;
 use business::domain::km_evolution::KmEvolution;
 use business::domain::user::User;
@@ -39,7 +39,7 @@ fn require_administrator(
     user: &User,
     vehicle: &Vehicle,
 ) -> Result<(), ExceptionResponse> {
-    if can_administer_vehicle(user, vehicle.tenant_id) {
+    if can_record_odometer(user, vehicle.tenant_id) {
         Ok(())
     } else {
         Err(ExceptionResponse::Forbidden(locale.clone(), ErrorKey::VehicleForbidden))
@@ -91,7 +91,7 @@ async fn json(state: &AppState, reading: KmEvolution) -> KmEvolutionJson {
     params(("uuid" = String, Path, description = "Vehicle UUID")),
     request_body = KmEvolutionJson,
     responses(
-        (status = 201, description = "The reading is recorded and `vehicle.odometer_km` is recomputed from the chronologically latest entry (HRMS-650, AD-041). **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = KmEvolutionJson),
+        (status = 201, description = "The reading is recorded and `vehicle.odometer_km` is recomputed from the chronologically latest entry (HRMS-650, AD-041). **Roles:** SysAdmin (any tenant); TenantOwner, Driver (own tenant only; a Driver only on a vehicle they are assigned to).", body = KmEvolutionJson),
         (status = 400, description = "Bad request, including an origin outside TRM-151's seven-value vocabulary or a negative reading", body = BadRequestErrorJson),
         (status = 404, description = "Vehicle not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),

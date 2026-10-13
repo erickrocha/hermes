@@ -42,6 +42,8 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             blocked_reason: NotSet,
             tenant_id: Set(d.tenant_id),
             role: Set(d.role.to_string()),
+            // Owned by `AccessProfileGateway`; an account edit must not clear it.
+            profile_id: NotSet,
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,

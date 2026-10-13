@@ -115,3 +115,6 @@ tracking-unavailable = El rastreo de vehículos no está disponible en este mome
 vehicle-already-assigned = Este vehículo ya tiene un conductor asignado
 no-live-assignment = Este vehículo no tiene conductor asignado
 not-a-driver = La persona indicada no es un conductor activo de esta empresa
+access-profile-forbidden = Solo el propietario del tenant gestiona los perfiles de acceso
+access-profile-not-found = Perfil de acceso no encontrado
+duplicate-access-profile = Este tenant ya tiene un perfil de acceso con este nombre

@@ -36,6 +36,8 @@ pub mod vehicle_tracking;
 pub mod vehicle_expense;
 pub mod fuel_entry;
 pub mod garage_service_model;
+pub mod access_profile;
+pub mod permission;
 pub mod garage_call;
 pub mod vehicle_presence_event;
 pub mod garage_attendance;

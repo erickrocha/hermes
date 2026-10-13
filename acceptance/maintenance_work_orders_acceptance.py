@@ -319,7 +319,7 @@ def mt002(fx):
     cross_open = wo(ob, fx.v[0], 5, "cross")
     sl, la = pages(oa, "/work-order")
     own = sl == 200 and la["totalItems"] == n_rows("work_order", f"tenant_id={fx.A['id']}")
-    check("MT-002", all(m == (200, 200, 403) for m in members.values()) and unknown[0] == 404 and cross_get[0] == 404 and cross_get[1] == unknown[1]
+    check("MT-002", all(m == ((200, 200, 404) if who == "driver" else (200, 200, 403)) for who, m in members.items()) and unknown[0] == 404 and cross_get[0] == 404 and cross_get[1] == unknown[1]
           and cross_open[0] in (400, 404) and n_rows("work_order") == before and own,
           "a tenant user and a driver read (200) and get 403 opening a work order; owner B's GET of A's order is 404 with the body of an unknown uuid; "
           "owner B opening against A's vehicle is refused with nothing stored; A's list counts only A's orders",
@@ -484,7 +484,7 @@ def mt031(fx):
     unknown = http("GET", f"/maintenance-plan/uuid/{NIL_UUID}", token=ob)
     cross = http("GET", f"/maintenance-plan/uuid/{fx.plan['uuid']}", token=ob)
     cross_make = plan(ob, v, "2027-01-07")
-    check("MT-031", mech[0] == 201 and all(m == (200, 403) for m in members.values()) and unknown[0] == 404 and cross[0] == 404
+    check("MT-031", mech[0] == 201 and all(m == ((200, 404) if who == "driver" else (200, 403)) for who, m in members.items()) and unknown[0] == 404 and cross[0] == 404
           and cross[1] == unknown[1] and cross_make[0] in (400, 404) and n_rows("maintenance_plan") == before,
           "the mechanic can schedule a window (201); a tenant user and a driver read (200) and get 403 scheduling; owner B's GET of A's window is 404 "
           "with the body of an unknown uuid and B scheduling against A's vehicle is refused, nothing stored",

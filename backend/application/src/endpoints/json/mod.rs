@@ -39,6 +39,7 @@ pub mod fuel_entry_json;
 pub mod fuel_gauge_setting_json;
 pub mod garage_attendance_json;
 pub mod garage_service_model_json;
+pub mod access_profile_json;
 pub mod schedule_json;
 pub mod vehicle_presence_json;
 pub mod preventive_plan_json;

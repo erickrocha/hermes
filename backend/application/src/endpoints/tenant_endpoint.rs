@@ -168,7 +168,7 @@ fn unreadable_tenants(locale: Locale) -> ExceptionResponse {
     ),
     request_body = TenantJson,
     responses(
-        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser (own tenant only). Driver and Mechanic are refused with 403 (D-22).", body = TenantJson),
+        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only). TenantUser, Driver and Mechanic are refused with 403 (D-22, D-27).", body = TenantJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),

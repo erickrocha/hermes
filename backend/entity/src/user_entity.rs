@@ -16,6 +16,8 @@ pub struct Model {
     pub blocked_reason: Option<String>,
     pub tenant_id: Option<i64>,
     pub role: String,
+    /// `C-032`: the user's access profile; NULL means the built-in default of their role.
+    pub profile_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

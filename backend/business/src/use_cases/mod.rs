@@ -43,6 +43,7 @@ pub mod garage_readiness;
 pub mod garage_validity;
 pub mod garage_validity_use_case;
 pub mod garage_service_model_use_case;
+pub mod access_profile_use_case;
 pub mod vehicle_presence_use_case;
 pub mod fuel_gauge_setting_use_case;
 pub mod fuel_receipt_use_case;

@@ -241,6 +241,12 @@ pub enum ErrorKey {
     GarageServiceNotFound,
     /// `HRMS-956`: the tenant already has a garage service of this normalised name.
     DuplicateGarageService,
+    /// `HRMS-855`: only the tenant owner manages access profiles.
+    AccessProfileForbidden,
+    /// `HRMS-851`: no such profile, or it belongs to another tenant.
+    AccessProfileNotFound,
+    /// `HRMS-851`: the tenant already has a profile of this normalised name.
+    DuplicateAccessProfile,
     /// `HRMS-958`: no such triage, or it belongs to another tenant.
     GarageAttendanceNotFound,
     /// `HRMS-958`: the vehicle already has an active triage.
@@ -362,6 +368,9 @@ impl ErrorKey {
             ErrorKey::GarageForbidden => "GarageForbidden",
             ErrorKey::GarageServiceNotFound => "GarageServiceNotFound",
             ErrorKey::DuplicateGarageService => "DuplicateGarageService",
+            ErrorKey::AccessProfileForbidden => "AccessProfileForbidden",
+            ErrorKey::AccessProfileNotFound => "AccessProfileNotFound",
+            ErrorKey::DuplicateAccessProfile => "DuplicateAccessProfile",
             ErrorKey::GarageAttendanceNotFound => "GarageAttendanceNotFound",
             ErrorKey::GarageAttendanceAlreadyActive => "GarageAttendanceAlreadyActive",
             ErrorKey::GarageAttendanceClosed => "GarageAttendanceClosed",
@@ -466,6 +475,9 @@ impl ErrorKey {
             ErrorKey::GarageForbidden => "garage-forbidden",
             ErrorKey::GarageServiceNotFound => "garage-service-not-found",
             ErrorKey::DuplicateGarageService => "duplicate-garage-service",
+            ErrorKey::AccessProfileForbidden => "access-profile-forbidden",
+            ErrorKey::AccessProfileNotFound => "access-profile-not-found",
+            ErrorKey::DuplicateAccessProfile => "duplicate-access-profile",
             ErrorKey::GarageAttendanceNotFound => "garage-attendance-not-found",
             ErrorKey::GarageAttendanceAlreadyActive => "garage-attendance-already-active",
             ErrorKey::GarageAttendanceClosed => "garage-attendance-closed",
@@ -746,6 +758,9 @@ mod tests {
             ErrorKey::GarageForbidden,
             ErrorKey::GarageServiceNotFound,
             ErrorKey::DuplicateGarageService,
+            ErrorKey::AccessProfileForbidden,
+            ErrorKey::AccessProfileNotFound,
+            ErrorKey::DuplicateAccessProfile,
             ErrorKey::GarageAttendanceNotFound,
             ErrorKey::GarageAttendanceAlreadyActive,
             ErrorKey::GarageAttendanceClosed,

@@ -336,8 +336,8 @@ def ck003(fx):
     cross = {"list": http("GET", f"/vehicle/uuid/{v['uuid']}/km-evolutions", token=ob), "record": km(ob, v, 1300)}
     cross_ok = unknown[0] == 404 and all(c[0] == 404 for c in cross.values()) and cross["list"][1] == unknown[1]
     s_sa, _ = km(adm, v, 1150, "Manual", "2026-10-03T10:00:00")
-    check("CK-003", all(m == (200, 403) for m in members.values()) and km_count(v) == before + 1 and cross_ok and s_sa == 201,
-          "tenant user, driver and mechanic read a vehicle's history (200) and get 403 recording a reading, nothing stored; owner B listing or "
+    check("CK-003", all(m == ((404, 404) if who == "driver" else (200, 403)) for who, m in members.items()) and km_count(v) == before + 1 and cross_ok and s_sa == 201,
+          "tenant user and mechanic read a vehicle's history (200) and get 403 recording a reading, nothing stored; a driver not assigned to it gets 404 on both (C-032 own-records scope); owner B listing or "
           "recording against A's vehicle is 404, the body of an unknown vehicle; a SysAdmin records in tenant A",
           f"members {members}; cross {[(k, c[0]) for k, c in cross.items()]} unknown {unknown[0]} cross_ok={cross_ok}; SysAdmin {s_sa}; "
           f"entries {before}->{km_count(v)}")
@@ -554,8 +554,8 @@ def ck023(fx):
     cross_ok = unknown_run[0] == 404 and unknown_veh[0] == 404 and cross["run"][0] == 404 and cross["possession"][0] == 404 \
         and cross["run"][1] == unknown_run[1] and cross["possession"][1] == unknown_veh[1]
     s_sa, _ = run(adm, fx.tStd, fx.d1, fx.v[4], "Standalone", 10, [ans(fx.tStd, "Mirror")], tenantId=fx.A["id"])
-    check("CK-023", all(m == (200, 200, 403) for m in members.values()) and intact and cross_ok and s_sa in (201, 400, 403),
-          "tenant user, driver and mechanic read a run and a vehicle's possession (200) and get 403 recording a run, nothing stored; owner B "
+    check("CK-023", all(m == ((404, 404, 404) if who == "driver" else (200, 200, 403)) for who, m in members.items()) and intact and cross_ok and s_sa in (201, 400, 403),
+          "tenant user and mechanic read a run and a vehicle's possession (200) and get 403 recording a run, nothing stored; a driver who did not submit the run and is not assigned to the vehicle gets 404 on all three (C-032 own-records scope); owner B "
           "reading A's run or A's vehicle's possession is 404, the body of an unknown uuid",
           f"members {members} intact={intact}; cross {cross['run'][0]}/{cross['possession'][0]} unknown {unknown_run[0]}/{unknown_veh[0]} cross_ok={cross_ok}")
     NOTES["SysAdmin recording a run (not scored; the roles line allows it)"] = s_sa

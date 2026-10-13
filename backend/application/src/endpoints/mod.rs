@@ -30,6 +30,7 @@ pub mod fuel_gauge_setting_endpoint;
 pub mod garage_attendance_endpoint;
 pub mod garage_call_endpoint;
 pub mod garage_service_model_endpoint;
+pub mod access_profile_endpoint;
 pub mod schedule_endpoint;
 pub mod vehicle_presence_endpoint;
 pub mod preventive_plan_endpoint;

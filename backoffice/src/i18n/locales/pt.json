@@ -133,5 +133,15 @@
   "importReviewHint": "{{count}} linhas carregadas. Corrija o que estiver errado e salve — a importação é tudo ou nada.",
   "importDone": "Importado: {{created}} criados, {{updated}} atualizados.",
   "importNoColumns": "Nenhuma coluna reconhecida neste arquivo. Esperado: {{expected}}.",
-  "acronym": "Sigla"
+  "acronym": "Sigla",
+  "profiles": "Perfis",
+  "profilesSummary": "O que cada motorista, mecânico e usuário do escritório pode fazer.",
+  "newProfile": "Novo perfil",
+  "editProfile": "Editar perfil",
+  "permissions": "Permissões",
+  "startFromDefault": "Começar pelo padrão do papel",
+  "ownOnly": "somente os próprios registros",
+  "profile": "Perfil",
+  "roleDefault": "Padrão do papel",
+  "profileSaved": "Perfil salvo"
 }

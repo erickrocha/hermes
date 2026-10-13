@@ -247,6 +247,7 @@ def cleanup():
     for t in ("internal_tank", "fuel_gauge_setting", "tenant_rule_setting"):
         sql(f"DELETE FROM {t} WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM km_evolution WHERE vehicle_id IN ({vehicles})")
+    sql(f"DELETE FROM vehicle_assignment WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAFU%'")
@@ -291,7 +292,11 @@ def seed(fx):
     fx.driverA = user(oa, f"{TAG}-driver-a@hermes.test", "Driver", None)
     fx.driverB = user(fx.ownerB["token"], f"{TAG}-driver-b@hermes.test", "Driver", None)
     fx.readers = {"tenant user": fx.userA, "driver": fx.driverA}          # may read, may not write
+    DRIVER_OF_A[0] = (oa, fx.driverA["uuid"])                              # every tenant-A vehicle is driver A's (C-032 own scope)
     return fx
+
+
+DRIVER_OF_A = [None]   # (owner A's token, driver A's uuid): C-032 -- a driver reaches only the vehicle assigned to them
 
 
 def newv(token, prefix=None, cap=None, ref=None, plate=None):
@@ -306,6 +311,10 @@ def newv(token, prefix=None, cap=None, ref=None, plate=None):
     s, v = http("POST", "/vehicle", token=token, body=body)
     if s != 201:
         raise RuntimeError(f"vehicle fixture -> {s} {ek(v)}")
+    if DRIVER_OF_A[0] and DRIVER_OF_A[0][0] == token:
+        sa, pa = http("POST", f"/vehicle/uuid/{v['uuid']}/assignment", token=token, body={"driverUuid": DRIVER_OF_A[0][1]})
+        if sa != 201:
+            raise RuntimeError(f"assigning driver A to {v['uuid']} -> {sa} {ek(pa)}")
     return v
 
 
@@ -429,9 +438,9 @@ def fu002(fx):
     own = s_l == 200 and items and all(i.get("tenantId") == fx.A["id"] for i in items) \
         and [i["recordedAt"] for i in items] == sorted((i["recordedAt"] for i in items), reverse=True)
     s_sa, p_sa = fuel(adm, v, ago(days=1, hours=3), 5, tenantId=fx.A["id"])
-    check("FU-002", all(m == (403, 200, 200) for m in members.values()) and mid == before and cross[0] == 404 and unknown[0] == 404
+    check("FU-002", all(m == ((403, 200, 404) if who == "driver" else (403, 200, 200)) for who, m in members.items()) and mid == before and cross[0] == 404 and unknown[0] == 404
           and cross[1] == unknown[1] and own and s_sa == 201 and (p_sa or {}).get("tenantId") == fx.A["id"],
-          "a tenant user and a driver read the list and an entry (200) and get 403 recording one, nothing stored; owner B reading A's entry is 404 with "
+          "a tenant user reads the list and an entry (200), a driver the list and only the entries they reported (404 for others; C-032), both get 403 recording one, nothing stored; owner B reading A's entry is 404 with "
           "the body of an unknown uuid; A's list holds only A's entries, most recent first; a SysAdmin naming tenant A is accepted",
           f"members {members}; rows {before}->{mid}; cross {cross[0]} unknown {unknown[0]} same_body={cross[1] == unknown[1]}; own={bool(own)}; sysadmin {s_sa}")
 

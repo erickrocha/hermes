@@ -186,7 +186,7 @@ async fn json(state: &AppState, run: ChecklistRun, answers: Vec<ChecklistAnswer>
     path = "/checklist-run",
     request_body = ChecklistRunJson,
     responses(
-        (status = 201, description = "The checklist and its answers are recorded together, all-or-nothing, and the vehicle's official odometer record is updated through the one writer EPIC-CK-01-S01 built (HRMS-652/654, AD-041). A Departure opens the vehicle's possession cycle; a Return closes the one it names. Tenant is derived from the named vehicle, never sent by the caller. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = ChecklistRunJson),
+        (status = 201, description = "The checklist and its answers are recorded together, all-or-nothing, and the vehicle's official odometer record is updated through the one writer EPIC-CK-01-S01 built (HRMS-652/654, AD-041). A Departure opens the vehicle's possession cycle; a Return closes the one it names. Tenant is derived from the named vehicle, never sent by the caller. **Roles:** SysAdmin (any tenant); TenantOwner, Driver (own tenant only; a Driver only on a vehicle they are assigned to and as themselves).", body = ChecklistRunJson),
         (status = 400, description = "Bad request, including a checklist or answer status outside its vocabulary, a relation outside this tenant, a Return with no (or an invalid) opening checklist, no answered items (TRM-101), a duplicate answer for the same item, or an answer naming an item outside this checklist's own template", body = BadRequestErrorJson),
         (status = 409, description = "The driver already holds an open checklist on another vehicle (TRM-105), or the named departure has already been closed", body = BadRequestErrorJson),
         (status = 404, description = "Vehicle not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
@@ -221,6 +221,10 @@ pub async fn add(
     let driver_id = resolve_driver_id(&state, &locale, Some(payload.driver_uuid.clone()))
         .await?
         .ok_or_else(|| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::NotADriver))?;
+    // `C-032` (`D-27` 5): a driver submits as themselves, never on another driver's behalf.
+    if current_user.role == business::domain::enums::Role::Driver && current_user.id != Some(driver_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::ChecklistRunForbidden));
+    }
     let opening_checklist_id =
         resolve_opening_checklist_id(&state, &locale, payload.opening_checklist_uuid.clone()).await?;
 
@@ -311,7 +315,7 @@ pub async fn possession(
     path = "/checklist-run/uuid/{uuid}",
     params(("uuid" = String, Path, description = "Checklist run UUID")),
     responses(
-        (status = 200, description = "The checklist with its answers. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = ChecklistRunJson),
+        (status = 200, description = "The checklist with its answers. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only; a Driver only a checklist they submitted, otherwise 404).", body = ChecklistRunJson),
         (status = 404, description = "Checklist not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -328,7 +332,9 @@ pub async fn get_by_uuid(
         .find_by_uuid(uuid)
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::ChecklistRunNotFound))?;
-    if !can_read_checklist_run(&current_user, run.tenant_id) {
+    // `C-032` (`HRMS-860`): a driver reads their own runs only.
+    let foreign_to_driver = current_user.role == business::domain::enums::Role::Driver && current_user.id != Some(run.driver_id);
+    if !can_read_checklist_run(&current_user, run.tenant_id) || foreign_to_driver {
         return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::ChecklistRunNotFound,

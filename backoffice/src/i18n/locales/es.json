@@ -133,5 +133,15 @@
   "importReviewHint": "{{count}} filas cargadas. Corrige lo que esté mal y guarda: la importación es todo o nada.",
   "importDone": "Importado: {{created}} creados, {{updated}} actualizados.",
   "importNoColumns": "No se reconoció ninguna columna en este archivo. Se esperaba: {{expected}}.",
-  "acronym": "Sigla"
+  "acronym": "Sigla",
+  "profiles": "Perfiles",
+  "profilesSummary": "Lo que puede hacer cada conductor, mecánico y usuario de oficina.",
+  "newProfile": "Nuevo perfil",
+  "editProfile": "Editar perfil",
+  "permissions": "Permisos",
+  "startFromDefault": "Empezar por el predeterminado del rol",
+  "ownOnly": "solo los propios registros",
+  "profile": "Perfil",
+  "roleDefault": "Predeterminado del rol",
+  "profileSaved": "Perfil guardado"
 }

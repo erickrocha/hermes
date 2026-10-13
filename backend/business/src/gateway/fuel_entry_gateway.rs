@@ -257,6 +257,20 @@ impl FuelEntryGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// `C-032` (`HRMS-860`): a driver's own fuellings -- the ones they reported from a receipt.
+    pub async fn find_page_reported_by(
+        &self,
+        user_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<fuel_entry_entity::Model>, u64), DbErr> {
+        let query = tenant_select(FuelEntryQuery::find(), fuel_entry_entity::Column::TenantId)
+            .filter(fuel_entry_entity::Column::DeletedAt.is_null())
+            .filter(fuel_entry_entity::Column::ReportedByUserId.eq(user_id))
+            .order_by_desc(fuel_entry_entity::Column::RecordedAt);
+        fetch_page(query, &self.db, page, page_size).await
+    }
+
     /// `TRM-1553`: the report's rows -- the caller's tenant's fuellings inside
     /// the optional period/vehicle/station filters, oldest first, unpaged.
     pub async fn find_report(

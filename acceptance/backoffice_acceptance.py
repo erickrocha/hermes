@@ -38,6 +38,8 @@ STORIES = {
     "EPIC-BO-04-S01": ["BO-030"], "EPIC-BO-04-S02": ["BO-031", "BO-032"], "EPIC-BO-04-S03": ["BO-033"],
     "EPIC-BO-05-S01": ["BO-040", "BO-041", "BO-042"],
     "EPIC-BO-06-S01": ["BO-050", "BO-051"],
+    "EPIC-BO-07-S01": ["BO-070", "BO-071"], "EPIC-BO-07-S02": ["BO-072", "BO-073"], "EPIC-BO-07-S03": ["BO-074"],
+    "EPIC-AC-06": ["BO-075", "BO-076"],
 }
 SUPERSEDED = {"EPIC-BO-04-S02": "HRM-045 descoped (ratification walk 2026-09-18): invitation acceptance sets the password"}
 RESULTS = {}   # scenario -> list of (part, status, evidence); a scenario passes only if every part does
@@ -89,6 +91,9 @@ def seed():
     fx["ownerTm"] = user(adm, f"{TAG}-owner-tm@hermes.test", "TenantOwner", tenants["tm"]["id"])
     fx["ownerAcme"] = user(adm, f"{TAG}-owner-acme@hermes.test", "TenantOwner", tenants["acme"]["id"])
     owner = token_for(fx["ownerTm"], PW)
+    owner_acme = token_for(fx["ownerAcme"], PW)   # EPIC-BO-07: the operational roles live in ACME, apart from TM's pager counts
+    fx["driverAcme"] = user(owner_acme, f"{TAG}-driver-acme@hermes.test", "Driver", tenants["acme"]["id"])
+    fx["mechanicAcme"] = user(owner_acme, f"{TAG}-mechanic-acme@hermes.test", "Mechanic", tenants["acme"]["id"])
     fx["userTm"] = user(owner, f"{TAG}-user-tm@hermes.test", "TenantUser", tenants["tm"]["id"])
     for i in range(EXTRA_USERS):  # pagination fixture; not activated, just rows
         must(http("POST", "/user", token=owner, body={"email": f"{TAG}-pg-{i:02d}@hermes.test",
@@ -105,7 +110,9 @@ def seed():
 
 
 def teardown():
+    sql(f"UPDATE user SET profile_id=NULL WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql(f"DELETE FROM access_profile WHERE name LIKE '{TAG}%'")
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
     sql(f"DELETE FROM business_plan WHERE name LIKE '{TAG}-%'")
     sql("DELETE FROM city WHERE province_id IN (SELECT id FROM province WHERE country_code='QB')")
@@ -187,6 +194,15 @@ def api_checks(fx):
     ok = s == 200 and p["uuid"].replace("-", "") == db and "@" not in p["uuid"] and claim == p["uuid"]
     record("BO-033", "api", ok, f"login.uuid={p.get('uuid')} db={db} jwt.uuid={claim}")
 
+    # BO-072/073 (api half): the console hides Tenants/Users from a driver and a mechanic because the
+    # server refuses them -- the same probes as a TenantUser, nothing more.
+    for sid, key in (("BO-072", "driverAcme"), ("BO-073", "mechanicAcme")):
+        tok = token_for(fx[key], PW)
+        refused = {"POST /user": http("POST", "/user", token=tok, body={"email": f"{TAG}-x@hermes.test", "name": "x", "role": "TenantUser", "enabled": True, "tenantId": fx["tenants"]["acme"]["id"]})[0],
+                   "POST /tenant": http("POST", "/tenant", token=tok, body={"businessName": f"{TAG}-x", "taxId": "QABO9999999999", "countryCode": "US"})[0],
+                   "PUT /tenant": http("PUT", f"/tenant/uuid/{fx['tenants']['acme']['uuid']}", token=tok, body={"businessName": f"{TAG}-hijack", "taxId": "QABO0000000002", "countryCode": "US"})[0]}
+        record(sid, "api", all(v == 403 for v in refused.values()), f"{key}: {refused}")
+
     # BO-041: the API answers in the console's language (en / pt-BR / es)
     msgs = {lang: http("GET", "/business-plan/uuid/00000000-0000-4000-8000-000000000000", token=adm, headers={"Accept-Language": lang})[2]
             for lang in ("en", "pt-BR", "es")}
@@ -229,6 +245,11 @@ def static_checks():
     record("BO-050", "static", t.returncode == 0 and c.returncode == 0 and "tsc -b --noEmit" in ci and "npm test" in ci,
            f"vitest exit={t.returncode} ({m.group(0) if m else 'no summary'}); tsc -b exit={c.returncode}; "
            f"frontend-ci runs tsc -b + npm test={'tsc -b --noEmit' in ci and 'npm test' in ci}")
+    # BO-074 (EPIC-BO-07-S03, HRMS-417): the role-conditional screen tests cover all five roles
+    tests = "".join(open(os.path.join(BO, "src", "pages", f)).read() for f in ("ManagementPages.test.tsx", "RoleSurfaces.test.tsx"))
+    missing = [r for r in ("SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic") if r not in tests]
+    record("BO-074", "static", not missing and t.returncode == 0,
+           f"role names absent from ManagementPages/RoleSurfaces tests={missing or 'none'}; vitest exit={t.returncode} ({m.group(0) if m else 'no summary'})")
     # DEF-BO-09 (revised 2026-09-19): this used to read three named test files,
     # so the fix -- which put the six surfaces in a *new* file,
     # `pages/RoleSurfaces.test.tsx` -- could not be seen. The story asks that

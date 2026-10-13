@@ -140,6 +140,19 @@ impl Gateway<VehicleAssignment, vehicle_assignment_entity::Model, vehicle_assign
 }
 
 impl VehicleAssignmentGateway {
+    /// `C-032` (`HRMS-860`): the vehicles a driver is currently assigned to -- the only ones a driver's
+    /// own-records scope reaches.
+    pub async fn find_live_vehicle_ids_by_driver(&self, driver_id: i64) -> Result<Vec<i64>, DbErr> {
+        Ok(tenant_select(AssignmentQuery::find(), vehicle_assignment_entity::Column::TenantId)
+            .filter(vehicle_assignment_entity::Column::DriverId.eq(driver_id))
+            .filter(vehicle_assignment_entity::Column::EndedAt.is_null())
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|a| a.vehicle_id)
+            .collect())
+    }
+
     /// D-23(d): the one live assignment of a vehicle, if any.
     pub async fn find_live_by_vehicle(
         &self,

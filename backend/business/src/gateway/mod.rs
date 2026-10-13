@@ -33,6 +33,7 @@ pub mod vehicle_assignment_gateway;
 pub mod vehicle_expense_gateway;
 pub mod fuel_entry_gateway;
 pub mod garage_service_model_gateway;
+pub mod access_profile_gateway;
 pub mod garage_call_gateway;
 pub mod vehicle_presence_event_gateway;
 pub mod garage_attendance_gateway;

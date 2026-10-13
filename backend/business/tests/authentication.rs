@@ -42,6 +42,7 @@ fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
         password: password_hash.into(),
         enabled,
         blocked_reason: None,
+        profile_id: None,
         tenant_id: Some(42),
         role: "TenantOwner".into(),
         created_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),

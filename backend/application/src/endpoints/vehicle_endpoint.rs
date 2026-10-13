@@ -18,7 +18,9 @@ use business::domain::authorization::{
 };
 use business::domain::user::User;
 use business::domain::vehicle::Vehicle;
-use business::gateway::vehicle_gateway::VehicleGateway;
+use business::domain::enums::Role;
+use business::gateway::vehicle_assignment_gateway::VehicleAssignmentGateway;
+use business::gateway::vehicle_gateway::{VehicleGateway, VehicleLookupStore};
 use business::domain::vehicle_tracking::VehicleTrackingStatus;
 use business::gateway::tracking_provider::configured_provider;
 use business::use_cases::vehicle_tracking_use_case::VehicleTrackingUseCase;
@@ -106,7 +108,7 @@ pub async fn add(
     path = "/vehicle",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of the caller's own vehicles (PD-028). Another tenant's vehicles are absent rather than forbidden -- the page is filtered by `tenant_select` (HRMS-921, D-09). **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own).", body = PageJson<VehicleJson>),
+        (status = 200, description = "A page of the caller's own vehicles (PD-028). Another tenant's vehicles are absent rather than forbidden -- the page is filtered by `tenant_select` (HRMS-921, D-09). **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own; a Driver sees only the vehicle(s) they are assigned to).", body = PageJson<VehicleJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -117,10 +119,24 @@ pub async fn list_all(
     state: State<AppState>,
     Query(page_query): Query<PageQuery>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<VehicleJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
     let search = page_query.search();
+
+    // `C-032` (`HRMS-860`): a driver's list is their own assigned vehicle(s) -- a handful, so it is assembled
+    // directly rather than paged out of the tenant's whole fleet.
+    if let Some(own) = driver_vehicle_ids(&state, &locale, &current_user).await? {
+        let gateway = VehicleGateway::new(state.conn.as_ref().clone());
+        let mut vehicles = Vec::new();
+        for id in own {
+            if let Ok(Some(vehicle)) = gateway.get_by_id(id).await {
+                vehicles.push(vehicle);
+            }
+        }
+        let total = vehicles.len() as u64;
+        return Ok(Json(PageJson::new(VehicleMapper::json_vec(vehicles), 0, page_size.max(total), total)));
+    }
 
     // HRMS-921: no second tenant filter here on purpose. Who sees what is the
     // gateway's `tenant_select`, so the list cannot disagree with the single
@@ -154,7 +170,7 @@ pub async fn list_all(
         ("uuid" = String, Path, description = "Vehicle UUID")
     ),
     responses(
-        (status = 200, description = "Vehicle found. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = VehicleJson),
+        (status = 200, description = "Vehicle found. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only; a Driver only a vehicle they are assigned to, otherwise 404).", body = VehicleJson),
         (status = 404, description = "Vehicle not found, **or it exists and belongs to another tenant**. PD-034/HRMS-924: a tenant-bound caller is answered 404 rather than 403 on purpose, so the existence of another customer's vehicle is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -299,5 +315,26 @@ pub(crate) async fn find_visible(
         ));
     }
 
+    // `C-032` (`HRMS-860`, `D-27` 5): a driver reaches the vehicle they are assigned to and no other -- the
+    // same 404 as a vehicle in another tenant. Every vehicle-scoped endpoint passes through here, so the
+    // driver's odometer, checklists, fuel receipts, assignment and tracking all follow.
+    if let Some(own) = driver_vehicle_ids(state, locale, current_user).await? {
+        if !vehicle.id.is_some_and(|id| own.contains(&id)) {
+            return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::VehicleNotFound));
+        }
+    }
+
     Ok(vehicle)
+}
+
+/// The vehicles a driver is currently assigned to; `None` for every other role (no own-records scope).
+pub(crate) async fn driver_vehicle_ids(state: &AppState, locale: &Locale, user: &User) -> Result<Option<Vec<i64>>, ExceptionResponse> {
+    let (Role::Driver, Some(driver_id)) = (&user.role, user.id) else {
+        return Ok(None);
+    };
+    VehicleAssignmentGateway::new(state.conn.as_ref().clone())
+        .find_live_vehicle_ids_by_driver(driver_id)
+        .await
+        .map(Some)
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))
 }

@@ -32,6 +32,7 @@ use crate::routes::fuel_gauge_setting_routes::fuel_gauge_setting_routes;
 use crate::routes::garage_attendance_routes::garage_attendance_routes;
 use crate::routes::garage_call_routes::garage_call_routes;
 use crate::routes::garage_service_model_routes::garage_service_model_routes;
+use crate::routes::access_profile_routes::access_profile_routes;
 use crate::routes::schedule_routes::schedule_routes;
 use crate::routes::vehicle_presence_routes::vehicle_presence_routes;
 use crate::routes::preventive_plan_routes::preventive_plan_routes;
@@ -187,6 +188,14 @@ impl Modify for SecurityAddon {
         endpoints::fuel_entry_endpoint::gauge,
         endpoints::fuel_gauge_setting_endpoint::configure,
         endpoints::fuel_gauge_setting_endpoint::get_current,
+        endpoints::access_profile_endpoint::catalogue,
+        endpoints::access_profile_endpoint::mine,
+        endpoints::access_profile_endpoint::add,
+        endpoints::access_profile_endpoint::update,
+        endpoints::access_profile_endpoint::get_by_uuid,
+        endpoints::access_profile_endpoint::list_all,
+        endpoints::access_profile_endpoint::assign,
+        endpoints::access_profile_endpoint::user_permissions,
         endpoints::garage_service_model_endpoint::add,
         endpoints::garage_service_model_endpoint::update,
         endpoints::garage_service_model_endpoint::get_by_uuid,
@@ -285,6 +294,10 @@ impl Modify for SecurityAddon {
             endpoints::json::fuel_entry_json::TankGaugeJson,
             endpoints::json::fuel_gauge_setting_json::FuelGaugeSettingJson,
             endpoints::json::garage_service_model_json::GarageServiceModelJson,
+            endpoints::json::access_profile_json::AccessProfileJson,
+            endpoints::json::access_profile_json::PermissionJson,
+            endpoints::json::access_profile_json::EffectivePermissionsJson,
+            endpoints::json::access_profile_json::AssignProfileJson,
             endpoints::json::garage_attendance_json::GarageAttendanceOpenJson,
             endpoints::json::garage_attendance_json::GarageAttendanceJson,
             endpoints::json::garage_attendance_json::GarageServiceJson,
@@ -450,6 +463,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/preventive-plan", preventive_plan_routes(state.clone()))
         .nest("/fuel-gauge-settings", fuel_gauge_setting_routes(state.clone()))
         .nest("/garage-service", garage_service_model_routes(state.clone()))
+        .nest("/access-profile", access_profile_routes(state.clone()))
         .nest("/garage-attendance", garage_attendance_routes(state.clone()))
         .nest("/garage-call", garage_call_routes(state.clone()))
         .nest("/schedule", schedule_routes(state.clone()))
@@ -617,6 +631,7 @@ mod openapi_contract_tests {
             "preventive_plan_routes" => "/preventive-plan",
             "fuel_gauge_setting_routes" => "/fuel-gauge-settings",
             "garage_service_model_routes" => "/garage-service",
+            "access_profile_routes" => "/access-profile",
             "garage_attendance_routes" => "/garage-attendance",
             "garage_call_routes" => "/garage-call",
             "schedule_routes" => "/schedule",

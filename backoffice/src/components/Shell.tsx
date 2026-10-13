@@ -8,7 +8,7 @@ import { loadCurrentTenant, logout } from '../store'
 import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
-import { canReachAdministration } from '../pages/ManagementPages'
+import { canManageProfiles, canManageTenant, canReachAdministration } from '../pages/ManagementPages'
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
 
@@ -32,9 +32,10 @@ export function Shell({ children }: { children: ReactNode }) {
   const userLabel = session.name || session.email || t('user')
   const links = [
     { to: '/', label: t('dashboard'), icon: Gauge },
-    ...(canReachAdministration(session.role) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
+    ...(canManageTenant(session.role) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canReachAdministration(session.role) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
+    ...(canManageProfiles(session.role) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
     // de planos -- só o SysAdmin desacoplado de tenant administra.
     ...(session.role === 'SysAdmin' ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),

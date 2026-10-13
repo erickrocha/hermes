@@ -22,6 +22,7 @@ pub mod fuel_gauge_setting_routes;
 pub mod garage_attendance_routes;
 pub mod garage_call_routes;
 pub mod garage_service_model_routes;
+pub mod access_profile_routes;
 pub mod schedule_routes;
 pub mod vehicle_presence_routes;
 pub mod preventive_plan_routes;

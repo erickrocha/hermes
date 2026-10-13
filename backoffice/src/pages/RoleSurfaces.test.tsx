@@ -91,6 +91,21 @@ describe('role-appropriate surfaces (DEF-BO-09, HRMS-414)', () => {
     expect(screen.queryByRole('link', { name: /subscription|assinatura/i })).not.toBeInTheDocument()
   })
 
+  // C-032 (D-27 4, 8): the tenant's information and configuration are the owner's alone.
+  it('keeps the tenant screens for the owner: a tenant user is bounced from them', () => {
+    renderAt('/tenants', member)
+    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+  })
+
+  // C-032: profiles are the owner's; every other role is bounced, and the owner finds the screen.
+  it('offers access profiles to the tenant owner only', () => {
+    const asOwner = renderAt('/profiles', owner)
+    expect(screen.getByRole('heading', { name: /^profiles$|^perfis$/i })).toBeInTheDocument()
+    asOwner.unmount()
+    renderAt('/profiles', member)
+    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+  })
+
   it('bounces a tenant user away from reference-data administration', () => {
     renderAt('/system-settings', member)
     expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()

@@ -129,6 +129,7 @@ def cleanup():
     sql(f"DELETE FROM garage_service_model WHERE {clauses}")
     sql(f"DELETE FROM vehicle WHERE {clauses}")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%@hermes.test'")
+    sql(f"DELETE FROM access_profile WHERE {clauses}", check=False)   # C-032: after the users that hold them
     sql(f"DELETE FROM tenant WHERE id IN ({tenant_ids})")
 
 

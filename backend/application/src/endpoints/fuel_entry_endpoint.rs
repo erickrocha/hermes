@@ -26,6 +26,8 @@ use business::use_cases::fuel_receipt_use_case::{
 use business::domain::enums::FuelEntryOrigin;
 use business::domain::fuel_entry::FuelEntry;
 use business::domain::user::User;
+use business::commons::entity_mapper::EntityMapper;
+use business::domain::fuel_entry::FuelEntryEntityMapper;
 use business::gateway::fuel_entry_gateway::FuelEntryGateway;
 use business::gateway::fuel_provider::configured_provider;
 use business::gateway::vehicle_gateway::VehicleGateway;
@@ -143,7 +145,7 @@ pub async fn add(
     path = "/fuel-entry/uuid/{uuid}",
     params(("uuid" = String, Path, description = "Fuel entry UUID")),
     responses(
-        (status = 200, description = "The fuel entry. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = FuelEntryJson),
+        (status = 200, description = "The fuel entry. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only; a Driver only a fuelling they reported, otherwise 404).", body = FuelEntryJson),
         (status = 404, description = "Fuel entry not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -160,7 +162,9 @@ pub async fn get_by_uuid(
         .find_by_uuid(uuid)
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::FuelEntryNotFound))?;
-    if !can_read_fuel_entry(&current_user, entry.tenant_id) {
+    // `C-032` (`HRMS-860`): a driver reads the fuellings they reported themselves.
+    let foreign_to_driver = current_user.role == Role::Driver && entry.reported_by_user_id != current_user.id;
+    if !can_read_fuel_entry(&current_user, entry.tenant_id) || foreign_to_driver {
         return Err(ExceptionResponse::NotFound(locale, ErrorKey::FuelEntryNotFound));
     }
     Ok(Json(json(&state, entry).await))
@@ -172,7 +176,7 @@ pub async fn get_by_uuid(
     path = "/fuel-entry",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of the caller's own tenant's fuel entries (PD-028), most recent first. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own).", body = PageJson<FuelEntryJson>),
+        (status = 200, description = "A page of the caller's own tenant's fuel entries (PD-028), most recent first. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own; a Driver sees only the fuellings they reported).", body = PageJson<FuelEntryJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
@@ -182,9 +186,23 @@ pub async fn list_all(
     state: State<AppState>,
     Query(page_query): Query<PageQuery>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<FuelEntryJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
+    // `C-032` (`HRMS-860`): a driver's list is the fuellings they reported.
+    if let (Role::Driver, Some(user_id)) = (&current_user.role, current_user.id) {
+        let gateway = FuelEntryGateway::new(state.conn.as_ref().clone());
+        return match gateway.find_page_reported_by(user_id, page, page_size).await {
+            Ok((models, total)) => {
+                let mut rows = Vec::with_capacity(models.len());
+                for model in models {
+                    rows.push(json(&state, FuelEntryEntityMapper::from_model(model)).await);
+                }
+                Ok(Json(PageJson::new(rows, page, page_size, total)))
+            }
+            Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        };
+    }
     match use_case(&state).find_page(page, page_size).await {
         Ok((entries, total)) => {
             let mut rows = Vec::with_capacity(entries.len());
