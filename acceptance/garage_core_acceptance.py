@@ -18,7 +18,7 @@ import garage_monitor_acceptance as b  # noqa: E402
 http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 CHECK_TABLES = ("tenant", "user", "vehicle", "garage_service_model", "garage_attendance",
                 "garage_service", "vehicle_presence_event", "garage_call", "garage_service_log", "fuel_entry",
-                "tenant_rule_setting")
+                "tenant_rule_setting", "garage_cycle_state")
 
 
 def now():

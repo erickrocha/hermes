@@ -1,13 +1,18 @@
 use crate::AppState;
 use business::commons::gateway::Gateway;
 use business::domain::business_error::BusinessError;
-use business::domain::enums::PresenceSource;
+use business::domain::enums::{PresenceEventKind, PresenceSource};
+use business::gateway::garage_cycle_gateway::GarageCycleGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
 use business::gateway::tracking_provider::{TrackingProvider, configured_provider};
 use business::gateway::vehicle_gateway::{VehicleGateway, VehicleStore};
 use business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway;
-use business::use_cases::garage_geofence::transition_for_position;
+use business::use_cases::garage_cycle::GarageCycleSample;
+use business::use_cases::garage_cycle_persistence_use_case::GarageCyclePersistenceUseCase;
+use business::use_cases::garage_geofence::{
+    is_within_base, position_is_fresh_and_valid, transition_for_position,
+};
 use business::use_cases::vehicle_presence_use_case::VehiclePresenceUseCase;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -64,6 +69,7 @@ pub async fn run_presence_poll_once(state: &AppState) {
                 VehiclePresenceEventGateway::new(db.clone()),
                 VehicleGateway::new(db.clone()),
             );
+            let cycles = GarageCyclePersistenceUseCase::new(GarageCycleGateway::new(db.clone()));
             let mut recorded = 0;
             let now = Utc::now();
 
@@ -75,6 +81,9 @@ pub async fn run_presence_poll_once(state: &AppState) {
                 let Some(position) = positions.get(&device_id) else {
                     continue;
                 };
+                if !position_is_fresh_and_valid(position, Utc::now()) {
+                    continue;
+                }
                 let snapshot = match presence.snapshot(vehicle_id).await {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
@@ -82,41 +91,71 @@ pub async fn run_presence_poll_once(state: &AppState) {
                         continue;
                     }
                 };
-                let Some(kind) = transition_for_position(position, &settings, snapshot.away, now)
-                else {
-                    continue;
+                let cycle_state = match cycles.state_for_vehicle(vehicle_id).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        log::error!(
+                            "[{ACTOR}] vehicle {vehicle_id} cycle state: {}",
+                            error.message
+                        );
+                        continue;
+                    }
                 };
-                let Some(occurred_at) = position.recorded_at else {
-                    continue;
-                };
-
-                match presence
-                    .record(
-                        Some(tenant_id),
-                        vehicle_id,
-                        kind,
-                        occurred_at.naive_utc(),
-                        PresenceSource::Tracker,
-                    )
-                    .await
-                {
-                    Ok((true, snapshot)) => {
-                        recorded += 1;
-                        if kind == business::domain::enums::PresenceEventKind::Arrival {
-                            crate::endpoints::vehicle_presence_endpoint::open_triage_on_arrival(
-                                state,
-                                Some(tenant_id),
-                                vehicle_id,
-                                &snapshot,
-                                occurred_at.naive_utc(),
-                            )
-                            .await;
+                let away = snapshot.away || cycle_state.is_some_and(|cycle| cycle.cycle_is_open());
+                let kind = transition_for_position(position, &settings, away, now);
+                let mut recorded_kind = None;
+                if let (Some(kind), Some(occurred_at)) = (kind, position.recorded_at) {
+                    match presence
+                        .record(
+                            Some(tenant_id),
+                            vehicle_id,
+                            kind,
+                            occurred_at.naive_utc(),
+                            PresenceSource::Tracker,
+                        )
+                        .await
+                    {
+                        Ok((true, snapshot)) => {
+                            recorded += 1;
+                            recorded_kind = Some(kind);
+                            if kind == PresenceEventKind::Arrival {
+                                crate::endpoints::vehicle_presence_endpoint::open_triage_on_arrival(
+                                    state,
+                                    Some(tenant_id),
+                                    vehicle_id,
+                                    &snapshot,
+                                    occurred_at.naive_utc(),
+                                )
+                                .await;
+                            }
+                        }
+                        Ok((false, _)) => {}
+                        Err(error) => {
+                            log::error!("[{ACTOR}] vehicle {vehicle_id}: {}", error.message);
                         }
                     }
-                    Ok((false, _)) => {}
-                    Err(error) => {
-                        log::error!("[{ACTOR}] vehicle {vehicle_id}: {}", error.message);
-                    }
+                }
+
+                let Some(reported_at) = position.recorded_at else {
+                    continue;
+                };
+                let cycle_sample = GarageCycleSample {
+                    tenant_id: Some(tenant_id),
+                    vehicle_id,
+                    reported_at: reported_at.naive_utc(),
+                    at_base: is_within_base(
+                        position.latitude,
+                        position.longitude,
+                        settings.garage_base_latitude.unwrap_or_default(),
+                        settings.garage_base_longitude.unwrap_or_default(),
+                        settings.garage_base_radius_meters,
+                    ),
+                    transition: recorded_kind,
+                    odometer_meters: position.odometer_meters,
+                    ignition_on: position.ignition,
+                };
+                if let Err(error) = cycles.observe(cycle_sample, &settings).await {
+                    log::error!("[{ACTOR}] vehicle {vehicle_id} cycle: {}", error.message);
                 }
             }
 

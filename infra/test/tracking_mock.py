@@ -40,7 +40,11 @@ class Handler(BaseHTTPRequestHandler):
                 "longitude": position["longitude"],
                 "valid": position.get("valid", True),
                 "serverTime": reported_at.isoformat(),
-                "attributes": {"ignition": False},
+                "attributes": {
+                    "ignition": position.get("ignition", False),
+                    **({"totalDistance": position["odometerMeters"]}
+                       if "odometerMeters" in position else {}),
+                },
             })
         return self._json(200, result)
 

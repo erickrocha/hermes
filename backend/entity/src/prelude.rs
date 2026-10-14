@@ -47,3 +47,4 @@ pub use super::technical_inspection_item_entity::Entity as TechnicalInspectionIt
 pub use super::fuel_gauge_setting_entity::Entity as FuelGaugeSettingEntity;
 pub use super::internal_tank_entity::Entity as InternalTankEntity;
 pub use super::garage_device_entity::Entity as GarageDeviceEntity;
+pub use super::garage_cycle_state_entity::Entity as GarageCycleStateEntity;

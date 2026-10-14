@@ -109,6 +109,12 @@ pub struct GarageMonitorCardJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_percent: Option<f64>,
     pub needs_refuel: bool,
+    /// The worst status among the vehicle's preventive plans, absent when it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_status: Option<String>,
+    /// The most recent completed garage cycle, in kilometres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_garage_cycle_distance_km: Option<f64>,
 }
 
 /// The cards shown and how many vehicles were left out (`TRM-495`).

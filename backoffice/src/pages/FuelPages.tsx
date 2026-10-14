@@ -62,6 +62,7 @@ export const ruleFields: FieldDef[] = [
   num('garageMonitorCardLimit', 'garageMonitorCardLimit', true, 1), num('garageMonitorMatrixRows', 'garageMonitorMatrixRows', true, 1), num('garageMonitorMatrixColumns', 'garageMonitorMatrixColumns', true, 1),
   num('garageFuellingFreshnessHours', 'garageFuellingFreshnessHours', true, 0), num('garageUtcOffsetMinutes', 'garageUtcOffsetMinutes', true),
   num('garageBaseLatitude', 'garageBaseLatitude'), num('garageBaseLongitude', 'garageBaseLongitude'), num('garageBaseRadiusMeters', 'garageBaseRadiusMeters', true, 0.1),
+  num('garageCycleFallbackDistanceKm', 'garageCycleFallbackDistanceKm', true, 0.1), num('garageOdometerMaxSingleJumpKm', 'garageOdometerMaxSingleJumpKm', true, 0.1),
 ]
 
 export function FuelPage() {

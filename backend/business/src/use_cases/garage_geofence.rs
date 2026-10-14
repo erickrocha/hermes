@@ -32,18 +32,24 @@ pub fn is_within_base(
     distance_meters(latitude, longitude, base_latitude, base_longitude) <= radius_meters
 }
 
+pub fn position_is_fresh_and_valid(position: &ProviderPosition, now: DateTime<Utc>) -> bool {
+    if !position.valid {
+        return false;
+    }
+    let Some(reported_at) = position.recorded_at else {
+        return false;
+    };
+    let age = now.signed_duration_since(reported_at).num_seconds();
+    (0..=POSITION_FRESHNESS_SECONDS).contains(&age)
+}
+
 pub fn transition_for_position(
     position: &ProviderPosition,
     settings: &RuleSettings,
     away: bool,
     now: DateTime<Utc>,
 ) -> Option<PresenceEventKind> {
-    if !position.valid {
-        return None;
-    }
-    let reported_at = position.recorded_at?;
-    let age = now.signed_duration_since(reported_at).num_seconds();
-    if !(0..=POSITION_FRESHNESS_SECONDS).contains(&age) {
+    if !position_is_fresh_and_valid(position, now) {
         return None;
     }
 

@@ -49,3 +49,4 @@ pub mod technical_inspection_item_entity;
 pub mod fuel_gauge_setting_entity;
 pub mod internal_tank_entity;
 pub mod garage_device_entity;
+pub mod garage_cycle_state_entity;

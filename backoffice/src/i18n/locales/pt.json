@@ -673,5 +673,7 @@
   "garageUtcOffsetMinutes": "Deslocamento UTC do dia operacional (min)",
   "garageBaseLatitude": "Latitude da base da garagem",
   "garageBaseLongitude": "Longitude da base da garagem",
-  "garageBaseRadiusMeters": "Raio da cerca geográfica (m; padrão 75)"
+  "garageBaseRadiusMeters": "Raio da cerca geográfica (m; padrão 75)",
+  "garageCycleFallbackDistanceKm": "Limite de ciclo sem saída registrada (km; padrão 2)",
+  "garageOdometerMaxSingleJumpKm": "Salto máximo do odômetro por leitura (km; padrão 300)"
 }

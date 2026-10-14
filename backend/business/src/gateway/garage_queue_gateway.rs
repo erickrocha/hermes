@@ -2,12 +2,16 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::garage_attendance::{GarageAttendance, GarageAttendanceEntityMapper};
+use crate::domain::garage_cycle::GarageCycleState;
 use crate::domain::garage_service::{GarageService, GarageServiceEntityMapper};
 use crate::domain::garage_service_model::{GarageServiceModel, GarageServiceModelEntityMapper};
+use crate::domain::preventive_plan::{PreventivePlan, PreventivePlanEntityMapper};
 use crate::domain::vehicle::{Vehicle, VehicleEntityMapper};
 use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
+use crate::gateway::garage_cycle_gateway::{GarageCycleGateway, GarageCycleStore};
 use crate::gateway::garage_service_gateway::GarageServiceGateway;
 use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
+use crate::gateway::preventive_plan_gateway::PreventivePlanGateway;
 use crate::gateway::vehicle_gateway::VehicleGateway;
 use sea_orm::DbErr;
 use sea_orm::prelude::async_trait::async_trait;
@@ -29,6 +33,18 @@ pub trait GarageQueueStore: Send + Sync {
         &self,
         vehicle_id: i64,
     ) -> Result<Option<GarageAttendance>, BusinessError>;
+    async fn preventive_plans_for_vehicle(
+        &self,
+        _vehicle_id: i64,
+    ) -> Result<Vec<PreventivePlan>, BusinessError> {
+        Ok(Vec::new())
+    }
+    async fn garage_cycle_state(
+        &self,
+        _vehicle_id: i64,
+    ) -> Result<Option<GarageCycleState>, BusinessError> {
+        Ok(None)
+    }
 }
 
 pub struct GarageQueueDatabaseGateway {
@@ -36,6 +52,8 @@ pub struct GarageQueueDatabaseGateway {
     services: GarageServiceGateway,
     models: GarageServiceModelGateway,
     vehicles: VehicleGateway,
+    preventive_plans: PreventivePlanGateway,
+    cycles: GarageCycleGateway,
 }
 
 impl GarageQueueDatabaseGateway {
@@ -44,12 +62,16 @@ impl GarageQueueDatabaseGateway {
         services: GarageServiceGateway,
         models: GarageServiceModelGateway,
         vehicles: VehicleGateway,
+        preventive_plans: PreventivePlanGateway,
+        cycles: GarageCycleGateway,
     ) -> Self {
         Self {
             attendances,
             services,
             models,
             vehicles,
+            preventive_plans,
+            cycles,
         }
     }
 }
@@ -140,6 +162,24 @@ impl GarageQueueStore for GarageQueueDatabaseGateway {
             .await
             .map(|model| model.map(GarageAttendanceEntityMapper::from_model))
             .map_err(database_error)
+    }
+
+    async fn preventive_plans_for_vehicle(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Vec<PreventivePlan>, BusinessError> {
+        self.preventive_plans
+            .find_by_vehicle(vehicle_id)
+            .await
+            .map(PreventivePlanEntityMapper::from_models)
+            .map_err(database_error)
+    }
+
+    async fn garage_cycle_state(
+        &self,
+        vehicle_id: i64,
+    ) -> Result<Option<GarageCycleState>, BusinessError> {
+        self.cycles.find_by_vehicle(vehicle_id).await
     }
 }
 

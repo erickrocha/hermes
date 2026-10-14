@@ -673,5 +673,7 @@
   "garageUtcOffsetMinutes": "Operating-day UTC offset (min)",
   "garageBaseLatitude": "Garage base latitude",
   "garageBaseLongitude": "Garage base longitude",
-  "garageBaseRadiusMeters": "Garage geofence radius (m; default 75)"
+  "garageBaseRadiusMeters": "Garage geofence radius (m; default 75)",
+  "garageCycleFallbackDistanceKm": "Garage cycle fallback threshold (km; default 2)",
+  "garageOdometerMaxSingleJumpKm": "Maximum odometer jump per poll (km; default 300)"
 }

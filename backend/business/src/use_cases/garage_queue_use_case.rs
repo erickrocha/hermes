@@ -1,8 +1,8 @@
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::GarageServiceGroup;
-use crate::domain::enums::GarageServiceState;
+use crate::domain::enums::{GarageServiceGroup, GarageServiceState, PreventiveStatus};
 use crate::domain::garage_attendance::GarageAttendance;
 use crate::domain::garage_service::GarageService;
+use crate::domain::preventive_plan::PreventivePlan;
 use crate::domain::tenant_rule_setting::RuleSettings;
 use crate::gateway::garage_queue_gateway::GarageQueueStore;
 use crate::use_cases::effective_schedule_use_case::EffectiveScheduleUseCase;
@@ -13,6 +13,7 @@ use crate::use_cases::garage_readiness::{
 };
 use crate::use_cases::garage_validity::TankFact;
 use crate::use_cases::garage_validity_use_case::GarageValidityUseCase;
+use crate::use_cases::preventive_plan_use_case::compute_status;
 use chrono::NaiveDateTime;
 use std::collections::HashSet;
 
@@ -86,6 +87,24 @@ pub struct Card {
     pub prefix: String,
     pub tank_percent: Option<f64>,
     pub needs_refuel: bool,
+    pub maintenance_status: Option<PreventiveStatus>,
+    pub last_garage_cycle_distance_km: Option<f64>,
+}
+
+pub fn worst_maintenance_status(
+    plans: &[PreventivePlan],
+    current_odometer_km: Option<f64>,
+    today: chrono::NaiveDate,
+    rules: &RuleSettings,
+) -> Option<PreventiveStatus> {
+    plans
+        .iter()
+        .map(|plan| compute_status(plan, current_odometer_km, today, rules))
+        .max_by_key(|status| match status {
+            PreventiveStatus::Ok => 0,
+            PreventiveStatus::Attention => 1,
+            PreventiveStatus::Overdue => 2,
+        })
 }
 
 /// `EPIC-GA-05-S01`/`S03`/`S04` (`HRMS-962`): the yard's queue -- every active
@@ -151,12 +170,28 @@ impl GarageQueueUseCase {
                 TankFact::Percent(p) => Some(p),
                 TankFact::NoUsableReading => None,
             };
+            let vehicle = self.store.find_vehicle(vehicle_id).await?;
+            let plans = self.store.preventive_plans_for_vehicle(vehicle_id).await?;
+            let maintenance_status = worst_maintenance_status(
+                &plans,
+                vehicle.and_then(|vehicle| vehicle.odometer_km),
+                chrono::Utc::now().date_naive(),
+                &e.rules,
+            );
+            let last_garage_cycle_distance_km = self
+                .store
+                .garage_cycle_state(vehicle_id)
+                .await?
+                .and_then(|state| state.last_completed_cycle_distance_meters)
+                .map(|meters| meters / 1000.0);
             // Same alert as every other surface; a vehicle with a real trip ahead uses the trip cut.
             cards.push(Card {
                 vehicle_uuid: e.vehicle_uuid.clone(),
                 prefix: e.prefix.clone(),
                 tank_percent: percent,
                 needs_refuel: fill_tank_alert(tank, e.next_is_trip, &e.rules),
+                maintenance_status,
+                last_garage_cycle_distance_km,
             });
         }
         let keys: Vec<CardKey> = cards

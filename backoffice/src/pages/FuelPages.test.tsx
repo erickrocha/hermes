@@ -131,7 +131,7 @@ describe('fuel (C-029, HRMS-942…955)', () => {
       preventiveAttentionKmMargin: 1000, preventiveAttentionDaysMargin: 15, preventiveMaxExtensionKm: 50000, avgPeerMinCount: 2, garageValidityHours: 36, garageMinTripAbsenceMinutes: 60,
       garageFuelPendingBelowPercent: 50, garageTripFuelExemptPercent: 75, garageAlertLowPercent: 40, garageAlertTripPercent: 80, garageMonitorUrgentMinutes: 60, garageMonitorTripWindowMinutes: 120, garageMonitorLineWindowMinutes: 30,
       garageMonitorCardLimit: 8, garageMonitorMatrixRows: 12, garageMonitorMatrixColumns: 10, garageFuellingFreshnessHours: 12, garageUtcOffsetMinutes: -180,
-      garageBaseLatitude: null, garageBaseLongitude: null, garageBaseRadiusMeters: 75 } } as never)
+      garageBaseLatitude: null, garageBaseLongitude: null, garageBaseRadiusMeters: 75, garageCycleFallbackDistanceKm: 2, garageOdometerMaxSingleJumpKm: 300 } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
     signIn('TenantOwner')
     renderPage(<RuleSettingsPage />, '/fuel/rules', '/fuel/rules')

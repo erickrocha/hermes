@@ -58,6 +58,8 @@ fn json(tenant_id: Option<i64>, uuid: Option<String>, s: RuleSettings) -> Tenant
         garage_base_latitude: s.garage_base_latitude,
         garage_base_longitude: s.garage_base_longitude,
         garage_base_radius_meters: s.garage_base_radius_meters,
+        garage_cycle_fallback_distance_km: s.garage_cycle_fallback_distance_km,
+        garage_odometer_max_single_jump_km: s.garage_odometer_max_single_jump_km,
     }
 }
 
@@ -122,6 +124,8 @@ pub async fn configure(
         garage_base_latitude: p.garage_base_latitude,
         garage_base_longitude: p.garage_base_longitude,
         garage_base_radius_meters: p.garage_base_radius_meters,
+        garage_cycle_fallback_distance_km: p.garage_cycle_fallback_distance_km,
+        garage_odometer_max_single_jump_km: p.garage_odometer_max_single_jump_km,
     };
     match use_case(&state).configure(TenantRuleSetting::new(tenant_id, settings)).await {
         Ok(saved) => Ok(Json(json(saved.tenant_id, saved.uuid.clone(), saved.settings()))),

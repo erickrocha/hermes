@@ -82,8 +82,20 @@ pub struct TenantRuleSettingJson {
     pub garage_base_longitude: Option<f64>,
     #[serde(default = "default_garage_base_radius_meters")]
     pub garage_base_radius_meters: f64,
+    #[serde(default = "default_garage_cycle_fallback_distance_km")]
+    pub garage_cycle_fallback_distance_km: f64,
+    #[serde(default = "default_garage_odometer_max_single_jump_km")]
+    pub garage_odometer_max_single_jump_km: f64,
 }
 
 fn default_garage_base_radius_meters() -> f64 {
     75.0
+}
+
+fn default_garage_cycle_fallback_distance_km() -> f64 {
+    2.0
+}
+
+fn default_garage_odometer_max_single_jump_km() -> f64 {
+    300.0
 }

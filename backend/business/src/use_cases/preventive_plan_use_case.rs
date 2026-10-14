@@ -325,7 +325,7 @@ impl PreventivePlanUseCase {
     }
 }
 
-fn compute_status(
+pub fn compute_status(
     plan: &PreventivePlan,
     current_km: Option<f64>,
     today: chrono::NaiveDate,

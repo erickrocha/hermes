@@ -444,6 +444,8 @@ fn queue_use_case(
             GarageServiceGateway::new(db.clone()),
             GarageServiceModelGateway::new(db.clone()),
             VehicleGateway::new(db.clone()),
+            preventive_plan_gateway::PreventivePlanGateway::new(db.clone()),
+            garage_cycle_gateway::GarageCycleGateway::new(db.clone()),
         ),
         crate::endpoints::schedule_endpoint::schedule_use_case(state),
         validity_use_case(state),
@@ -527,7 +529,7 @@ pub async fn monitor(
     tag = "GarageAttendance",
     path = "/garage-attendance/monitor/cards",
     responses(
-        (status = 200, description = "The wall monitor's vehicle cards (TRM-495/1512): vehicles in the garage, need-to-refuel first (the same fill-the-tank alert as every other surface) and then the lowest tank; a vehicle with no trustworthy reading after those with one. Capped at the tenant's card limit (default 6) with `notShown` saying how many were left out. Read-only. The maintenance situation and the last garage-cycle distance the legacy card also carried are not yet included. **Roles:** any authenticated role; own tenant only.", body = GarageMonitorCardsJson),
+        (status = 200, description = "The wall monitor's vehicle cards (TRM-495/1512): need-to-refuel first, then lowest tank; cards include the worst preventive-plan status (`Overdue` > `Attention` > `Ok`) and the most recent completed garage-cycle distance in km when available. Capped at the tenant's card limit with `notShown` counting omitted vehicles. Read-only. **Roles:** any authenticated role; own tenant only.", body = GarageMonitorCardsJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
@@ -548,6 +550,8 @@ pub async fn monitor_cards(
                     prefix: c.prefix,
                     tank_percent: c.tank_percent,
                     needs_refuel: c.needs_refuel,
+                    maintenance_status: c.maintenance_status.map(|status| status.to_string()),
+                    last_garage_cycle_distance_km: c.last_garage_cycle_distance_km,
                 })
                 .collect(),
             not_shown,

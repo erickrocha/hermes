@@ -77,6 +77,8 @@ pub struct RuleSettings {
     pub garage_base_latitude: Option<f64>,
     pub garage_base_longitude: Option<f64>,
     pub garage_base_radius_meters: f64,
+    pub garage_cycle_fallback_distance_km: f64,
+    pub garage_odometer_max_single_jump_km: f64,
 }
 
 impl Default for RuleSettings {
@@ -118,6 +120,8 @@ impl Default for RuleSettings {
             garage_base_latitude: None,
             garage_base_longitude: None,
             garage_base_radius_meters: 75.0,
+            garage_cycle_fallback_distance_km: 2.0,
+            garage_odometer_max_single_jump_km: 300.0,
         }
     }
 }
@@ -161,6 +165,8 @@ impl From<&Model> for RuleSettings {
             garage_base_latitude: m.garage_base_latitude,
             garage_base_longitude: m.garage_base_longitude,
             garage_base_radius_meters: m.garage_base_radius_meters,
+            garage_cycle_fallback_distance_km: m.garage_cycle_fallback_distance_km,
+            garage_odometer_max_single_jump_km: m.garage_odometer_max_single_jump_km,
         }
     }
 }
@@ -215,6 +221,8 @@ pub struct TenantRuleSetting {
     pub garage_base_latitude: Option<f64>,
     pub garage_base_longitude: Option<f64>,
     pub garage_base_radius_meters: f64,
+    pub garage_cycle_fallback_distance_km: f64,
+    pub garage_odometer_max_single_jump_km: f64,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -263,6 +271,8 @@ impl TenantRuleSetting {
             garage_base_latitude: s.garage_base_latitude,
             garage_base_longitude: s.garage_base_longitude,
             garage_base_radius_meters: s.garage_base_radius_meters,
+            garage_cycle_fallback_distance_km: s.garage_cycle_fallback_distance_km,
+            garage_odometer_max_single_jump_km: s.garage_odometer_max_single_jump_km,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -308,6 +318,8 @@ impl TenantRuleSetting {
             garage_base_latitude: self.garage_base_latitude,
             garage_base_longitude: self.garage_base_longitude,
             garage_base_radius_meters: self.garage_base_radius_meters,
+            garage_cycle_fallback_distance_km: self.garage_cycle_fallback_distance_km,
+            garage_odometer_max_single_jump_km: self.garage_odometer_max_single_jump_km,
         }
     }
 }
@@ -362,6 +374,8 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_base_latitude: Set(d.garage_base_latitude),
             garage_base_longitude: Set(d.garage_base_longitude),
             garage_base_radius_meters: Set(d.garage_base_radius_meters),
+            garage_cycle_fallback_distance_km: Set(d.garage_cycle_fallback_distance_km),
+            garage_odometer_max_single_jump_km: Set(d.garage_odometer_max_single_jump_km),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -410,6 +424,8 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_base_latitude: e.garage_base_latitude,
             garage_base_longitude: e.garage_base_longitude,
             garage_base_radius_meters: e.garage_base_radius_meters,
+            garage_cycle_fallback_distance_km: e.garage_cycle_fallback_distance_km,
+            garage_odometer_max_single_jump_km: e.garage_odometer_max_single_jump_km,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -462,6 +478,8 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
                 garage_base_latitude: e.garage_base_latitude.take().flatten(),
                 garage_base_longitude: e.garage_base_longitude.take().flatten(),
                 garage_base_radius_meters: e.garage_base_radius_meters.take().unwrap_or(75.0),
+                garage_cycle_fallback_distance_km: e.garage_cycle_fallback_distance_km.take().unwrap_or(2.0),
+                garage_odometer_max_single_jump_km: e.garage_odometer_max_single_jump_km.take().unwrap_or(300.0),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),
