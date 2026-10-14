@@ -82,6 +82,7 @@ pub struct ExceptionIn {
 #[derive(Debug, Clone)]
 pub struct TripIn {
     pub id: i64,
+    pub order_code: String,
     pub customer_id: Option<i64>,
     pub driver_id: Option<i64>,
     pub vehicle_id: Option<i64>,
@@ -185,7 +186,7 @@ pub fn effective_schedule(date: NaiveDate, input: &DayInputs) -> Day {
             trip_id: Some(trip.id),
             kind: ItemKind::ExtraTrip,
             customer_id: trip.customer_id,
-            name: None,
+            name: Some(trip.order_code.clone()),
             start: Some(trip.start),
             end: trip.end,
             driver_id: trip.driver_id,
@@ -465,7 +466,7 @@ mod tests {
         let monday = d(28);
         let mut input = inputs(vec![demand(1, Some(DemandKind::Line), Some("Mon"))], vec![allocation(1, 5, 9)]);
         // Overlaps 06:00-09:00 and shares the vehicle 9 (not the driver).
-        input.trips.push(TripIn { id: 1, customer_id: None, driver_id: Some(99), vehicle_id: Some(9), start: monday.and_time(t(8, 0)), end: Some(monday.and_time(t(12, 0))) });
+        input.trips.push(TripIn { id: 1, order_code: "TRIP-1".into(), customer_id: None, driver_id: Some(99), vehicle_id: Some(9), start: monday.and_time(t(8, 0)), end: Some(monday.and_time(t(12, 0))) });
         let day = effective_schedule(monday, &input);
         let line = day.items.iter().find(|i| i.demand_id == Some(1)).unwrap();
         assert!(line.displaced_by_trip && line.vehicle_id.is_none() && line.driver_id == Some(5));

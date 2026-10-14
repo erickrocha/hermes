@@ -52,6 +52,8 @@ pub struct GarageAttendanceJson {
     pub manual_priority: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_at: Option<NaiveDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic_departure_justification: Option<String>,
     /// `Manual` or `ArrivalAtBase`.
     pub origin: String,
     /// `TRM-469…471`: the required services still effectively pending -- what blocks a departure.

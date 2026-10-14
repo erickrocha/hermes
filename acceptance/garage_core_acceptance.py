@@ -19,7 +19,7 @@ http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 CHECK_TABLES = ("tenant", "user", "vehicle", "garage_service_model", "garage_attendance",
                 "garage_service", "vehicle_presence_event", "garage_call", "garage_service_log", "fuel_entry",
                 "tenant_rule_setting", "garage_cycle_state", "garage_release", "garage_release_item",
-                "work_order", "work_order_item", "km_evolution")
+                "work_order", "work_order_item", "km_evolution", "extra_trip")
 
 
 def now():
@@ -411,6 +411,67 @@ def run():
                and r_k["status"] == "Open",
                f"at base, dated 2 days ago: {r_h['status']} re-dated {r_h['attendanceDate']} priority {r_h.get('manualPriority')} wash {svc(r_h, WASH)['state']}; "
                f"away: {r_l['status']}; away but dated today: {r_k['status']}")
+
+        # ---- EPIC-GA-06-S04: hold until a later trip and record auto departure ------
+        required_status, _ = service(owner, "QA Auto Required", required=True)
+        optional_status, _ = service(owner, "QA Auto Optional")
+        if required_status != 201 or optional_status != 201:
+            raise RuntimeError(f"create auto-departure services failed: {required_status}/{optional_status}")
+        auto_vehicle = vehicle(owner, "AUTO")
+        auto_triage = b.open_attendance(owner, auto_vehicle)
+        auto_departure = b.add_departure(owner, auto_vehicle, "AUTO", 0.15)
+        auto_before = get_triage(owner, auto_triage["uuid"])
+        deadline = time.time() + 30
+        auto_after = auto_before
+        while time.time() < deadline:
+            auto_after = get_triage(owner, auto_triage["uuid"])
+            if auto_after["status"] != "Open":
+                break
+            time.sleep(0.25)
+        time.sleep(1.2)
+        auto_after = get_triage(owner, auto_triage["uuid"])
+        auto_attendance_id = one(
+            f"SELECT id FROM garage_attendance WHERE uuid=UNHEX('{auto_triage['uuid'].replace('-', '')}')"
+        )
+        required_before = {
+            item["name"] for item in auto_before["services"]
+            if item["requiredForDeparture"] and item["effectiveState"] == "Pending"
+        }
+        automatic_logs = rows(
+            f"SELECT model.name, log.new_state, log.origin, log.acted_by_user_id "
+            f"FROM garage_service_log log JOIN garage_service_model model "
+            f"ON model.id=log.service_model_id WHERE log.tenant_id={b.TENANT_ID} "
+            f"AND log.attendance_id={auto_attendance_id} "
+            f"AND log.origin='System: automatic departure' ORDER BY model.name"
+        )
+        required_after = {
+            item["name"] for item in auto_after["services"]
+            if item["requiredForDeparture"] and item["state"] == "NotDone"
+        }
+        optional_result = svc(auto_after, "QA Auto Optional")
+        reason = auto_after.get("automaticDepartureJustification", "")
+        logged_services = {row[0] for row in automatic_logs}
+
+        already_vehicle = vehicle(owner, "ALREADY")
+        already_departure = b.add_departure(owner, already_vehicle, "ALREADY", 0.08)
+        while now() <= already_departure:
+            time.sleep(0.2)
+        already_triage = b.open_attendance(owner, already_vehicle)
+        time.sleep(1.2)
+        already_after = get_triage(owner, already_triage["uuid"])
+        record("GA-083", auto_before["status"] == "Open" and auto_after["status"] == "LeftForOperation"
+               and auto_after.get("releasedAt") is not None
+               and f"viagem extra '{b.TAG}-AUTO'" in reason
+               and required_before and required_after == required_before
+               and all(name in reason for name in required_before)
+               and optional_result is not None and optional_result["state"] == "Pending"
+               and len(automatic_logs) == len(required_before) and logged_services == required_before
+               and all(row[1] == "NotDone" and row[3] in ("", "NULL") for row in automatic_logs)
+               and already_after["status"] == "Open",
+               f"before={auto_before['status']}; due departure={auto_after['status']}; reason={reason}; "
+               f"required before/after={sorted(required_before)}/{sorted(required_after)}; "
+               f"optional={optional_result and optional_result['state']}; "
+               f"system logs={automatic_logs}; departure already open at check-in={already_after['status']}")
     finally:
         b.cleanup()
         after = {t: one(f"SELECT COUNT(*) FROM {t}") for t in CHECK_TABLES}

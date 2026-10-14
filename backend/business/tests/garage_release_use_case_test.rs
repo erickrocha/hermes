@@ -150,6 +150,7 @@ fn release_fixture(
                 status: GarageAttendanceStatus::Open,
                 manual_priority: Some(1),
                 released_at: None,
+                automatic_departure_justification: None,
                 origin: GarageAttendanceOrigin::Manual,
                 active_marker: Some(1),
                 created_at: None,

@@ -9,10 +9,13 @@ use std::collections::HashSet;
 
 /// A vehicle's departure on a day of the horizon -- a real trip (`TRM-474`: only a
 /// trip is "going to travel") or a line or charter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Departure {
     pub at: NaiveDateTime,
     pub is_trip: bool,
+    pub kind: ItemKind,
+    pub trip_id: Option<i64>,
+    pub name: Option<String>,
 }
 
 /// `EPIC-SC-04-S01` (`HRMS-610`): loads what a day depends on and asks the pure
@@ -49,6 +52,9 @@ impl EffectiveScheduleUseCase {
                     by_vehicle.entry(vehicle_id).or_default().push(Departure {
                         at,
                         is_trip: matches!(item.kind, ItemKind::ExtraTrip | ItemKind::OneOffTrip),
+                        kind: item.kind,
+                        trip_id: item.trip_id,
+                        name: item.name,
                     });
                 }
             }
@@ -127,6 +133,7 @@ impl EffectiveScheduleUseCase {
             .into_iter()
             .map(|t| TripIn {
                 id: t.id.unwrap_or_default(),
+                order_code: t.order_code,
                 customer_id: t.customer_id,
                 driver_id: t.driver_id,
                 vehicle_id: t.vehicle_id,

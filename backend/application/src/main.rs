@@ -428,6 +428,7 @@ async fn start() -> anyhow::Result<()> {
 
     // EPIC-GA-06-S03: the garage's day boundary runs in the background.
     crate::infrastructure::garage_jobs::spawn_rollover(state.conn.as_ref().clone());
+    crate::infrastructure::garage_jobs::spawn_auto_departure(state.conn.as_ref().clone());
     crate::infrastructure::garage_presence_job::spawn_presence_poll(state.clone());
 
     log::info!("Starting server...");

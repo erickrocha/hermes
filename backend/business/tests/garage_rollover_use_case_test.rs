@@ -80,6 +80,7 @@ fn old_attendance(id: i64, vehicle_id: i64) -> GarageAttendance {
         status: GarageAttendanceStatus::default(),
         manual_priority: Some(3),
         released_at: None,
+        automatic_departure_justification: None,
         origin: GarageAttendanceOrigin::default(),
         active_marker: Some(1),
         created_at: None,

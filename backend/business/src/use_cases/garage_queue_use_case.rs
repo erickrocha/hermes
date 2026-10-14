@@ -527,6 +527,7 @@ mod gateway_tests {
             status: "Finished".into(),
             manual_priority: None,
             released_at: Some(at()),
+            automatic_departure_justification: None,
             origin: "Manual".into(),
             active_marker: None,
             created_at: at(),

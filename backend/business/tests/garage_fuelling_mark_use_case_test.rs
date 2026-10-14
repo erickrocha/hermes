@@ -83,6 +83,7 @@ fn attendance() -> GarageAttendance {
         status: GarageAttendanceStatus::Open,
         manual_priority: None,
         released_at: None,
+        automatic_departure_justification: None,
         origin: GarageAttendanceOrigin::Manual,
         active_marker: Some(1),
         created_at: None,

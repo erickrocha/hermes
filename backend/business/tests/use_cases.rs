@@ -6917,6 +6917,7 @@ fn attendance_row(
         status: status.into(),
         manual_priority: Some(3),
         released_at: None,
+        automatic_departure_justification: None,
         origin: "Manual".into(),
         active_marker: active,
         created_at: at(),

@@ -192,6 +192,7 @@ async fn json(
         status: a.status.to_string(),
         manual_priority: a.manual_priority,
         released_at: a.released_at,
+        automatic_departure_justification: a.automatic_departure_justification,
         origin: a.origin.to_string(),
         required_pending: blocking,
         services: rows,

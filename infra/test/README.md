@@ -24,6 +24,10 @@ The garage day-boundary acceptance scenario requires the rollover worker. Start
 the stack with `TEST_GARAGE_ROLLOVER_INTERVAL_SECONDS=3` for that run; the default
 is `0` so unrelated tests do not run a background rollover.
 
+The automatic garage departure acceptance scenario requires its worker. Start
+the stack with `TEST_GARAGE_AUTO_DEPARTURE_INTERVAL_SECONDS=1`; it defaults to
+`0` so unrelated tests do not run automatic departures.
+
 The garage geofence acceptance scenario uses the local tracking mock and a
 1-second poll: start with `TEST_GARAGE_PRESENCE_POLL_INTERVAL_SECONDS=1`. The
 mock accepts position updates at `/control/positions`; it never contacts PinME.

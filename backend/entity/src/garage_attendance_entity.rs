@@ -15,6 +15,7 @@ pub struct Model {
     pub status: String,
     pub manual_priority: Option<i32>,
     pub released_at: Option<DateTimeUtc>,
+    pub automatic_departure_justification: Option<String>,
     pub origin: String,
     pub active_marker: Option<i32>,
     pub created_at: DateTimeUtc,

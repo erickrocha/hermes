@@ -135,6 +135,7 @@ impl GarageAttendanceUseCase {
                 status: GarageAttendanceStatus::Open,
                 manual_priority,
                 released_at: None,
+                automatic_departure_justification: None,
                 origin,
                 active_marker: Some(1),
                 created_at: None,
