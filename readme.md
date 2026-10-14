@@ -47,6 +47,14 @@ every future table, not only ones that will eventually replace part of operacao-
 5. Run the console: see [`backoffice/README.md`](backoffice/README.md).
 6. Build the Android TV client: from `client-apps/`, run
    `ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ./gradlew :androidApp:assembleDebug`.
+   Debug builds default to the emulator API at `http://10.0.2.2:8080`; set `HERMES_API_BASE_URL` or
+   `-PhermesApiBaseUrl=...` to target another API. Cleartext HTTP is enabled only for debug builds;
+   configure an HTTPS URL for release builds.
+   For a manually distributed release APK, configure `HERMES_RELEASE_KEYSTORE`,
+   `HERMES_RELEASE_STORE_PASSWORD`, `HERMES_RELEASE_KEY_ALIAS`, and
+   `HERMES_RELEASE_KEY_PASSWORD` in the build environment, then run
+   `./gradlew :androidApp:assembleRelease`. Keep the keystore and passwords out of version control.
+   Send `androidApp/build/outputs/apk/release/androidApp-release.apk` to the user for local installation.
 
 ## Deploying
 

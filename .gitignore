@@ -4,6 +4,8 @@
 **/.gradle/
 **/build/
 **/local.properties
+*.jks
+*.keystore
 
 # EPIC-XF-10-S03 (HRMS-040): the production secret file lives on the
 # production host and never in version control. `.env.example` next to it is
