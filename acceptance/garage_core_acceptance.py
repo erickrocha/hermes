@@ -85,6 +85,25 @@ def run():
     baseline = {t: one(f"SELECT COUNT(*) FROM {t}") for t in CHECK_TABLES}
     try:
         admin, owner = b.seed()
+        reader_email = f"{b.TAG}-reader@hermes.test"
+        s_reader, _ = http("POST", "/user", {
+            "email": reader_email,
+            "name": f"{b.TAG}-reader",
+            "role": "TenantUser",
+            "enabled": True,
+            "tenantId": b.TENANT_ID,
+        }, owner)
+        if s_reader != 201:
+            raise RuntimeError(f"create reader failed ({s_reader})")
+        reader_hash = one(f"SELECT password FROM user WHERE email='{reader_email}'")
+        access_secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or b.load_env()["ACCESS_TOKEN_SECRET"]
+        s_reader_invite, _ = http("POST", "/accept-invite", {
+            "token": b.invite_token(reader_email, reader_hash, access_secret),
+            "newPassword": b.PASSWORD,
+        })
+        if s_reader_invite != 204:
+            raise RuntimeError(f"activate reader failed ({s_reader_invite})")
+        reader = b.login(reader_email, b.PASSWORD)
 
         # ---- EPIC-GA-08-S01: the tenant's single garage geofence ----------------------
         s_default, default_rules = http("GET", "/tenant-rule-settings", token=owner)
@@ -331,6 +350,109 @@ def run():
         record("GA-052", status == 200 and order == ["q2", "q1", "q3", "q4"]
                and alert == {"q1": False, "q2": False, "q3": True, "q4": False},
                f"order={order}; alert (80% tank, 80% + trip, 60% tank)={alert}")
+
+        # ---- EPIC-GA-05-S04: authorize skipping one trip's preparation ----------------
+        skip_vehicle = vehicle(owner, "SKIP")
+        n = now()
+        presence(admin, skip_vehicle, "Arrival", n - timedelta(minutes=10))
+        skip_triage = active_triage(owner, skip_vehicle)[1]
+        b.mark_service(owner, skip_triage, svc(skip_triage, WASH), "Performed")
+
+        def extra_trip_for(v, suffix):
+            time.sleep(2)  # MariaDB stores audit timestamps at whole-second precision.
+            departure = now() + timedelta(hours=2)
+            status, trip = http("POST", "/extra-trip", {
+                "orderCode": f"QA-GA-SKIP-{suffix}-{int(time.time())}",
+                "tripDate": departure.date().isoformat(),
+                "startTime": departure.time().replace(microsecond=0).isoformat(),
+                "returnDate": departure.date().isoformat(),
+                "returnTime": (departure + timedelta(hours=2)).time().replace(microsecond=0).isoformat(),
+                "destination": "QA terminal",
+                "vehicleUuid": v["uuid"],
+                "status": "Scheduled",
+            }, owner)
+            return status, trip
+
+        s_skip_trip, skip_trip = extra_trip_for(skip_vehicle, "A")
+        skip_path = f"/extra-trip/uuid/{skip_trip['uuid']}/preparation-skip" if s_skip_trip == 201 else ""
+        s_skip = http("POST", skip_path, {"justification": "Vehicle is already prepared"}, owner)[0] if skip_path else 0
+        s_skip_blank = http("POST", skip_path, {"justification": "  "}, owner)[0] if skip_path else 0
+        s_skip_forbidden = http("POST", skip_path, {"justification": "No permission"}, reader)[0] if skip_path else 0
+        departure_at = now() + timedelta(seconds=5)
+        s_skip_departure = presence(admin, skip_vehicle, "Departure", departure_at)[0]
+        after_authorized_trip = get_triage(owner, skip_triage["uuid"])
+        time.sleep(2)
+        s_other_trip, other_trip = extra_trip_for(skip_vehicle, "B")
+        s_return = presence(admin, skip_vehicle, "Arrival", now() + timedelta(seconds=10))[0]
+        s_other_departure = presence(admin, skip_vehicle, "Departure", now() + timedelta(seconds=15))[0]
+        after_other_trip = get_triage(owner, skip_triage["uuid"])
+
+        edit_vehicle = vehicle(owner, "SKIPEDIT")
+        presence(admin, edit_vehicle, "Arrival", now() - timedelta(minutes=10))
+        edit_triage = active_triage(owner, edit_vehicle)[1]
+        b.mark_service(owner, edit_triage, svc(edit_triage, WASH), "Performed")
+        time.sleep(2)
+        s_edit_trip, edit_trip = extra_trip_for(edit_vehicle, "C")
+        edit_path = f"/extra-trip/uuid/{edit_trip['uuid']}/preparation-skip"
+        s_edit_auth = http("POST", edit_path, {"justification": "Reviewed by platform"}, admin)[0]
+        s_edit_read, edit_payload = http("GET", f"/extra-trip/uuid/{edit_trip['uuid']}", token=owner)
+        edit_payload["destination"] = "Changed terminal"
+        s_edit = http("PUT", f"/extra-trip/uuid/{edit_trip['uuid']}", edit_payload, owner)[0]
+        s_edit_departure = presence(admin, edit_vehicle, "Departure", now() + timedelta(seconds=5))[0]
+        edit_state = svc(get_triage(owner, edit_triage["uuid"]), WASH)
+        edit_auth_count = one(
+            f"SELECT COUNT(*) FROM extra_trip WHERE id={edit_trip['id']} AND preparation_skip_authorized_by IS NOT NULL"
+        )
+
+        import_vehicle = vehicle(owner, "SKIPIMPORT")
+        presence(admin, import_vehicle, "Arrival", now() - timedelta(minutes=10))
+        import_triage = active_triage(owner, import_vehicle)[1]
+        b.mark_service(owner, import_triage, svc(import_triage, WASH), "Performed")
+        time.sleep(2)
+        s_import_trip, import_trip = extra_trip_for(import_vehicle, "D")
+        import_path = f"/extra-trip/uuid/{import_trip['uuid']}/preparation-skip"
+        s_import_auth = http("POST", import_path, {"justification": "Reviewed before import"}, owner)[0]
+        s_import_read, import_payload = http("GET", f"/extra-trip/uuid/{import_trip['uuid']}", token=owner)
+        import_payload["returnDate"] = (
+            datetime.fromisoformat(import_payload["returnDate"]).date() + timedelta(days=1)
+        ).isoformat()
+        s_import, import_result = http("POST", "/extra-trip/import", [import_payload], owner)
+        s_import_departure = presence(admin, import_vehicle, "Departure", now() + timedelta(seconds=5))[0]
+        import_state = svc(get_triage(owner, import_triage["uuid"]), WASH)
+        import_auth_count = one(
+            f"SELECT COUNT(*) FROM extra_trip WHERE id={import_trip['id']} AND preparation_skip_authorized_by IS NOT NULL"
+        )
+        skip_vehicle_id = vehicle_id(skip_vehicle)
+        trip_evidence = rows(
+            f"SELECT order_code, created_at, preparation_skip_authorized_by, preparation_skip_vehicle_id, vehicle_id "
+            f"FROM extra_trip WHERE vehicle_id={skip_vehicle_id} ORDER BY id"
+        )
+        service_evidence = rows(
+            f"SELECT gs.state, gs.performed_at FROM garage_service gs "
+            f"JOIN garage_attendance ga ON ga.id=gs.attendance_id WHERE ga.vehicle_id={skip_vehicle_id}"
+        )
+        presence_evidence = rows(
+            f"SELECT kind, occurred_at FROM vehicle_presence_event "
+            f"WHERE vehicle_id={skip_vehicle_id} ORDER BY id"
+        )
+        record("GA-084", s_skip_trip == 201 and s_skip == 201 and s_skip_blank == 400 and s_skip_forbidden == 403
+               and s_skip_departure == 200
+               and svc(after_authorized_trip, WASH)["effectiveState"] == "Performed"
+               and s_other_trip == 201 and s_return == 200 and s_other_departure == 200
+               and svc(after_other_trip, WASH)["effectiveState"] == "Pending"
+             and svc(after_other_trip, WASH)["effectiveReason"] == "TripMarked"
+             and s_edit_trip == 201 and s_edit_auth == 201 and s_edit_read == 200 and s_edit == 200
+             and s_edit_departure == 200 and edit_state["effectiveReason"] == "TripMarked" and edit_auth_count == "0"
+             and s_import_trip == 201 and s_import_auth == 201 and s_import_read == 200
+             and s_import == 200 and import_result["updated"] == 1 and s_import_departure == 200
+             and import_state["effectiveReason"] == "TripMarked" and import_auth_count == "0",
+             f"trip/auth/blank/non-admin={s_skip_trip}/{s_skip}/{s_skip_blank}/{s_skip_forbidden}; first departure={s_skip_departure}; "
+               f"authorized trip state={svc(after_authorized_trip, WASH).get('effectiveState')}; "
+               f"different trip={s_other_trip}; return/departure={s_return}/{s_other_departure}; "
+               f"different trip state/reason={svc(after_other_trip, WASH).get('effectiveState')}/{svc(after_other_trip, WASH).get('effectiveReason')}; "
+             f"edit trip/auth/read/update/departure={s_edit_trip}/{s_edit_auth}/{s_edit_read}/{s_edit}/{s_edit_departure} -> {edit_state.get('effectiveReason')}; "
+             f"import trip/auth/read/import/departure={s_import_trip}/{s_import_auth}/{s_import_read}/{s_import}/{s_import_departure} -> {import_state.get('effectiveReason')}; "
+               f"trip/service/presence evidence={trip_evidence}/{service_evidence}/{presence_evidence}")
 
         # ---- EPIC-GA-06-S01: an arrival opens the triage; carry forward ----------------
         y = vehicle(owner, "Y")

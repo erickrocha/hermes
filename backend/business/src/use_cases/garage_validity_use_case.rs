@@ -95,8 +95,9 @@ impl GarageValidityUseCase {
             .trips
             .upcoming_for_vehicle(vehicle_id, chrono::Utc::now().date_naive())
             .await?
-            .first()
-            .and_then(|trip| trip.created_at);
+            .into_iter()
+            .filter_map(|trip| trip.created_at)
+            .collect();
 
         // One gauge read, and only if some service is tank-governed.
         let mut governed = Vec::with_capacity(services.len());

@@ -6,7 +6,8 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::extra_trip_json::{
-    ExtraTripJson, TripImportPreviewJson, TripImportPreviewRowJson,
+    ExtraTripJson, PreparationSkipRequestJson, TripImportPreviewJson,
+    TripImportPreviewRowJson,
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::reference_json::ImportResultJson;
@@ -348,6 +349,52 @@ pub async fn update(
         Ok(trip) => Ok(Json(json(&state, trip).await)),
         Err(e) => Err(error(locale, &e.message)),
     }
+}
+
+#[utoipa::path(
+    post,
+    tag = "Extra Trip",
+    path = "/extra-trip/uuid/{uuid}/preparation-skip",
+    params(("uuid" = String, Path, description = "Trip UUID")),
+    request_body = PreparationSkipRequestJson,
+    responses(
+        (status = 201, description = "Preparation skip authorized for this trip. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only)."),
+        (status = 400, description = "Justification is required", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller may not administer this trip", body = ForbiddenErrorJson),
+        (status = 404, description = "Trip not found, or it belongs to another tenant", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn authorize_preparation_skip(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<PreparationSkipRequestJson>,
+) -> HttpResponse<StatusCode> {
+    let trip = find_visible(&state, &locale, &current_user, uuid).await?;
+    if !can_administer_extra_trip(&current_user, trip.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::ExtraTripForbidden,
+        ));
+    }
+
+    let id = trip.id.ok_or_else(|| {
+        ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError)
+    })?;
+    use_case(&state)
+        .authorize_preparation_skip(
+            id,
+            payload.justification,
+            current_user.email,
+            chrono::Utc::now().naive_utc(),
+        )
+        .await
+        .map(|()| StatusCode::CREATED)
+        .map_err(|business_error| error(locale, &business_error.message))
 }
 
 async fn find_visible(

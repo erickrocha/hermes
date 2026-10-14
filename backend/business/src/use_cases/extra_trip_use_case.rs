@@ -20,6 +20,8 @@ pub const NOT_A_DRIVER: &str = "The person named is not an active driver of this
 pub const NOT_A_TENANT_VEHICLE: &str = "The vehicle named does not belong to this tenant";
 /// `customer_id` does not name a customer of the trip's own tenant.
 pub const NOT_A_TENANT_CUSTOMER: &str = "The customer named does not belong to this tenant";
+pub const PREPARATION_SKIP_JUSTIFICATION_REQUIRED: &str =
+    "A justification is required to skip trip preparation";
 
 pub struct ExtraTripUseCase {
     gateway: Box<dyn ExtraTripStore>,
@@ -73,6 +75,25 @@ impl ExtraTripUseCase {
         };
 
         self.gateway.save(updated).await.map_err(store_error)
+    }
+
+    pub async fn authorize_preparation_skip(
+        &self,
+        id: i64,
+        reason: String,
+        actor: String,
+        authorized_at: chrono::NaiveDateTime,
+    ) -> Result<(), BusinessError> {
+        self.find_by_id(id).await?;
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(BusinessError::new(
+                PREPARATION_SKIP_JUSTIFICATION_REQUIRED.to_string(),
+            ));
+        }
+        self.gateway
+            .authorize_preparation_skip(id, reason.to_string(), actor, authorized_at)
+            .await
     }
 
     /// The order code is required; every relation (`customer_id`,

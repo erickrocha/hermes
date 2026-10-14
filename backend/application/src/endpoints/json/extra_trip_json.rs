@@ -58,6 +58,12 @@ pub struct ExtraTripJson {
     pub replaced_by_uuid: Option<String>,
 }
 
+#[derive(Deserialize, Debug, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparationSkipRequestJson {
+    pub justification: String,
+}
+
 /// `HRMS-608`: what an import would do, row by row, with nothing written.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]

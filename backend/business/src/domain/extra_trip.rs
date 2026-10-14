@@ -77,6 +77,15 @@ impl EntityMapper<ExtraTrip, Model, ActiveModel> for ExtraTripEntityMapper {
             created_by: NotSet,
             updated_at: NotSet,
             updated_by: NotSet,
+            preparation_skip_authorized_by: NotSet,
+            preparation_skip_authorized_at: NotSet,
+            preparation_skip_justification: NotSet,
+            preparation_skip_vehicle_id: NotSet,
+            preparation_skip_trip_date: NotSet,
+            preparation_skip_start_time: NotSet,
+            preparation_skip_return_date: NotSet,
+            preparation_skip_return_time: NotSet,
+            preparation_skip_destination: NotSet,
         }
     }
 

@@ -8,7 +8,7 @@ use entity::prelude::ExtraTripEntity as ExtraTripQuery;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
-    QueryFilter, QueryOrder, SqlErr, TransactionTrait,
+    QueryFilter, QueryOrder, Set, SqlErr, TransactionTrait,
 };
 
 pub enum ExtraTripStoreError {
@@ -19,6 +19,13 @@ pub enum ExtraTripStoreError {
 #[async_trait]
 pub trait ExtraTripStore: Send + Sync {
     async fn save(&self, trip: ExtraTrip) -> Result<ExtraTrip, ExtraTripStoreError>;
+    async fn authorize_preparation_skip(
+        &self,
+        id: i64,
+        reason: String,
+        actor: String,
+        authorized_at: chrono::NaiveDateTime,
+    ) -> Result<(), BusinessError>;
     async fn find_by_id(&self, id: i64) -> Result<Option<ExtraTrip>, BusinessError>;
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<ExtraTrip>, BusinessError>;
     async fn find_page(
@@ -69,7 +76,22 @@ impl Gateway<ExtraTrip, extra_trip_entity::Model, extra_trip_entity::ActiveModel
     for ExtraTripGateway
 {
     async fn persist(&self, entity: ExtraTrip) -> Result<extra_trip_entity::ActiveModel, DbErr> {
-        ExtraTripEntityMapper::build_active_model(entity)
+        let mut active = ExtraTripEntityMapper::build_active_model(entity.clone());
+        if let Some(id) = entity.id {
+            let existing = <Self as Gateway<
+                ExtraTrip,
+                extra_trip_entity::Model,
+                extra_trip_entity::ActiveModel,
+            >>::find_by_id(self, id)
+            .await?;
+            if existing
+                .as_ref()
+                .is_some_and(|existing| !same_preparation_snapshot(existing, &entity))
+            {
+                clear_preparation_skip(&mut active);
+            }
+        }
+        active
             .save(&self.db)
             .await
     }
@@ -120,6 +142,36 @@ impl ExtraTripGateway {
             .order_by_desc(extra_trip_entity::Column::CreatedAt)
             .all(&self.db)
             .await
+    }
+
+    async fn authorize_preparation_skip(
+        &self,
+        id: i64,
+        reason: String,
+        actor: String,
+        authorized_at: chrono::NaiveDateTime,
+    ) -> Result<(), BusinessError> {
+        let trip = <Self as Gateway<
+            ExtraTrip,
+            extra_trip_entity::Model,
+            extra_trip_entity::ActiveModel,
+        >>::find_by_id(self, id)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| BusinessError::new("Trip not found".to_string()))?;
+        let mut active = ExtraTripEntityMapper::build_active_model(ExtraTripEntityMapper::from_model(trip.clone()));
+        active.id = Set(trip.id);
+        active.preparation_skip_authorized_by = Set(Some(actor));
+        active.preparation_skip_authorized_at = Set(Some(authorized_at.and_utc()));
+        active.preparation_skip_justification = Set(Some(reason));
+        active.preparation_skip_vehicle_id = Set(trip.vehicle_id);
+        active.preparation_skip_trip_date = Set(Some(trip.trip_date));
+        active.preparation_skip_start_time = Set(trip.start_time);
+        active.preparation_skip_return_date = Set(trip.return_date);
+        active.preparation_skip_return_time = Set(trip.return_time);
+        active.preparation_skip_destination = Set(trip.destination);
+        active.update(&self.db).await.map_err(database_error)?;
+        Ok(())
     }
 
     /// `PD-028`.
@@ -201,7 +253,9 @@ impl GarageValidityTripStore for ExtraTripGateway {
         let models = ExtraTripGateway::find_upcoming_by_vehicle(self, vehicle_id, from)
             .await
             .map_err(database_error)?;
-        Ok(ExtraTripEntityMapper::from_models(models))
+        Ok(ExtraTripEntityMapper::from_models(
+            trips_without_valid_preparation_skip(models),
+        ))
     }
 }
 
@@ -219,6 +273,16 @@ impl ExtraTripStore for ExtraTripGateway {
             _ => ExtraTripStoreError::Storage(database_error(error)),
         })?;
         Ok(ExtraTripEntityMapper::from_active_model(active))
+    }
+
+    async fn authorize_preparation_skip(
+        &self,
+        id: i64,
+        reason: String,
+        actor: String,
+        authorized_at: chrono::NaiveDateTime,
+    ) -> Result<(), BusinessError> {
+        ExtraTripGateway::authorize_preparation_skip(self, id, reason, actor, authorized_at).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<ExtraTrip>, BusinessError> {
@@ -286,15 +350,25 @@ impl ExtraTripStore for ExtraTripGateway {
                 Some(existing) => {
                     trip.id = Some(existing.id);
                     updated += 1;
+                    let mut active = ExtraTripEntityMapper::build_active_model(trip.clone());
+                    if !same_preparation_snapshot(&existing, &trip) {
+                        clear_preparation_skip(&mut active);
+                    }
+                    if let Err(error) = active.save(&transaction).await {
+                        let _ = transaction.rollback().await;
+                        return Err(database_error(error));
+                    }
                 }
-                None => created += 1,
-            }
-            if let Err(error) = ExtraTripEntityMapper::build_active_model(trip)
-                .save(&transaction)
-                .await
-            {
-                let _ = transaction.rollback().await;
-                return Err(database_error(error));
+                None => {
+                    created += 1;
+                    if let Err(error) = ExtraTripEntityMapper::build_active_model(trip)
+                        .save(&transaction)
+                        .await
+                    {
+                        let _ = transaction.rollback().await;
+                        return Err(database_error(error));
+                    }
+                }
             }
         }
         transaction.commit().await.map_err(database_error)?;
@@ -302,13 +376,152 @@ impl ExtraTripStore for ExtraTripGateway {
     }
 }
 
+fn same_preparation_snapshot(existing: &extra_trip_entity::Model, next: &ExtraTrip) -> bool {
+    existing.vehicle_id == next.vehicle_id
+        && existing.trip_date == next.trip_date
+        && existing.start_time == next.start_time
+        && existing.return_date == next.return_date
+        && existing.return_time == next.return_time
+        && existing.destination == next.destination
+}
+
+fn clear_preparation_skip(active: &mut extra_trip_entity::ActiveModel) {
+    active.preparation_skip_authorized_by = Set(None);
+    active.preparation_skip_authorized_at = Set(None);
+    active.preparation_skip_justification = Set(None);
+    active.preparation_skip_vehicle_id = Set(None);
+    active.preparation_skip_trip_date = Set(None);
+    active.preparation_skip_start_time = Set(None);
+    active.preparation_skip_return_date = Set(None);
+    active.preparation_skip_return_time = Set(None);
+    active.preparation_skip_destination = Set(None);
+}
+
+fn preparation_skip_matches(trip: &extra_trip_entity::Model) -> bool {
+    trip.preparation_skip_authorized_by
+        .as_ref()
+        .is_some_and(|actor| !actor.trim().is_empty())
+        && trip
+            .preparation_skip_justification
+            .as_ref()
+            .is_some_and(|reason| !reason.trim().is_empty())
+        && trip.preparation_skip_authorized_at.is_some()
+        && trip.preparation_skip_vehicle_id == trip.vehicle_id
+        && trip.preparation_skip_trip_date == Some(trip.trip_date)
+        && trip.preparation_skip_start_time == trip.start_time
+        && trip.preparation_skip_return_date == trip.return_date
+        && trip.preparation_skip_return_time == trip.return_time
+        && trip.preparation_skip_destination == trip.destination
+}
+
+fn trips_without_valid_preparation_skip(
+    trips: Vec<extra_trip_entity::Model>,
+) -> Vec<extra_trip_entity::Model> {
+    trips
+        .into_iter()
+        .filter(|trip| !preparation_skip_matches(trip))
+        .collect()
+}
+
 /// `HRMS-607` (`D-09`): same technique every other gateway's own tests use.
 #[cfg(test)]
 mod tests {
     use crate::commons::gateway::{tenant_delete, tenant_select};
+    use chrono::{NaiveDate, NaiveTime};
     use entity::audit::{AuditUser, run_with_user};
     use entity::extra_trip_entity;
     use sea_orm::{DbBackend, EntityTrait, QueryTrait};
+
+    fn authorized_trip() -> extra_trip_entity::Model {
+        let date = NaiveDate::from_ymd_opt(2026, 10, 15).expect("valid test date");
+        let start = NaiveTime::from_hms_opt(8, 0, 0).expect("valid test time");
+        extra_trip_entity::Model {
+            id: 10,
+            uuid: vec![10],
+            tenant_id: Some(42),
+            order_code: "TRIP-10".into(),
+            trip_date: date,
+            customer_id: None,
+            start_time: Some(start),
+            return_date: Some(date),
+            return_time: Some(NaiveTime::from_hms_opt(12, 0, 0).expect("valid test time")),
+            destination: Some("Terminal".into()),
+            origin_city: None,
+            stops: None,
+            preferred_vehicle_type: None,
+            driver_id: None,
+            second_driver_id: None,
+            vehicle_id: Some(7),
+            freight_value_cents: None,
+            payment: None,
+            status: "Scheduled".into(),
+            origin: None,
+            import_batch_id: None,
+            imported_at: None,
+            replaced_by_id: None,
+            created_at: chrono::Utc::now(),
+            created_by: None,
+            updated_at: chrono::Utc::now(),
+            updated_by: None,
+            preparation_skip_authorized_by: Some("owner@example.com".into()),
+            preparation_skip_authorized_at: Some(chrono::Utc::now()),
+            preparation_skip_justification: Some("Vehicle is already prepared".into()),
+            preparation_skip_vehicle_id: Some(7),
+            preparation_skip_trip_date: Some(date),
+            preparation_skip_start_time: Some(start),
+            preparation_skip_return_date: Some(date),
+            preparation_skip_return_time: Some(
+                NaiveTime::from_hms_opt(12, 0, 0).expect("valid test time"),
+            ),
+            preparation_skip_destination: Some("Terminal".into()),
+        }
+    }
+
+    #[test]
+    fn a_skip_authorization_only_matches_its_complete_trip_snapshot() {
+        let trip = authorized_trip();
+        assert!(super::preparation_skip_matches(&trip));
+
+        let mut changed = trip.clone();
+        changed.vehicle_id = Some(8);
+        assert!(!super::preparation_skip_matches(&changed));
+        let mut changed = trip.clone();
+        changed.trip_date = changed.trip_date.succ_opt().expect("valid next date");
+        assert!(!super::preparation_skip_matches(&changed));
+        let mut changed = trip.clone();
+        changed.start_time = None;
+        assert!(!super::preparation_skip_matches(&changed));
+        let mut changed = trip.clone();
+        changed.return_date = None;
+        assert!(!super::preparation_skip_matches(&changed));
+        let mut changed = trip.clone();
+        changed.return_time = None;
+        assert!(!super::preparation_skip_matches(&changed));
+        let mut changed = trip;
+        changed.destination = Some("Different terminal".into());
+        assert!(!super::preparation_skip_matches(&changed));
+    }
+
+    #[test]
+    fn an_authorized_trip_does_not_hide_another_trip_for_the_same_vehicle() {
+        let authorized = authorized_trip();
+        let mut other = authorized.clone();
+        other.id = 11;
+        other.order_code = "TRIP-11".into();
+        other.preparation_skip_authorized_by = None;
+        other.preparation_skip_authorized_at = None;
+        other.preparation_skip_justification = None;
+        other.preparation_skip_vehicle_id = None;
+        other.preparation_skip_trip_date = None;
+        other.preparation_skip_start_time = None;
+        other.preparation_skip_return_date = None;
+        other.preparation_skip_return_time = None;
+        other.preparation_skip_destination = None;
+        let trips = super::trips_without_valid_preparation_skip(vec![authorized, other]);
+
+        assert_eq!(trips.len(), 1);
+        assert_eq!(trips[0].id, 11);
+    }
 
     fn caller(tenant_id: Option<i64>, enforce_tenant: bool) -> AuditUser {
         AuditUser {

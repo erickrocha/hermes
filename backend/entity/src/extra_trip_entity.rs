@@ -9,10 +9,8 @@ use sea_orm::entity::prelude::*;
 /// reuses order codes on different dates, so code alone is not unique
 /// (`uq_extra_trip_tenant_code_date`).
 ///
-/// **Deliberately not carried from `entity-inventory.md`'s field list**:
-/// `preparo_liberado_chave` (garage-prep release key) -- that is `C-028`'s
-/// garage domain, which does not exist in hermes yet. Add it in the same
-/// migration that builds `C-028`, not here.
+/// Garage-preparation skip authorization is stored with its author, reason,
+/// timestamp and the trip snapshot it applies to (`HRMS-976`, `D-32`).
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "extra_trip")]
 pub struct Model {
@@ -59,6 +57,15 @@ pub struct Model {
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,
     pub updated_by: Option<String>,
+    pub preparation_skip_authorized_by: Option<String>,
+    pub preparation_skip_authorized_at: Option<DateTimeUtc>,
+    pub preparation_skip_justification: Option<String>,
+    pub preparation_skip_vehicle_id: Option<i64>,
+    pub preparation_skip_trip_date: Option<Date>,
+    pub preparation_skip_start_time: Option<Time>,
+    pub preparation_skip_return_date: Option<Date>,
+    pub preparation_skip_return_time: Option<Time>,
+    pub preparation_skip_destination: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

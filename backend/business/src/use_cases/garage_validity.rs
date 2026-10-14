@@ -44,12 +44,12 @@ pub enum TankFact {
     Percent(f64),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ValidityContext {
     pub presence: PresenceFacts,
-    /// `TRM-784`: when the vehicle's latest trip entered the system, which obliges
-    /// its preparation to be redone -- `None` when no trip is marked for it.
-    pub trip_marked_at: Option<NaiveDateTime>,
+    /// `TRM-784`: registration instants of upcoming trips whose preparation
+    /// skip has not been authorized for the current trip snapshot.
+    pub trip_marked_at: Vec<NaiveDateTime>,
     pub tank: TankFact,
     pub now: NaiveDateTime,
 }
@@ -172,8 +172,7 @@ fn run_counts_as_trip(departed: NaiveDateTime, arrived: NaiveDateTime, rules: &R
 /// minimum). A tank-governed service at or above the exemption level, read from
 /// a trustworthy reading, is exempt (`TRM-468`).
 fn trip_consumes(stamp: NaiveDateTime, service: &ServiceFacts, ctx: &ValidityContext, rules: &RuleSettings) -> bool {
-    let Some(marked) = ctx.trip_marked_at else { return false };
-    if marked <= stamp {
+    if !ctx.trip_marked_at.iter().any(|marked| *marked > stamp) {
         return false;
     }
     if service.governed_by_tank
@@ -214,7 +213,7 @@ mod tests {
     }
 
     fn ctx(presence: PresenceFacts, now: NaiveDateTime) -> ValidityContext {
-        ValidityContext { presence, trip_marked_at: None, tank: TankFact::NoUsableReading, now }
+        ValidityContext { presence, trip_marked_at: Vec::new(), tank: TankFact::NoUsableReading, now }
     }
 
     fn at_base() -> PresenceFacts {
@@ -313,11 +312,12 @@ mod tests {
         let s = performed(1, 8);
         // Trip marked day 2, vehicle has not moved since the service: not consumed (TRM-466).
         let mut c = ctx(at_base(), at(2, 12));
-        c.trip_marked_at = Some(at(2, 9));
+        c.trip_marked_at = vec![at(2, 9)];
         assert_eq!(effective_state(&s, &c, &R()).0, GarageServiceState::Performed);
         // Still away with a departure after the service: consumed (TRM-465).
         let mut c = ctx(departed(2, 10), at(2, 12));
-        c.trip_marked_at = Some(at(2, 9));
+        // An earlier trip marker cannot hide a different, later unapproved trip.
+        c.trip_marked_at = vec![at(1, 7), at(2, 9)];
         assert_eq!(effective_state(&s, &c, &R()), (GarageServiceState::Pending, ValidityReason::TripMarked));
         // The fuelling service at >= 95 % on a trustworthy reading is exempt (TRM-468).
         let fuel = ServiceFacts { governed_by_tank: true, ..s };

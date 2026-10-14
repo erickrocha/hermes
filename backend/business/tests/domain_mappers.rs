@@ -925,6 +925,15 @@ fn extra_trip_model() -> extra_trip_entity::Model {
         created_by: Some("owner@example.com".into()),
         updated_at: at(),
         updated_by: None,
+        preparation_skip_authorized_by: None,
+        preparation_skip_authorized_at: None,
+        preparation_skip_justification: None,
+        preparation_skip_vehicle_id: None,
+        preparation_skip_trip_date: None,
+        preparation_skip_start_time: None,
+        preparation_skip_return_date: None,
+        preparation_skip_return_time: None,
+        preparation_skip_destination: None,
     }
 }
 
