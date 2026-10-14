@@ -149,6 +149,10 @@ def run():
         time.sleep(1.2)
         stale_count = int(one(f"SELECT COUNT(*) FROM vehicle_presence_event WHERE tenant_id={b.TENANT_ID}"))
         final_state = wait_for(owner, vehicle["uuid"], lambda state: state.get("away") is False, timeout=1)
+        persisted_position_columns = b.rows(
+            "SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND COLUMN_NAME IN ('latitude','longitude')"
+        )
 
         presence_checks = {
             "departure": departure is not None and departure.get("away") is True and departure_count == 1,
@@ -156,6 +160,7 @@ def run():
             "arrival": arrival is not None and arrival.get("away") is False and arrival_count == 2,
             "arrival_triage": triage_status == 200 and triage.get("origin") == "ArrivalAtBase",
             "stale_ignored": stale_count == 2 and final_state is not None and final_state.get("away") is False,
+            "provider_positions_not_persisted": not persisted_position_columns,
         }
         card_checks = {
             "plan_created": plan_status == 201,
@@ -165,7 +170,8 @@ def run():
         }
         record("GA-081", all(presence_checks.values()),
                f"departure={departure_count}; repeated outside={repeated_count}; arrival={arrival_count}; "
-               f"triage={triage_status}/{triage.get('origin')}; stale remains={stale_count}; checks={presence_checks}")
+             f"triage={triage_status}/{triage.get('origin')}; stale remains={stale_count}; "
+             f"raw position columns={persisted_position_columns}; checks={presence_checks}")
         record("GA-082", all(card_checks.values()),
                f"plan={plan_status}/{card and card.get('maintenanceStatus')}; "
                f"cycle={cycle_distance_meters} m/{card and card.get('lastGarageCycleDistanceKm')} km; "

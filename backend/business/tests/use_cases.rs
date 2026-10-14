@@ -137,6 +137,8 @@ fn user_row(
         enabled: true,
         blocked_reason: None,
         profile_id: None,
+        cpf: None,
+        principal_function: None,
         tenant_id,
         role: role.into(),
         created_at: at(),
@@ -729,6 +731,8 @@ fn new_user(email: &str, password: &str, role: Role, tenant_id: Option<i64>) -> 
         enabled: true,
         tenant_id,
         role,
+        cpf: None,
+        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -2250,6 +2254,15 @@ fn extra_trip_row(id: i64, tenant_id: i64, order_code: &str) -> entity::extra_tr
         created_by: None,
         updated_at: at(),
         updated_by: None,
+        preparation_skip_authorized_by: None,
+        preparation_skip_authorized_at: None,
+        preparation_skip_justification: None,
+        preparation_skip_vehicle_id: None,
+        preparation_skip_trip_date: None,
+        preparation_skip_start_time: None,
+        preparation_skip_return_date: None,
+        preparation_skip_return_time: None,
+        preparation_skip_destination: None,
     }
 }
 

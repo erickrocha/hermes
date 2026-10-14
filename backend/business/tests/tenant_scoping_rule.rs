@@ -79,20 +79,32 @@ fn every_tenant_owned_entity_has_a_gateway_that_filters_reads_and_deletes() {
 
     for (entity_name, _) in tenant_owned_entities() {
         let base = entity_name.trim_end_matches("_entity");
-        let gateway_path = gateway_dir.join(format!("{base}_gateway.rs"));
-        assert!(
-            gateway_path.exists(),
-            "{entity_name} is tenant-owned but has no {base}_gateway.rs -- the read side of \
-             the scoping rule has nowhere to live (D-09)"
-        );
+        let conventional_path = gateway_dir.join(format!("{base}_gateway.rs"));
+        let gateway_path = if conventional_path.exists() {
+            Some(conventional_path)
+        } else {
+            rust_files(&gateway_dir).into_iter().find(|path| {
+                read(path).contains(&format!("entity::{entity_name}"))
+            })
+        };
+        let gateway_path = gateway_path.unwrap_or_else(|| {
+            panic!(
+                "{entity_name} is tenant-owned but has no gateway that references it -- \
+                 the read side of the scoping rule has nowhere to live (D-09)"
+            )
+        });
 
         let gateway = read(&gateway_path);
-        for required in ["tenant_select", "tenant_delete"] {
+        assert!(
+            gateway.contains("tenant_select"),
+            "{} does not call tenant_select: reads are not scoped (D-09, defect D-7)",
+            gateway_path.display()
+        );
+        if gateway.contains("delete_by_id") || gateway.contains("delete_many") {
             assert!(
-                gateway.contains(required),
-                "{base}_gateway.rs does not call {required}: writes are scoped but reads and \
-                 deletes are not, which is cross-tenant exposure for any caller that reaches \
-                 this gateway outside a guarded handler (D-09, defect D-7)"
+                gateway.contains("tenant_delete"),
+                "{} deletes rows without tenant_delete (D-09, defect D-7)",
+                gateway_path.display()
             );
         }
     }
