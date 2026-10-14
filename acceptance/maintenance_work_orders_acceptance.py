@@ -21,7 +21,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER = os.environ.get("HERMES_DB_USER", "hermes")
+DB_PASS = os.environ.get("HERMES_DB_PASSWORD", "brutal")
+DB_NAME = os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 TAG = "qa-mt"
 FIXTURE_PW = "QaMaintenance#2026"
@@ -319,12 +321,14 @@ def mt002(fx):
     cross_open = wo(ob, fx.v[0], 5, "cross")
     sl, la = pages(oa, "/work-order")
     own = sl == 200 and la["totalItems"] == n_rows("work_order", f"tenant_id={fx.A['id']}")
+    paths = (fx.openapi or {}).get("paths", {})
+    documented = {"get", "post"}.issubset(paths.get("/work-order", {})) and "get" in paths.get("/work-order/uuid/{uuid}", {})
     check("MT-002", all(m == ((200, 200, 404) if who == "driver" else (200, 200, 403)) for who, m in members.items()) and unknown[0] == 404 and cross_get[0] == 404 and cross_get[1] == unknown[1]
-          and cross_open[0] in (400, 404) and n_rows("work_order") == before and own,
+          and cross_open[0] in (400, 404) and n_rows("work_order") == before and own and documented,
           "a tenant user and a driver read (200) and get 403 opening a work order; owner B's GET of A's order is 404 with the body of an unknown uuid; "
-          "owner B opening against A's vehicle is refused with nothing stored; A's list counts only A's orders",
+          "owner B opening against A's vehicle is refused with nothing stored; A's list counts only A's orders; the OpenAPI publishes list, create and UUID read",
           f"members {members}; cross get {cross_get[0]} unknown {unknown[0]} same_body={cross_get[1] == unknown[1]}; cross open {cross_open[0]}; "
-          f"rows {before}->{n_rows('work_order')}; own={own}")
+          f"rows {before}->{n_rows('work_order')}; own={own}; documented={documented}")
 
 
 def mt010(fx):

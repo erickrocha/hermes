@@ -160,8 +160,9 @@ def seed():
     if status != 201:
         raise RuntimeError(f"create owner failed ({status}): {ek(user)}")
     stored = rows(f"SELECT password FROM user WHERE email='{email}'")
+    access_token_secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or config["ACCESS_TOKEN_SECRET"]
     status, accepted = http("POST", "/accept-invite", {
-        "token": invite_token(email, stored[0][0], config["ACCESS_TOKEN_SECRET"]),
+        "token": invite_token(email, stored[0][0], access_token_secret),
         "newPassword": PASSWORD,
     })
     if status != 204:

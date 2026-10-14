@@ -90,6 +90,18 @@ pub fn is_sensible(s: &RuleSettings) -> bool {
         && s.garage_monitor_matrix_columns > 0
         && s.garage_fuelling_freshness_hours > 0
         && s.garage_utc_offset_minutes.abs() <= 14 * 60
+        && s.garage_base_radius_meters.is_finite()
+        && s.garage_base_radius_meters > 0.0
+        && match (s.garage_base_latitude, s.garage_base_longitude) {
+            (None, None) => true,
+            (Some(latitude), Some(longitude)) => {
+                latitude.is_finite()
+                    && (-90.0..=90.0).contains(&latitude)
+                    && longitude.is_finite()
+                    && (-180.0..=180.0).contains(&longitude)
+            }
+            _ => false,
+        }
 }
 
 #[cfg(test)]
@@ -114,5 +126,9 @@ mod tests {
         assert!(bad(|s| s.reconciliation_volume_tolerance_ratio = 1.5));
         assert!(bad(|s| s.preventive_max_extension_km = f64::NAN));
         assert!(bad(|s| s.preventive_attention_km_margin = -1.0));
+        assert!(bad(|s| s.garage_base_latitude = Some(91.0)));
+        assert!(bad(|s| s.garage_base_longitude = Some(181.0)));
+        assert!(bad(|s| s.garage_base_latitude = Some(-23.0)));
+        assert!(bad(|s| s.garage_base_radius_meters = f64::INFINITY));
     }
 }

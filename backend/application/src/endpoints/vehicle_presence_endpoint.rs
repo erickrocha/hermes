@@ -83,7 +83,7 @@ pub async fn record(
 
 /// `TRM-414`: a recorded arrival opens the vehicle's triage. The stamp is already
 /// written and stands whatever happens here -- a failure is logged, never returned.
-async fn open_triage_on_arrival(state: &AppState, tenant_id: Option<i64>, vehicle_id: i64, snapshot: &PresenceSnapshot, arrived_at: chrono::NaiveDateTime) {
+pub(crate) async fn open_triage_on_arrival(state: &AppState, tenant_id: Option<i64>, vehicle_id: i64, snapshot: &PresenceSnapshot, arrived_at: chrono::NaiveDateTime) {
     use business::gateway::*;
     let db = state.conn.as_ref().clone();
     let minutes = match tenant_rule_setting_gateway::TenantRuleSettingGateway::new(db.clone()).settings_for(tenant_id).await {

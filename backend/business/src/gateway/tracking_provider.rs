@@ -214,15 +214,22 @@ fn parse_positions(body: &Value) -> Vec<ProviderPosition> {
         .iter()
         .filter_map(|row| {
             let attributes = row.get("attributes");
+            let latitude = row.get("latitude").and_then(Value::as_f64)?;
+            let longitude = row.get("longitude").and_then(Value::as_f64)?;
+            let coordinates_valid = latitude.is_finite()
+                && (-90.0..=90.0).contains(&latitude)
+                && longitude.is_finite()
+                && (-180.0..=180.0).contains(&longitude);
             Some(ProviderPosition {
                 device_id: row.get("deviceId").and_then(Value::as_i64)?,
-                latitude: row.get("latitude").and_then(Value::as_f64).unwrap_or(0.0),
-                longitude: row.get("longitude").and_then(Value::as_f64).unwrap_or(0.0),
+                latitude,
+                longitude,
                 // Absent `valid` is treated as valid: Traccar omits it on some
                 // firmware, and the freshness rule downstream is the real
                 // guard. Treating "absent" as "invalid" would blind the fleet
                 // on a field the provider simply did not send.
-                valid: row.get("valid").and_then(Value::as_bool).unwrap_or(true),
+                valid: row.get("valid").and_then(Value::as_bool).unwrap_or(true)
+                    && coordinates_valid,
                 recorded_at: first_timestamp(row),
                 ignition: attributes
                     .and_then(|a| a.get("ignition"))
@@ -292,6 +299,29 @@ mod tests {
     }
 
     #[test]
+    fn a_position_without_coordinates_is_not_defaulted_to_zero_zero() {
+        let parsed = parse_positions(&json!([{
+            "deviceId": 393335,
+            "serverTime": "2026-06-30T18:34:49.402+00:00"
+        }]));
+
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn out_of_range_coordinates_are_not_valid_presence_evidence() {
+        let parsed = parse_positions(&json!([{
+            "deviceId": 393335,
+            "latitude": 91.0,
+            "longitude": -46.6,
+            "serverTime": "2026-06-30T18:34:49.402+00:00"
+        }]));
+
+        assert_eq!(parsed.len(), 1);
+        assert!(!parsed[0].valid);
+    }
+
+    #[test]
     fn timestamp_precedence_is_server_then_fix_then_device() {
         let fix = json!({ "fixTime": "2026-01-01T00:00:00+00:00", "deviceTime": "2025-01-01T00:00:00+00:00" });
         assert_eq!(
@@ -334,7 +364,10 @@ mod tests {
 
     #[test]
     fn a_row_without_a_device_id_is_skipped_not_defaulted() {
-        let parsed = parse_positions(&json!([{ "latitude": 1.0 }, { "deviceId": 7 }]));
+        let parsed = parse_positions(&json!([
+            { "latitude": 1.0, "longitude": 2.0 },
+            { "deviceId": 7, "latitude": 1.0, "longitude": 2.0 }
+        ]));
         assert_eq!(
             parsed.iter().map(|p| p.device_id).collect::<Vec<_>>(),
             vec![7]

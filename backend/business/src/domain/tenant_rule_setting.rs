@@ -74,6 +74,9 @@ pub struct RuleSettings {
     pub garage_fuelling_freshness_hours: i32,
     /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
     pub garage_utc_offset_minutes: i32,
+    pub garage_base_latitude: Option<f64>,
+    pub garage_base_longitude: Option<f64>,
+    pub garage_base_radius_meters: f64,
 }
 
 impl Default for RuleSettings {
@@ -112,6 +115,9 @@ impl Default for RuleSettings {
             garage_monitor_matrix_columns: 8,
             garage_fuelling_freshness_hours: 24,
             garage_utc_offset_minutes: -180,
+            garage_base_latitude: None,
+            garage_base_longitude: None,
+            garage_base_radius_meters: 75.0,
         }
     }
 }
@@ -152,6 +158,9 @@ impl From<&Model> for RuleSettings {
             garage_monitor_matrix_columns: m.garage_monitor_matrix_columns,
             garage_fuelling_freshness_hours: m.garage_fuelling_freshness_hours,
             garage_utc_offset_minutes: m.garage_utc_offset_minutes,
+            garage_base_latitude: m.garage_base_latitude,
+            garage_base_longitude: m.garage_base_longitude,
+            garage_base_radius_meters: m.garage_base_radius_meters,
         }
     }
 }
@@ -203,6 +212,9 @@ pub struct TenantRuleSetting {
     pub garage_fuelling_freshness_hours: i32,
     /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
     pub garage_utc_offset_minutes: i32,
+    pub garage_base_latitude: Option<f64>,
+    pub garage_base_longitude: Option<f64>,
+    pub garage_base_radius_meters: f64,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -248,6 +260,9 @@ impl TenantRuleSetting {
             garage_monitor_matrix_columns: s.garage_monitor_matrix_columns,
             garage_fuelling_freshness_hours: s.garage_fuelling_freshness_hours,
             garage_utc_offset_minutes: s.garage_utc_offset_minutes,
+            garage_base_latitude: s.garage_base_latitude,
+            garage_base_longitude: s.garage_base_longitude,
+            garage_base_radius_meters: s.garage_base_radius_meters,
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -290,6 +305,9 @@ impl TenantRuleSetting {
             garage_monitor_matrix_columns: self.garage_monitor_matrix_columns,
             garage_fuelling_freshness_hours: self.garage_fuelling_freshness_hours,
             garage_utc_offset_minutes: self.garage_utc_offset_minutes,
+            garage_base_latitude: self.garage_base_latitude,
+            garage_base_longitude: self.garage_base_longitude,
+            garage_base_radius_meters: self.garage_base_radius_meters,
         }
     }
 }
@@ -341,6 +359,9 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_monitor_matrix_columns: Set(d.garage_monitor_matrix_columns),
             garage_fuelling_freshness_hours: Set(d.garage_fuelling_freshness_hours),
             garage_utc_offset_minutes: Set(d.garage_utc_offset_minutes),
+            garage_base_latitude: Set(d.garage_base_latitude),
+            garage_base_longitude: Set(d.garage_base_longitude),
+            garage_base_radius_meters: Set(d.garage_base_radius_meters),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -386,6 +407,9 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
             garage_monitor_matrix_columns: e.garage_monitor_matrix_columns,
             garage_fuelling_freshness_hours: e.garage_fuelling_freshness_hours,
             garage_utc_offset_minutes: e.garage_utc_offset_minutes,
+            garage_base_latitude: e.garage_base_latitude,
+            garage_base_longitude: e.garage_base_longitude,
+            garage_base_radius_meters: e.garage_base_radius_meters,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -435,6 +459,9 @@ impl EntityMapper<TenantRuleSetting, Model, ActiveModel> for TenantRuleSettingEn
                 garage_monitor_matrix_columns: e.garage_monitor_matrix_columns.take().unwrap_or_default(),
                 garage_fuelling_freshness_hours: e.garage_fuelling_freshness_hours.take().unwrap_or_default(),
                 garage_utc_offset_minutes: e.garage_utc_offset_minutes.take().unwrap_or_default(),
+                garage_base_latitude: e.garage_base_latitude.take().flatten(),
+                garage_base_longitude: e.garage_base_longitude.take().flatten(),
+                garage_base_radius_meters: e.garage_base_radius_meters.take().unwrap_or(75.0),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

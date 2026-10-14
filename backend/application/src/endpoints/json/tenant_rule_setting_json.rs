@@ -76,4 +76,14 @@ pub struct TenantRuleSettingJson {
     pub garage_fuelling_freshness_hours: i32,
     /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
     pub garage_utc_offset_minutes: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub garage_base_latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub garage_base_longitude: Option<f64>,
+    #[serde(default = "default_garage_base_radius_meters")]
+    pub garage_base_radius_meters: f64,
+}
+
+fn default_garage_base_radius_meters() -> f64 {
+    75.0
 }

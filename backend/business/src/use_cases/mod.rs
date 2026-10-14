@@ -41,6 +41,7 @@ pub mod garage_queue_use_case;
 pub mod effective_schedule;
 pub mod effective_schedule_use_case;
 pub mod garage_readiness;
+pub mod garage_geofence;
 pub mod garage_validity;
 pub mod garage_validity_use_case;
 pub mod garage_service_model_use_case;

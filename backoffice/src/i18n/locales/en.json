@@ -670,5 +670,8 @@
   "garageMonitorMatrixRows": "Monitor: matrix rows",
   "garageMonitorMatrixColumns": "Monitor: matrix columns",
   "garageFuellingFreshnessHours": "Garage: fuelling freshness (h)",
-  "garageUtcOffsetMinutes": "Operating-day UTC offset (min)"
+  "garageUtcOffsetMinutes": "Operating-day UTC offset (min)",
+  "garageBaseLatitude": "Garage base latitude",
+  "garageBaseLongitude": "Garage base longitude",
+  "garageBaseRadiusMeters": "Garage geofence radius (m; default 75)"
 }

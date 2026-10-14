@@ -55,6 +55,9 @@ fn json(tenant_id: Option<i64>, uuid: Option<String>, s: RuleSettings) -> Tenant
         garage_monitor_matrix_columns: s.garage_monitor_matrix_columns,
         garage_fuelling_freshness_hours: s.garage_fuelling_freshness_hours,
         garage_utc_offset_minutes: s.garage_utc_offset_minutes,
+        garage_base_latitude: s.garage_base_latitude,
+        garage_base_longitude: s.garage_base_longitude,
+        garage_base_radius_meters: s.garage_base_radius_meters,
     }
 }
 
@@ -116,6 +119,9 @@ pub async fn configure(
         garage_monitor_matrix_columns: p.garage_monitor_matrix_columns,
         garage_fuelling_freshness_hours: p.garage_fuelling_freshness_hours,
         garage_utc_offset_minutes: p.garage_utc_offset_minutes,
+        garage_base_latitude: p.garage_base_latitude,
+        garage_base_longitude: p.garage_base_longitude,
+        garage_base_radius_meters: p.garage_base_radius_meters,
     };
     match use_case(&state).configure(TenantRuleSetting::new(tenant_id, settings)).await {
         Ok(saved) => Ok(Json(json(saved.tenant_id, saved.uuid.clone(), saved.settings()))),

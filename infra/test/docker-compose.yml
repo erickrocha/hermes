@@ -34,6 +34,19 @@ services:
       mariadb:
         condition: service_healthy
 
+  tracking-mock:
+    image: python:3.12-alpine
+    command: ["python3", "/app/tracking_mock.py"]
+    volumes:
+      - ./tracking_mock.py:/app/tracking_mock.py:ro
+    ports:
+      - "127.0.0.1:${TEST_TRACKING_MOCK_PORT:-8083}:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: ../../backend
@@ -50,7 +63,11 @@ services:
       REFRESH_TOKEN_SECRET: local-test-refresh-secret-fedcba9876543210fedcba9876543210
       SYSADMIN_EMAIL: admin@hermes.test
       SYSADMIN_PASSWORD: Local-test-only-Hermes-123!
-      GARAGE_ROLLOVER_INTERVAL_SECONDS: "0"
+      GARAGE_ROLLOVER_INTERVAL_SECONDS: ${TEST_GARAGE_ROLLOVER_INTERVAL_SECONDS:-0}
+      GARAGE_PRESENCE_POLL_INTERVAL_SECONDS: ${TEST_GARAGE_PRESENCE_POLL_INTERVAL_SECONDS:-0}
+      TRACKING_API_BASE_URL: http://tracking-mock:8080/api
+      TRACKING_API_EMAIL: test
+      TRACKING_API_PASSWORD: test
       SMTP_HOST: ""
       SMTP_USER: ""
       SMTP_PASSWORD: ""
@@ -63,6 +80,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      tracking-mock:
+        condition: service_healthy
 
   backoffice:
     build:

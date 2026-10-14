@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 3 acceptance for EPIC-GA-01…06 (catalogue, triage, presence stamps, validity,
+"""Gate 3 acceptance for EPIC-GA-01…06 and GA-08-S01 (catalogue, triage, presence stamps, validity,
 required services / call / queue, arrival automation and day-boundary rollover).
 
 Reuses the helpers and fixture isolation (`qa-ga-` prefix) of garage_monitor_acceptance.py.
@@ -17,7 +17,8 @@ import garage_monitor_acceptance as b  # noqa: E402
 
 http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 CHECK_TABLES = ("tenant", "user", "vehicle", "garage_service_model", "garage_attendance",
-                "garage_service", "vehicle_presence_event", "garage_call", "garage_service_log", "fuel_entry")
+                "garage_service", "vehicle_presence_event", "garage_call", "garage_service_log", "fuel_entry",
+                "tenant_rule_setting")
 
 
 def now():
@@ -83,6 +84,27 @@ def run():
     baseline = {t: one(f"SELECT COUNT(*) FROM {t}") for t in CHECK_TABLES}
     try:
         admin, owner = b.seed()
+
+        # ---- EPIC-GA-08-S01: the tenant's single garage geofence ----------------------
+        s_default, default_rules = http("GET", "/tenant-rule-settings", token=owner)
+        configured_rules = {
+            **default_rules,
+            "garageBaseLatitude": -23.5,
+            "garageBaseLongitude": -46.6,
+            "garageBaseRadiusMeters": 120.0,
+        }
+        s_configure, _ = http("PUT", "/tenant-rule-settings", configured_rules, owner)
+        s_read, configured = http("GET", "/tenant-rule-settings", token=owner)
+        invalid_rules = {**configured, "garageBaseLatitude": 91.0}
+        s_invalid, _ = http("PUT", "/tenant-rule-settings", invalid_rules, owner)
+        s_after, after_invalid = http("GET", "/tenant-rule-settings", token=owner)
+        record("GA-080", s_default == 200 and default_rules.get("garageBaseRadiusMeters") == 75.0
+               and s_configure == 200 and s_read == 200
+               and (configured.get("garageBaseLatitude"), configured.get("garageBaseLongitude"), configured.get("garageBaseRadiusMeters")) == (-23.5, -46.6, 120.0)
+               and s_invalid == 400 and s_after == 200
+               and (after_invalid.get("garageBaseLatitude"), after_invalid.get("garageBaseLongitude"), after_invalid.get("garageBaseRadiusMeters")) == (-23.5, -46.6, 120.0),
+               f"default radius {default_rules.get('garageBaseRadiusMeters')}; configured {s_configure}; round-trip {configured.get('garageBaseLatitude')}/{configured.get('garageBaseLongitude')}/{configured.get('garageBaseRadiusMeters')}; invalid latitude {s_invalid}; preserved {s_after}")
+
         WASH, FUEL = "QA Lavagem Externa", "QA Combustivel"
 
         # ---- EPIC-GA-01-S01: the catalogue ------------------------------------------

@@ -51,6 +51,9 @@ pub struct Model {
     pub garage_fuelling_freshness_hours: i32,
     /// `TRM-415`/`422`: the tenant's operating day is UTC plus this many minutes (`[TC?]` America/Sao_Paulo, a fixed offset; `U-019` still open)
     pub garage_utc_offset_minutes: i32,
+    pub garage_base_latitude: Option<f64>,
+    pub garage_base_longitude: Option<f64>,
+    pub garage_base_radius_meters: f64,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,
