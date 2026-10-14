@@ -14,6 +14,7 @@ current operator, is Hermes' first tenant.
 |---|---|
 | `backend/` | Rust Cargo workspace — see below |
 | `backoffice/` | Vite + React + TypeScript admin console — see [`backoffice/README.md`](backoffice/README.md) |
+| `client-apps/` | Kotlin Multiplatform shared logic and the native Android TV garage app |
 | `infra/dev/docker-compose.yml` | Local MariaDB for development |
 
 ### The backend workspace
@@ -44,6 +45,8 @@ every future table, not only ones that will eventually replace part of operacao-
 4. Run the API: `cargo run --manifest-path backend/Cargo.toml`. In development Swagger UI is
    served at `/swagger-ui` and the OpenAPI document at `/api-docs/openapi.json`.
 5. Run the console: see [`backoffice/README.md`](backoffice/README.md).
+6. Build the Android TV client: from `client-apps/`, run
+   `ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ./gradlew :androidApp:assembleDebug`.
 
 ## Deploying
 
