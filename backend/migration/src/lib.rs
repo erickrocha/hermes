@@ -71,6 +71,7 @@ mod m20261013_000001_create_garage_device;
 mod m20261013_000002_add_garage_base_geofence;
 mod m20261013_000003_add_garage_cycle_settings;
 mod m20261013_000004_create_garage_cycle_state;
+mod m20261013_000005_create_garage_release;
 mod m20260930_000012_create_garage_attendance_tables;
 mod m20260930_000013_create_vehicle_presence_event;
 mod m20260930_000014_add_garage_validity_settings;
@@ -169,6 +170,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261013_000002_add_garage_base_geofence::Migration),
             Box::new(m20261013_000003_add_garage_cycle_settings::Migration),
             Box::new(m20261013_000004_create_garage_cycle_state::Migration),
+            Box::new(m20261013_000005_create_garage_release::Migration),
         ]
     }
 }

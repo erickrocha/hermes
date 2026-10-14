@@ -122,7 +122,7 @@ def cleanup():
     tenant_query = f"SELECT id FROM tenant WHERE business_name LIKE '{TAG}-%'"
     tenant_ids = ",".join(row[0] for row in rows(tenant_query)) or "0"
     clauses = f"tenant_id IN ({tenant_ids})"
-    for table in ("garage_service_log", "garage_call", "garage_service", "garage_attendance",
+    for table in ("garage_release_item", "garage_release", "garage_service_log", "garage_call", "garage_service", "garage_attendance",
                   "vehicle_presence_event", "extra_trip", "fuel_entry", "km_evolution",
                   "preventive_plan_alert", "preventive_plan_extension", "work_order_item",
                   "work_order", "preventive_plan", "tenant_rule_setting", "garage_cycle_state"):

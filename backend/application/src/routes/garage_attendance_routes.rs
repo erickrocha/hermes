@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
-use crate::endpoints::garage_attendance_endpoint::{active, call_list, checkout, get_by_uuid, mark_service, monitor, monitor_cards, monitor_matrix, open, queue};
+use crate::endpoints::garage_attendance_endpoint::{active, call_list, checkout, get_by_uuid, mark_service, monitor, monitor_cards, monitor_matrix, open, queue, release_with_pendency};
 use axum::routing::{get, post, put};
 use axum::{Router, middleware};
 
@@ -18,5 +18,6 @@ pub fn garage_attendance_routes(state: AppState) -> Router<AppState> {
         .route("/uuid/{uuid}", get(get_by_uuid))
         .route("/uuid/{uuid}/service/{service_uuid}", put(mark_service))
         .route("/uuid/{uuid}/checkout", post(checkout))
+        .route("/uuid/{uuid}/release-with-pendency", post(release_with_pendency))
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }

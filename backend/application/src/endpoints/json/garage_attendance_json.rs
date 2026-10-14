@@ -67,6 +67,37 @@ pub struct GarageServiceMarkJson {
     pub state: String,
 }
 
+/// `TRM-424`: releases a triage while preserving every service outcome.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageReleaseRequestJson {
+    pub justification: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub odometer_km: Option<f64>,
+    #[serde(default)]
+    pub awaiting_parts_service_uuids: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageReleaseItemJson {
+    pub service_name: String,
+    pub garage_state: String,
+    pub work_order_status: String,
+    pub work_order_item_uuid: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageReleaseJson {
+    pub uuid: Option<String>,
+    pub attendance_uuid: Option<String>,
+    pub work_order_uuid: Option<String>,
+    pub justification: String,
+    pub released_at: NaiveDateTime,
+    pub items: Vec<GarageReleaseItemJson>,
+}
+
 /// One vehicle of the yard's queue (`TRM-480`).
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]

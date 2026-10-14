@@ -44,6 +44,7 @@ pub mod garage_readiness;
 pub mod garage_geofence;
 pub mod garage_cycle;
 pub mod garage_cycle_persistence_use_case;
+pub mod garage_release_use_case;
 pub mod garage_validity;
 pub mod garage_validity_use_case;
 pub mod garage_service_model_use_case;

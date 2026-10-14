@@ -66,6 +66,7 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("GET", "/garage-attendance/queue", "garage.queue.read"),
     ("GET", "/garage-attendance/uuid/{uuid}", "garage.triage.read"),
     ("POST", "/garage-attendance/uuid/{uuid}/checkout", "garage.triage.check-out"),
+    ("POST", "/garage-attendance/uuid/{uuid}/release-with-pendency", "garage.triage.check-out"),
     ("PUT", "/garage-attendance/uuid/{uuid}/service/{service_uuid}", "garage.triage.mark-service"),
     ("GET", "/garage-call", "garage.call.read"),
     ("POST", "/garage-call", "garage.call.create"),

@@ -38,6 +38,8 @@ pub use super::tenant_rule_setting_entity::Entity as TenantRuleSettingEntity;
 pub use super::garage_service_model_entity::Entity as GarageServiceModelEntity;
 pub use super::access_profile_entity::Entity as AccessProfileEntity;
 pub use super::garage_call_entity::Entity as GarageCallEntity;
+pub use super::garage_release_entity::Entity as GarageReleaseEntity;
+pub use super::garage_release_item_entity::Entity as GarageReleaseItemEntity;
 pub use super::vehicle_presence_event_entity::Entity as VehiclePresenceEventEntity;
 pub use super::garage_attendance_entity::Entity as GarageAttendanceEntity;
 pub use super::garage_service_entity::Entity as GarageServiceEntity;

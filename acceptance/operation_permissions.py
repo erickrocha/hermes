@@ -38,12 +38,13 @@ PROFILE = [("GET", "/access-profile/catalogue", "profile.read"), ("GET", "/acces
            ("GET", "/access-profile/uuid/{uuid}", "profile.read"), ("POST", "/access-profile", "profile.create"),
            ("PUT", "/access-profile/uuid/{uuid}", "profile.update"),
            ("GET", "/access-profile/user/uuid/{user_uuid}", "profile.read"), ("PUT", "/access-profile/user/uuid/{user_uuid}", "profile.assign")]
+GARAGE = [("POST", "/garage-attendance/uuid/{uuid}/release-with-pendency", "garage.triage.check-out")]
 
 # C-030 EPIC-SP-07/08 (HRMS-804...810) post-date the scan too.
 COST = [("GET", "/cost-report/vehicle/uuid/{uuid}", "cost-report.vehicle.read"), ("GET", "/cost-report/vehicle/uuid/{uuid}/export", "cost-report.vehicle.read"),
         ("GET", "/cost-report/work-order/uuid/{uuid}", "cost-report.work-order.read"), ("GET", "/cost-report/suppliers", "cost-report.supplier.read"),
         ("GET", "/cost-report/supplier-closing", "cost-report.supplier.read"), ("GET", "/cost-report/supplier-closing/export", "cost-report.supplier.read")]
-table = list(PROFILE) + COST
+table = list(PROFILE) + COST + GARAGE
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)
     if not m or m.group(1) in PUBLIC:

@@ -113,6 +113,22 @@ describe('operations screens', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/garage-attendance/uuid/a1/checkout', undefined))
   })
 
+  it('releases a triage with a justification and links a selected pendency to awaiting parts', async () => {
+    const triage = { uuid: 'a1', vehicleUuid: 'v1', status: 'Open', checkedInAt: '2026-10-01T08:00:00', services: [{ uuid: 's1', name: 'Wash', serviceGroup: 'Internal', state: 'Pending', effectiveState: 'Pending', requiredForDeparture: true }] }
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url === '/garage-attendance/uuid/a1' ? { data: triage } as never : page([vehicle])))
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
+    signIn('Mechanic')
+    renderPage(<GarageTriagePage />, '/garage/triage/a1', '/garage/triage/:uuid')
+    fireEvent.click(await screen.findByRole('button', { name: /release with pendencies|liberar com pendências|liberar con pendientes/i }))
+    fireEvent.change(screen.getByLabelText(/justification|justificativa|justificación/i), { target: { value: 'Waiting for brake pads' } })
+    fireEvent.change(screen.getByLabelText(/odometer, if no official reading exists|odômetro, se não houver leitura oficial|odómetro, si no hay una lectura oficial/i), { target: { value: '1234' } })
+    fireEvent.click(screen.getByLabelText('Wash'))
+    fireEvent.click(screen.getByRole('button', { name: /record release|registrar liberação|registrar liberación/i }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/garage-attendance/uuid/a1/release-with-pendency', {
+      justification: 'Waiting for brake pads', odometerKm: 1234, awaitingPartsServiceUuids: ['s1'],
+    }))
+  })
+
   it('shows the monitor sections, including the empty and error states', async () => {
     vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
       if (url === '/garage-attendance/monitor') return { data: [{ entry: { vehicleUuid: 'v1', prefix: 'P7', nextDeparture: '2026-10-01T10:00:00' }, readiness: 'Alert', urgent: true }] } as never

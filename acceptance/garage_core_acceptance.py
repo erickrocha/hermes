@@ -18,7 +18,8 @@ import garage_monitor_acceptance as b  # noqa: E402
 http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 CHECK_TABLES = ("tenant", "user", "vehicle", "garage_service_model", "garage_attendance",
                 "garage_service", "vehicle_presence_event", "garage_call", "garage_service_log", "fuel_entry",
-                "tenant_rule_setting", "garage_cycle_state")
+                "tenant_rule_setting", "garage_cycle_state", "garage_release", "garage_release_item",
+                "work_order", "work_order_item", "km_evolution")
 
 
 def now():
@@ -166,6 +167,73 @@ def run():
                f"stamps performed/marked/forced={bool(r_perf.get('performedAt'))}/{bool(r_nn.get('markedAt'))}/{bool(r_pend.get('forcedPendingAt'))}; "
                f"audit rows={[l[0] for l in logs]}; checkout={s_out} {out.get('status')} priority={out.get('manualPriority')} (absent = zeroed); "
                f"mark closed={s_mark_closed}; checkout again={s_out2}; reopen={s_reopen}")
+
+        # ---- EPIC-GA-02-S03: release with pendencies and a linked work order ---------
+        release_vehicle = vehicle(owner, "REL")
+        service(owner, "QA Release not needed", applicability={"scope": "vehicles", "values": [release_vehicle["uuid"]]})
+        release_triage = b.open_attendance(owner, release_vehicle, priority=2)
+        release_performed = svc(release_triage, WASH)
+        release_pending = svc(release_triage, FUEL)
+        release_not_needed = svc(release_triage, "QA Release not needed")
+        b.mark_service(owner, release_triage, release_performed, "Performed")
+        b.mark_service(owner, release_triage, release_not_needed, "NotNeeded")
+        release_path = f"/garage-attendance/uuid/{release_triage['uuid']}/release-with-pendency"
+        missing_justification = http("POST", release_path, {
+            "justification": "  ", "odometerKm": 1234,
+            "awaitingPartsServiceUuids": [release_pending["uuid"]],
+        }, owner)[0]
+        missing_odometer = http("POST", release_path, {
+            "justification": "Waiting for a replacement part",
+            "awaitingPartsServiceUuids": [release_pending["uuid"]],
+        }, owner)[0]
+        no_partial_release = one(
+            f"SELECT COUNT(*) FROM garage_release WHERE attendance_id=(SELECT id FROM garage_attendance "
+            f"WHERE uuid=UNHEX('{release_triage['uuid'].replace('-', '')}'))"
+        ) == "0" and one(
+            f"SELECT COUNT(*) FROM work_order WHERE tenant_id={b.TENANT_ID} AND vehicle_id={vehicle_id(release_vehicle)}"
+        ) == "0"
+        s_release, released = http("POST", release_path, {
+            "justification": "Waiting for a replacement part",
+            "odometerKm": 1234,
+            "awaitingPartsServiceUuids": [release_pending["uuid"]],
+        }, owner)
+        release_id = one(
+            f"SELECT id FROM garage_release WHERE attendance_id=(SELECT id FROM garage_attendance "
+            f"WHERE uuid=UNHEX('{release_triage['uuid'].replace('-', '')}'))"
+        )
+        release_statuses = rows(
+            f"SELECT work_order_status, COUNT(*) FROM garage_release_item WHERE garage_release_id={release_id} "
+            f"GROUP BY work_order_status ORDER BY work_order_status"
+        ) if release_id else []
+        release_order_id = one(
+            f"SELECT work_order_id FROM garage_release WHERE id={release_id}"
+        ) if release_id else None
+        order_status = one(f"SELECT status FROM work_order WHERE id={release_order_id}") if release_order_id else None
+        linked_items = one(
+            f"SELECT COUNT(*) FROM garage_release_item ri JOIN work_order_item wi "
+            f"ON wi.id=ri.work_order_item_id WHERE ri.garage_release_id={release_id}"
+        ) if release_id else "0"
+        official_reading = one(
+            f"SELECT COUNT(*) FROM km_evolution WHERE tenant_id={b.TENANT_ID} AND vehicle_id={vehicle_id(release_vehicle)} "
+            f"AND origin='WorkOrder' AND source_entity_id={release_order_id} AND km=1234"
+        ) if release_order_id else "0"
+        released_triage = get_triage(owner, release_triage["uuid"])
+        s_repeat_release = http("POST", release_path, {
+            "justification": "Waiting for a replacement part",
+            "odometerKm": 1234,
+            "awaitingPartsServiceUuids": [release_pending["uuid"]],
+        }, owner)[0]
+        record("GA-022", missing_justification == 400 and missing_odometer == 400 and no_partial_release
+               and s_release == 201 and released.get("justification") == "Waiting for a replacement part"
+               and {item[0]: int(item[1]) for item in release_statuses}.get("Resolved") == 1
+               and {item[0]: int(item[1]) for item in release_statuses}.get("AwaitingParts") == 1
+               and {item[0]: int(item[1]) for item in release_statuses}.get("Cancelled") == 1
+               and order_status == "AwaitingParts" and linked_items == "3" and official_reading == "1"
+               and released_triage["status"] == "ReleasedWithPendency"
+               and released_triage.get("manualPriority") in (None, 0) and s_repeat_release == 409,
+               f"missing justification/odometer={missing_justification}/{missing_odometer}; release={s_release}; "
+               f"item outcomes={release_statuses}; order={order_status}; linked items={linked_items}; "
+               f"official reading={official_reading}; triage={released_triage['status']}; repeat={s_repeat_release}")
 
         # ---- EPIC-GA-03-S01: presence stamps ----------------------------------------
         r = vehicle(owner, "R")

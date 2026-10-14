@@ -40,6 +40,8 @@ pub mod tenant_rule_setting_entity;
 pub mod garage_service_model_entity;
 pub mod access_profile_entity;
 pub mod garage_call_entity;
+pub mod garage_release_entity;
+pub mod garage_release_item_entity;
 pub mod vehicle_presence_event_entity;
 pub mod garage_attendance_entity;
 pub mod garage_service_entity;

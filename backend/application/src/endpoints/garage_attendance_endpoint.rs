@@ -9,7 +9,7 @@ use crate::endpoints::json::garage_attendance_json::{
     GarageAttendanceJson, GarageAttendanceOpenJson, GarageCallListEntryJson, GarageMatrixCellJson,
     GarageMatrixColumnJson, GarageMatrixJson, GarageMatrixRowJson, GarageMonitorCardJson,
     GarageMonitorCardsJson, GarageMonitorEntryJson, GarageQueueEntryJson, GarageServiceJson,
-    GarageServiceMarkJson,
+    GarageServiceMarkJson, GarageReleaseJson, GarageReleaseItemJson, GarageReleaseRequestJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
 use axum::Json;
@@ -26,6 +26,7 @@ use business::use_cases::garage_device_use_case::DevicePrincipal;
 use business::domain::user::User;
 use business::gateway::garage_attendance_gateway::GarageAttendanceGateway;
 use business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway;
+use business::gateway::garage_release_gateway::GarageReleaseDatabaseGateway;
 use business::gateway::garage_service_gateway::GarageServiceGateway;
 use business::gateway::garage_service_log_gateway::GarageServiceLogGateway;
 use business::gateway::garage_service_model_gateway::GarageServiceModelGateway;
@@ -33,6 +34,10 @@ use business::gateway::vehicle_gateway::VehicleGateway;
 use business::use_cases::garage_attendance_use_case::{
     ALREADY_ACTIVE, ATTENDANCE_CLOSED, ATTENDANCE_NOT_FOUND, GarageAttendanceUseCase, NO_SERVICES,
     SERVICE_NOT_FOUND,
+};
+use business::use_cases::garage_release_use_case::{
+    GarageReleaseCommand, GarageReleaseUseCase, RELEASE_ATTENDANCE_CLOSED,
+    RELEASE_ATTENDANCE_NOT_FOUND,
 };
 use business::use_cases::garage_readiness::required_pending;
 use business::use_cases::garage_validity::ValidityReason;
@@ -405,6 +410,70 @@ pub async fn checkout(
         Ok(attendance) => Ok(Json(json(&state, attendance, services).await)),
         Err(e) => Err(error(locale, &e.message)),
     }
+}
+
+#[utoipa::path(
+    post,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/uuid/{uuid}/release-with-pendency",
+    params(("uuid" = String, Path, description = "Triage UUID")),
+    request_body = GarageReleaseRequestJson,
+    responses(
+        (status = 201, description = "The triage is released with outstanding services recorded and linked to WorkOrder items (TRM-424).", body = GarageReleaseJson),
+        (status = 400, description = "Missing justification or odometer reading, or invalid service outcome.", body = BadRequestErrorJson),
+        (status = 409, description = "The triage is already closed.", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not run the garage", body = ForbiddenErrorJson),
+        (status = 404, description = "Triage not found, or in another tenant", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn release_with_pendency(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+    Json(payload): Json<GarageReleaseRequestJson>,
+) -> HttpResponse<(StatusCode, Json<GarageReleaseJson>)> {
+    visible(&state, &locale, &current_user, &uuid, true).await?;
+    let db = state.conn.as_ref().clone();
+    let result = GarageReleaseUseCase::new(GarageReleaseDatabaseGateway::new(db))
+        .release(GarageReleaseCommand {
+            attendance_uuid: uuid,
+            justification: payload.justification,
+            odometer_km: payload.odometer_km,
+            awaiting_parts_service_uuids: payload.awaiting_parts_service_uuids,
+            responsible_user_id: current_user.id.unwrap_or_default(),
+        })
+        .await
+        .map_err(|e| match e.message.as_str() {
+            RELEASE_ATTENDANCE_CLOSED => {
+                ExceptionResponse::Conflict(locale.clone(), ErrorKey::GarageAttendanceClosed)
+            }
+            RELEASE_ATTENDANCE_NOT_FOUND => {
+                ExceptionResponse::NotFound(locale.clone(), ErrorKey::GarageAttendanceNotFound)
+            }
+            _ => ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue),
+        })?;
+    Ok((StatusCode::CREATED, Json(GarageReleaseJson {
+        uuid: result.release.uuid,
+        attendance_uuid: result.attendance.uuid,
+        work_order_uuid: result.work_order.uuid,
+        justification: result.release.justification,
+        released_at: result.release.released_at,
+        items: result
+            .release_items
+            .into_iter()
+            .zip(result.work_order_items)
+            .map(|(release_item, work_order_item)| GarageReleaseItemJson {
+                service_name: release_item.service_name,
+                garage_state: release_item.garage_state.to_string(),
+                work_order_status: release_item.work_order_status.to_string(),
+                work_order_item_uuid: work_order_item.uuid,
+            })
+            .collect(),
+    })))
 }
 
 #[utoipa::path(

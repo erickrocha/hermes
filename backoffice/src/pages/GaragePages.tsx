@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Controller, useForm } from 'react-hook-form'
+import { yupResolver } from '@hookform/resolvers/yup'
+import * as yup from 'yup'
 import { Link, useParams } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
@@ -65,15 +68,39 @@ export function GarageTriagePage() {
   const { uuid } = useParams(); const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const run = useAction(garageAttendances)
   const session = useSelector((state: RootState) => state.auth.session); const label = useVehicleLabel(); const state = useResourceState(garageAttendances)
   const [checkout, setCheckout] = useState(false)
+  const [releaseFormOpen, setReleaseFormOpen] = useState(false)
+  const releaseSchema = yup.object({
+    justification: yup.string().trim().required(t('validation_required')),
+    odometerKm: yup.number().transform((value, original) => original === '' ? undefined : value).min(0).optional(),
+    awaitingPartsServiceUuids: yup.array(yup.string().required()).default([]),
+  })
+  const releaseForm = useForm<{ justification: string; odometerKm?: number; awaitingPartsServiceUuids: string[] }>({
+    resolver: yupResolver(releaseSchema) as never,
+    defaultValues: { justification: '', awaitingPartsServiceUuids: [] },
+  })
   useEffect(() => { if (uuid) dispatch(garageAttendances.fetchOne(uuid)) }, [dispatch, uuid])
   const triage = state.current as (Row & { services?: Row[] }) | null
   const mark = async (service: Row, to: string) => { if (await run('put', `/garage-attendance/uuid/${uuid}/service/${service.uuid}`, { state: to })) dispatch(garageAttendances.fetchOne(String(uuid))) }
   const finish = async () => { setCheckout(false); if (await run('post', `/garage-attendance/uuid/${uuid}/checkout`)) dispatch(garageAttendances.fetchOne(String(uuid))) }
+  const release = releaseForm.handleSubmit(async (values) => {
+    const body = {
+      justification: values.justification,
+      ...(values.odometerKm === undefined ? {} : { odometerKm: values.odometerKm }),
+      awaitingPartsServiceUuids: values.awaitingPartsServiceUuids,
+    }
+    if (await run('post', `/garage-attendance/uuid/${uuid}/release-with-pendency`, body)) {
+      setReleaseFormOpen(false)
+      releaseForm.reset()
+      dispatch(garageAttendances.fetchOne(String(uuid)))
+    }
+  })
   const open = triage?.status === 'Open'; const mayMark = can(session, 'garage.triage.mark-service', [...OWNER_MECHANIC])
+  const mayRelease = can(session, 'garage.triage.check-out', [...OWNER_MECHANIC])
+  const pendencies = (triage?.services ?? []).filter((service) => ['Pending', 'NotDone'].includes(String(service.state)))
   return <>
     <PageHeader title={triage ? label(triage.vehicleUuid) : t('garage')} actions={<>
       <Link className="btn secondary" to="/garage">{t('back')}</Link>
-      {open && can(session, 'garage.triage.check-out', [...OWNER_MECHANIC]) && <button className="btn primary" onClick={() => setCheckout(true)}>{t('checkOut')}</button>}</>} />
+      {open && mayRelease && <>{pendencies.length > 0 && <button className="btn secondary" onClick={() => setReleaseFormOpen((shown) => !shown)}>{t('releaseWithPendency')}</button>}<button className="btn primary" onClick={() => setCheckout(true)}>{t('checkOut')}</button></>}</>} />
     {state.error && triage && <p className="form-error" role="alert">{t(state.error, { defaultValue: state.error })}</p>}
     <StateView loading={state.loading && !triage} error={triage ? '' : state.error}>
       {triage && <>
@@ -84,9 +111,33 @@ export function GarageTriagePage() {
             <tbody>{(triage.services ?? []).map((service) => <tr key={String(service.uuid)}>
               <td>{String(service.name)}{!!service.requiredForDeparture && <small>{t('requiredForDeparture')}</small>}</td><td>{t(`serviceGroup${String(service.serviceGroup)}`)}</td>
               <td><span className="badge blue">{t(`serviceState${String(service.effectiveState)}`)}</span></td>
-              {open && mayMark && <td><div className="inline-actions">{['Performed', 'NotNeeded', 'Pending'].map((to) => <button key={to} className="btn tertiary" disabled={service.state === to || state.saving} onClick={() => mark(service, to)}>{t(`serviceState${to}`)}</button>)}</div></td>}</tr>)}</tbody></table></div>
+              {open && mayMark && <td><div className="inline-actions">{['Performed', 'NotNeeded', 'NotDone', 'Pending'].map((to) => <button key={to} className="btn tertiary" disabled={service.state === to || state.saving} onClick={() => mark(service, to)}>{t(`serviceState${to}`)}</button>)}</div></td>}</tr>)}</tbody></table></div>
         </PanelSection></>}
     </StateView>
+    {releaseFormOpen && open && mayRelease && <section className="page-form-card release-form" aria-label={t('releaseWithPendency')}>
+      <h2>{t('releaseWithPendency')}</h2>
+      <p>{t('releaseWithPendencyText')}</p>
+      <form onSubmit={release} noValidate>
+        <div className="form-grid">
+          <label>{t('releaseJustification')} *<textarea rows={3} aria-invalid={Boolean(releaseForm.formState.errors.justification)} {...releaseForm.register('justification')} /></label>
+          {releaseForm.formState.errors.justification && <small className="field-error">{releaseForm.formState.errors.justification.message}</small>}
+          <label>{t('odometerIfNeeded')}<input type="number" min="0" step="any" {...releaseForm.register('odometerKm', { setValueAs: (value) => value === '' ? undefined : Number(value) })} /></label>
+          {pendencies.length > 0 && <fieldset className="list-field"><legend>{t('awaitingParts')}</legend>
+            {pendencies.map((service) => <label className="check-field" key={String(service.uuid)}>
+              <Controller control={releaseForm.control} name="awaitingPartsServiceUuids" render={({ field }) => {
+                const serviceUuid = String(service.uuid)
+                const checked = field.value.includes(serviceUuid)
+                return <input type="checkbox" checked={checked} onChange={(event) => field.onChange(event.target.checked ? [...field.value, serviceUuid] : field.value.filter((value) => value !== serviceUuid))} />
+              }} />
+              {String(service.name)}
+            </label>)}
+          </fieldset>}
+        </div>
+        {state.error && <p className="form-error" role="alert">{t(state.error, { defaultValue: state.error })}</p>}
+        <div className="form-actions split"><button type="button" className="btn secondary" onClick={() => setReleaseFormOpen(false)}>{t('cancel')}</button>
+          <button className="btn primary" type="submit" disabled={state.saving}>{state.saving ? t('saving') : t('saveRelease')}</button></div>
+      </form>
+    </section>}
     {checkout && <Confirm title={t('checkOut')} text={t('checkOutText')} onCancel={() => setCheckout(false)} onConfirm={finish} />}</>
 }
 

@@ -38,6 +38,8 @@ pub mod garage_call_gateway;
 pub mod vehicle_presence_event_gateway;
 pub mod garage_attendance_gateway;
 pub mod garage_attendance_workflow_gateway;
+pub mod garage_release_gateway;
+pub mod garage_release_item_gateway;
 pub mod garage_rollover_gateway;
 pub mod garage_fuelling_mark_gateway;
 pub mod garage_queue_gateway;

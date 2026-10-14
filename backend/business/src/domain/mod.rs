@@ -41,6 +41,7 @@ pub mod cost_report;
 pub mod operation_permission;
 pub mod permission;
 pub mod garage_call;
+pub mod garage_release;
 pub mod vehicle_presence_event;
 pub mod garage_attendance;
 pub mod garage_service;

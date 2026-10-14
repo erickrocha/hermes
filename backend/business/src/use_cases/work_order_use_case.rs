@@ -165,7 +165,7 @@ impl WorkOrderUseCase {
     /// `Resolved`/`Cancelled`) and a pendency remains. Conclusion
     /// (`TRM-208`) is a deliberate administrative act, never derived here --
     /// an item set with nothing left pending leaves the status untouched.
-    fn recompute_status(
+    pub(crate) fn recompute_status(
         current: &WorkOrderStatus,
         new_item: &WorkOrderItem,
         items: &[WorkOrderItem],
