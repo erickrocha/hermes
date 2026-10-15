@@ -237,7 +237,11 @@ pub async fn list_all(
 ) -> HttpResponse<Json<PageJson<ExtraTripJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
     // `C-031` (`HRMS-860`): a driver's list is the trips that name them.
-    if let (Role::Driver, Some(user_id)) = (&current_user.role, current_user.id) {
+    if current_user.role == Role::Driver {
+        // A driver with no id (never from the database) sees nothing rather than the tenant's trips.
+        let Some(user_id) = current_user.id else {
+            return Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)));
+        };
         let gateway = ExtraTripGateway::new(state.conn.as_ref().clone());
         return match gateway.find_page_for_driver(user_id, page, page_size).await {
             Ok((models, total)) => {
@@ -430,8 +434,7 @@ async fn find_visible(
         ));
     }
     // `C-031` (`HRMS-860`): another driver's trip is answered like an unknown one.
-    let names_the_driver = trip.driver_id == current_user.id || trip.second_driver_id == current_user.id;
-    if current_user.role == Role::Driver && !names_the_driver {
+    if current_user.role == Role::Driver && !trip.names_driver(current_user.id) {
         return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::ExtraTripNotFound));
     }
     Ok(trip)

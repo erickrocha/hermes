@@ -2576,6 +2576,7 @@ fn checklist_template_row(
         name: name.into(),
         checklist_type: "Departure".into(),
         active: true,
+        is_default: false,
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -7394,4 +7395,39 @@ async fn a_stated_kind_needs_the_field_that_makes_it_a_days_work_and_unreadable_
         KIND_NEEDS_ITS_DAYS,
         "a one-off trip without its date"
     );
+}
+
+/// `C-031` (`HRMS-860`): a driver's trip list is the tenant's trips that name them as the driver or the second driver.
+#[tokio::test]
+async fn a_drivers_trip_list_is_scoped_to_the_tenant_and_to_the_trips_that_name_them() {
+    let db = mock()
+        .append_query_results(count(1))
+        .append_query_results([[extra_trip_row(1, 42, "T-1")]])
+        .into_connection();
+    let driver = AuditUser { id: 7, email: "driver@example.com".into(), tenant_id: Some(42), enforce_tenant: true };
+    let (rows, _total) = run_with_user(
+        Some(driver),
+        business::gateway::extra_trip_gateway::ExtraTripGateway::new(db.clone()).find_page_for_driver(7, 0, 50),
+    )
+    .await
+    .expect("page");
+    assert_eq!(rows.len(), 1);
+    let sql = format!("{:?}", log(db)).to_lowercase();
+    assert!(sql.contains("tenant_id"), "{sql}");
+    assert!(sql.contains("driver_id") && sql.contains("second_driver_id"), "{sql}");
+}
+
+#[test]
+fn a_trip_names_only_its_driver_or_second_driver_and_never_a_missing_id() {
+    use business::commons::entity_mapper::EntityMapper;
+    let mut trip = business::domain::extra_trip::ExtraTripEntityMapper::from_model(extra_trip_row(1, 42, "T-1"));
+    trip.driver_id = Some(7);
+    trip.second_driver_id = Some(8);
+    assert!(trip.names_driver(Some(7)));
+    assert!(trip.names_driver(Some(8)));
+    assert!(!trip.names_driver(Some(9)));
+    // `None == None` must not read as "named": a user with no id is named by nothing.
+    trip.driver_id = None;
+    trip.second_driver_id = None;
+    assert!(!trip.names_driver(None));
 }
