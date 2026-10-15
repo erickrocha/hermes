@@ -339,6 +339,46 @@ pub async fn active(
     }
 }
 
+/// `C-032` (`EPIC-AC-03-S01`, `HRMS-858`, `TRM-882`): marking a service asks for the permission of the service's own
+/// group -- `garage.service.internal` or `garage.service.external` -- on top of the route's `garage.triage.mark-service`,
+/// so an owner can let a mechanic mark the external services and not the internal ones, or the reverse. An unknown
+/// service is left to the use case's own 404.
+async fn require_service_group_permission(
+    state: &AppState,
+    locale: &Locale,
+    current_user: &User,
+    services: &[GarageService],
+    service_uuid: &str,
+) -> Result<(), ExceptionResponse> {
+    use business::domain::enums::GarageServiceGroup;
+    let Some(service) = services.iter().find(|s| s.uuid.as_deref() == Some(service_uuid)) else {
+        return Ok(());
+    };
+    let db = state.conn.as_ref().clone();
+    let unexpected = || ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError);
+    let model = GarageServiceModelGateway::new(db.clone())
+        .find_by_id(service.service_model_id)
+        .await
+        .map_err(|_| unexpected())?
+        .ok_or_else(unexpected)?;
+    let code = if model.service_group == GarageServiceGroup::Internal.to_string() {
+        "garage.service.internal"
+    } else {
+        "garage.service.external"
+    };
+    let effective = business::use_cases::access_profile_use_case::AccessProfileUseCase::new(
+        business::gateway::access_profile_gateway::AccessProfileGateway::new(db),
+    )
+    .effective(current_user)
+    .await
+    .map_err(|_| unexpected())?;
+    if effective.permissions.iter().any(|held| held == code) {
+        Ok(())
+    } else {
+        Err(ExceptionResponse::ForbiddenPermission(locale.clone(), ErrorKey::PermissionNotInProfile, code))
+    }
+}
+
 #[utoipa::path(
     put,
     tag = "GarageAttendance",
@@ -353,7 +393,7 @@ pub async fn active(
         (status = 400, description = "A state other than Pending/Performed/NotNeeded/NotDone", body = BadRequestErrorJson),
         (status = 409, description = "`GarageAttendanceClosed`: the triage is already closed", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "The caller's role may not run the garage", body = ForbiddenErrorJson),
+        (status = 403, description = "The caller's role may not run the garage, or their access profile lacks `garage.service.internal` / `garage.service.external` for this service's group (`PermissionNotInProfile`, naming it)", body = ForbiddenErrorJson),
         (status = 404, description = "Triage or service not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
@@ -366,7 +406,8 @@ pub async fn mark_service(
     Path((uuid, service_uuid)): Path<(String, String)>,
     Json(payload): Json<GarageServiceMarkJson>,
 ) -> HttpResponse<Json<GarageServiceJson>> {
-    let (attendance, _) = visible(&state, &locale, &current_user, &uuid, true).await?;
+    let (attendance, services) = visible(&state, &locale, &current_user, &uuid, true).await?;
+    require_service_group_permission(&state, &locale, &current_user, &services, &service_uuid).await?;
     let new_state = GarageServiceState::from_str(&payload.state).map_err(|_| {
         ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue)
     })?;
