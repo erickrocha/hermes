@@ -1,19 +1,24 @@
 package com.progressrail.hermes.client.driver
 
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import com.progressrail.hermes.client.shared.AccessTokenResponse
 import com.progressrail.hermes.client.shared.AuthApi
 import com.progressrail.hermes.client.shared.DriverSession
+import com.progressrail.hermes.client.shared.FleetApi
+import com.progressrail.hermes.client.shared.apiError
 import com.progressrail.hermes.client.shared.createHermesHttpClient
 import com.progressrail.hermes.client.shared.isDriverRole
 import com.progressrail.hermes.client.shared.secondsUntilRefresh
@@ -24,26 +29,35 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
 
 /**
- * Driver app shell: sign in through the platform's existing auth, keep the session encrypted, renew it, sign out.
- * No domain screens here; C-031 plugs them into [renderContent].
+ * Driver app: sign in through the platform's existing auth, keep the session encrypted, renew it, sign out (C-017),
+ * and host the fleet screens (C-031) in [FleetContent]. Every network call runs on one background thread, so a
+ * scheduled renewal and a renewal after a `401` can never overlap.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), FleetHost {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var store: DriverSessionStore
     private lateinit var httpClient: HttpClient
-    private var session: DriverSession? = null
+    @Volatile private var session: DriverSession? = null
     private var loginButton: Button? = null
-    private var refreshInProgress = false
-    private val refreshRunnable = Runnable { session?.let(::refresh) }
+    private var messageView: TextView? = null
+    private var fleet: FleetContent? = null
+    private val refreshRunnable = Runnable { refreshNow() }
+    private val authApi get() = AuthApi(httpClient, BuildConfig.API_BASE_URL)
+    private val fleetApi get() = FleetApi(httpClient, BuildConfig.API_BASE_URL)
+
+    override val context: Context get() = this
+    override val userUuid: String get() = session?.uuid.orEmpty()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = DriverSessionStore(this)
-        httpClient = createHermesHttpClient()
+        httpClient = createHermesHttpClient(acceptLanguage = "pt-BR")
         val saved = store.load()
         session = saved
         if (saved == null) showLogin() else showAuthenticated(saved)
+        // A session saved by the shell has no user uuid yet; a renewal fills it in and starts the fleet screens.
+        if (saved != null && saved.uuid.isBlank()) refreshNow()
     }
 
     override fun onStart() {
@@ -62,10 +76,6 @@ class MainActivity : ComponentActivity() {
         httpClient.close()
         super.onDestroy()
     }
-
-    /** Extension point for the C-031 driver screens. The shell renders no fleet-operations data. */
-    @Suppress("UNUSED_PARAMETER")
-    private fun renderContent(session: DriverSession, container: LinearLayout) = Unit
 
     private fun showLogin(message: String? = null, email: String = "") {
         val content = createContent()
@@ -102,9 +112,13 @@ class MainActivity : ComponentActivity() {
         val content = createContent()
         content.addView(text(getString(R.string.authenticated_title, current.name), R.style.TextAppearance_Hermes_Title))
         content.addView(text(getString(R.string.authenticated_role), R.style.TextAppearance_Hermes_Body))
-        content.addView(text(getString(R.string.authenticated_message), R.style.TextAppearance_Hermes_Body))
-        if (message != null) content.addView(text(message, R.style.TextAppearance_Hermes_Error), contentParams())
-        renderContent(current, content)
+        val notice = text(message.orEmpty(), R.style.TextAppearance_Hermes_Error).apply {
+            visibility = if (message == null) View.GONE else View.VISIBLE
+        }
+        messageView = notice
+        content.addView(notice, contentParams())
+        val fleetContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(fleetContainer, contentParams())
         content.addView(
             Button(this).apply {
                 text = getString(R.string.sign_out_button)
@@ -112,7 +126,16 @@ class MainActivity : ComponentActivity() {
             },
             contentParams(),
         )
-        setContentView(content)
+        setContentView(ScrollView(this).apply { isFillViewport = true; addView(content) })
+        fleet = if (current.uuid.isBlank()) null else FleetContent(this, fleetContainer).also { it.start() }
+    }
+
+    /** Shows or clears the notice line without rebuilding the screen, so a form in progress is kept. */
+    private fun showNotice(message: String?) {
+        messageView?.apply {
+            text = message.orEmpty()
+            visibility = if (message == null) View.GONE else View.VISIBLE
+        }
     }
 
     private fun submitLogin(email: String, password: String) {
@@ -153,43 +176,69 @@ class MainActivity : ComponentActivity() {
         scheduleRefresh(next)
     }
 
-    private fun refresh(current: DriverSession) {
-        if (refreshInProgress || !alive()) return
-        refreshInProgress = true
+    /** The scheduled renewal. It reads the latest session on the worker thread, never a stale copy. */
+    private fun refreshNow() {
+        if (!alive()) return
         executor.execute {
+            val current = session ?: return@execute
             try {
-                val response = runBlocking { AuthApi(httpClient, BuildConfig.API_BASE_URL).refresh(current.refreshToken) }
+                val next = renewBlocking(current, force = true)
                 mainHandler.post {
-                    refreshInProgress = false
                     if (!alive()) return@post
-                    val next = response.toSession()
-                    if (next == null || !isDriverRole(response.role)) {
-                        // A driver role without usable tokens is a bad response, not a role change.
-                        endSession(getString(if (isDriverRole(response.role)) R.string.session_expired else R.string.not_a_driver))
-                    } else {
-                        // The backend issues a new refresh token on every refresh: replace what is stored.
-                        store.save(next)
-                        session = next
-                        showAuthenticated(next) // also clears a stale "no connection" message
-                        scheduleRefresh(next)
-                    }
+                    if (fleet == null && next.uuid.isNotBlank()) showAuthenticated(next) else showNotice(null)
                 }
-            } catch (failure: ClientRequestException) {
-                mainHandler.post {
-                    refreshInProgress = false
-                    if (!alive()) return@post
-                    if (failure.response.status == HttpStatusCode.Unauthorized) {
-                        endSession(getString(R.string.session_expired))
-                    } else {
-                        retryLater(current)
-                    }
-                }
+            } catch (ended: SessionEnded) {
+                mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }
             } catch (_: Exception) {
-                mainHandler.post {
-                    refreshInProgress = false
-                    if (alive()) retryLater(current)
-                }
+                mainHandler.post { if (alive()) retryLater(current) }
             }
+        }
+    }
+
+    /**
+     * Renews the session on the worker thread. Unless [force], a session already renewed since [stale] was read is
+     * reused: the refresh token rotates on every use, so a second renewal with the old one would be refused.
+     */
+    private fun renewBlocking(stale: DriverSession, force: Boolean = false): DriverSession {
+        val latest = session ?: throw SessionEnded(null)
+        if (!force && latest.accessToken != stale.accessToken) return latest
+        val response = try {
+            runBlocking { authApi.refresh(latest.refreshToken) }
+        } catch (failure: ClientRequestException) {
+            if (failure.response.status == HttpStatusCode.Unauthorized) throw SessionEnded(R.string.session_expired)
+            throw failure
+        }
+        val next = response.toSession()
+        if (next == null || !isDriverRole(response.role)) {
+            // A driver role without usable tokens is a bad response, not a role change.
+            throw SessionEnded(if (isDriverRole(response.role)) R.string.session_expired else R.string.not_a_driver)
+        }
+        store.save(next) // the backend issues a new refresh token on every refresh: replace what is stored
+        session = next
+        mainHandler.post { if (alive()) scheduleRefresh(next) }
+        return next
+    }
+
+    override fun <T> run(work: suspend (api: FleetApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) {
+        executor.execute {
+            val outcome: Result<T> = try {
+                val first = session ?: throw SessionEnded(null)
+                try {
+                    Result.success(runBlocking { work(fleetApi, first.accessToken) })
+                } catch (failure: ClientRequestException) {
+                    if (failure.response.status != HttpStatusCode.Unauthorized) throw failure
+                    val renewed = renewBlocking(first)
+                    Result.success(runBlocking { work(fleetApi, renewed.accessToken) })
+                }
+            } catch (ended: SessionEnded) {
+                mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }
+                return@execute
+            } catch (refused: ClientRequestException) {
+                Result.failure(FleetRefused(refused.response.status.value, runBlocking { refused.apiError() }?.message))
+            } catch (other: Exception) {
+                Result.failure(FleetUnreachable(other))
+            }
+            mainHandler.post { if (alive()) onDone(outcome) }
         }
     }
 
@@ -197,7 +246,7 @@ class MainActivity : ComponentActivity() {
     private fun retryLater(current: DriverSession) {
         mainHandler.removeCallbacks(refreshRunnable)
         mainHandler.postDelayed(refreshRunnable, RETRY_MILLIS)
-        if (session == current) showAuthenticated(current, getString(R.string.refresh_unavailable))
+        if (session == current) showNotice(getString(R.string.refresh_unavailable))
     }
 
     private fun scheduleRefresh(current: DriverSession) {
@@ -212,11 +261,13 @@ class MainActivity : ComponentActivity() {
         mainHandler.removeCallbacks(refreshRunnable)
         store.clear()
         session = null
+        fleet = null
+        messageView = null
         showLogin(message)
     }
 
     private fun AccessTokenResponse.toSession(): DriverSession? =
-        refreshToken?.let { DriverSession(accessToken, it, expireIn, name, role) }
+        refreshToken?.let { DriverSession(accessToken, it, expireIn, name, role, uuid) }
 
     private fun alive() = !isFinishing && !isDestroyed
 
@@ -232,10 +283,12 @@ class MainActivity : ComponentActivity() {
         setBackgroundResource(R.color.screen_background)
     }
 
-    private fun text(value: String, appearance: Int): TextView = TextView(this).apply {
+    override fun text(value: String, appearance: Int): TextView = TextView(this).apply {
         setTextAppearance(this@MainActivity, appearance)
         text = value
     }
+
+    override fun spacing(): LinearLayout.LayoutParams = contentParams()
 
     private fun contentParams(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,

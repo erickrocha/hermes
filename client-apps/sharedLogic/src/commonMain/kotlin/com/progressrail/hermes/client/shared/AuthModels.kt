@@ -31,6 +31,8 @@ data class DriverSession(
     val expireIn: Long,
     val name: String,
     val role: String,
+    /** The user's own uuid (`SR-CA-03-02`). Empty in a session saved before `C-031`; a refresh fills it. */
+    val uuid: String = "",
 )
 
 private val sessionJson = Json { ignoreUnknownKeys = true }
