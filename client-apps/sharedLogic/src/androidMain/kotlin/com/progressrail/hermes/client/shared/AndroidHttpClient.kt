@@ -7,7 +7,8 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
-fun createGarageDeviceHttpClient(): HttpClient = HttpClient(Android) {
+/** The shared client for every Hermes app; the garage TV keeps its historical name below. */
+fun createHermesHttpClient(): HttpClient = HttpClient(Android) {
     // The activity branches on ClientRequestException (401 -> re-pair); without this a 4xx is parsed as the body.
     expectSuccess = true
     install(HttpTimeout) {
@@ -21,3 +22,5 @@ fun createGarageDeviceHttpClient(): HttpClient = HttpClient(Android) {
         })
     }
 }
+
+fun createGarageDeviceHttpClient(): HttpClient = createHermesHttpClient()
