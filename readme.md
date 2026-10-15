@@ -1,115 +1,115 @@
 # Hermes
 
-A multi-tenant SaaS control plane: a Rust HTTP API plus a React admin console (the
-"backoffice") that manage *tenants*, *business plans* (priced subscription products), and
-*users* with three roles (platform administrator, tenant owner, tenant user). Hermes is a
-platform/billing-administration layer, not a vertical application on its own — it exists to
-replace [operacao-trm](https://github.com/amzontasp/operacao-trm) (a legacy single-tenant
-fleet-operations system) with a proper multi-tenant architecture. Transmega, operacao-trm's
-current operator, is Hermes' first tenant.
+Um plano de controle SaaS multi-tenant: uma API HTTP em Rust mais um console administrativo em React (o
+"backoffice") que gerenciam *tenants*, *planos comerciais* (produtos de assinatura com preço) e
+*usuários* com três papéis (administrador da plataforma, proprietário do tenant, usuário do tenant). O Hermes é uma
+camada de administração de plataforma e cobrança, não uma aplicação vertical por si só — ele existe para
+substituir o [operacao-trm](https://github.com/amzontasp/operacao-trm) (um sistema legado, de um único tenant, de
+operação de frotas) por uma arquitetura multi-tenant adequada. A Transmega, operadora atual do operacao-trm,
+é o primeiro tenant do Hermes.
 
-## Repository layout
+## Estrutura do repositório
 
-| Path | What it is |
+| Caminho | O que é |
 |---|---|
-| `backend/` | Rust Cargo workspace — see below |
-| `backoffice/` | Vite + React + TypeScript admin console — see [`backoffice/README.md`](backoffice/README.md) |
-| `client-apps/` | Kotlin Multiplatform shared logic and the native Android TV garage app |
-| `infra/dev/docker-compose.yml` | Local MariaDB for development |
+| `backend/` | Workspace Cargo em Rust — veja abaixo |
+| `backoffice/` | Console administrativo em Vite + React + TypeScript — veja [`backoffice/README.md`](backoffice/README.md) |
+| `client-apps/` | Lógica compartilhada em Kotlin Multiplatform e o app Android TV nativo da garagem |
+| `infra/dev/docker-compose.yml` | MariaDB local para desenvolvimento |
 
-### The backend workspace
+### O workspace do backend
 
-Four crates with a strictly one-way dependency graph, `web → business → entity`, `web → migration`:
+Quatro crates com um grafo de dependência estritamente em um sentido, `web → business → entity`, `web → migration`:
 
-| Crate | Responsibility |
+| Crate | Responsabilidade |
 |---|---|
-| `entity` | SeaORM table definitions only. No business logic. |
-| `migration` | SeaORM migrations and the seed data under `migration/data/`. |
-| `business` | Domain structs, use cases, gateways. No HTTP types — testable with no server and, via the `mock` cargo feature, no database. |
-| `web` | The Axum HTTP API: routes, endpoints, JSON contracts, authentication, OpenAPI. |
+| `entity` | Apenas as definições de tabela do SeaORM. Nenhuma lógica de negócio. |
+| `migration` | Migrações do SeaORM e os dados iniciais em `migration/data/`. |
+| `business` | Estruturas de domínio, casos de uso, gateways. Nenhum tipo HTTP — testável sem servidor e, pela feature `mock` do cargo, sem banco de dados. |
+| `web` | A API HTTP em Axum: rotas, endpoints, contratos JSON, autenticação, OpenAPI. |
 
-Every table, column, entity and enum value is named in English, without exception — a
-deliberate reaction against operacao-trm's Portuguese schema, and a rule that applies to
-every future table, not only ones that will eventually replace part of operacao-trm's domain.
+Toda tabela, coluna, entidade e valor de enum é nomeado em inglês, sem exceção — uma reação
+deliberada ao esquema em português do operacao-trm, e uma regra que vale para toda tabela futura,
+não só para as que um dia substituirão parte do domínio do operacao-trm.
 
-## Running it locally
+## Executando localmente
 
-1. Start the database: `docker compose -f infra/dev/docker-compose.yml up -d`.
-2. Copy `backend/.env.example` to `backend/.env` and fill in real values. The two token
-   secrets **must** be replaced: generate each with `openssl rand -hex 32` (the placeholders
-   are deliberately too short and the server refuses them).
-3. Apply the migrations — a separate, deliberate step (PD-033):
+1. Suba o banco de dados: `docker compose -f infra/dev/docker-compose.yml up -d`.
+2. Copie `backend/.env.example` para `backend/.env` e preencha com valores reais. Os dois segredos
+   de token **precisam** ser trocados: gere cada um com `openssl rand -hex 32` (os valores de exemplo
+   são propositalmente curtos demais e o servidor os recusa).
+3. Aplique as migrações — um passo separado e deliberado (PD-033):
    `cargo run --manifest-path backend/Cargo.toml -- migrate`.
-   The server **does not** migrate at start-up; it refuses to start while any migration is
-   pending and names the ones missing. Run this after every pull that adds a migration.
-4. Run the API: `cargo run --manifest-path backend/Cargo.toml`. In development Swagger UI is
-   served at `/swagger-ui` and the OpenAPI document at `/api-docs/openapi.json`.
-5. Run the console: see [`backoffice/README.md`](backoffice/README.md).
-6. Build the Android TV client: from `client-apps/`, run
+   O servidor **não** migra na inicialização; ele se recusa a iniciar enquanto houver alguma migração
+   pendente e informa quais faltam. Rode isto após cada pull que adicione uma migração.
+4. Execute a API: `cargo run --manifest-path backend/Cargo.toml`. Em desenvolvimento, o Swagger UI é
+   servido em `/swagger-ui` e o documento OpenAPI em `/api-docs/openapi.json`.
+5. Execute o console: veja [`backoffice/README.md`](backoffice/README.md).
+6. Compile o cliente Android TV: a partir de `client-apps/`, execute
    `ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ./gradlew :androidApp:assembleDebug`.
-   Debug builds default to the emulator API at `http://10.0.2.2:8080`; set `HERMES_API_BASE_URL` or
-   `-PhermesApiBaseUrl=...` to target another API. Cleartext HTTP is enabled only for debug builds;
-   configure an HTTPS URL for release builds.
-   For a manually distributed release APK, configure `HERMES_RELEASE_KEYSTORE`,
-   `HERMES_RELEASE_STORE_PASSWORD`, `HERMES_RELEASE_KEY_ALIAS`, and
-   `HERMES_RELEASE_KEY_PASSWORD` in the build environment, then run
-   `./gradlew :androidApp:assembleRelease`. Keep the keystore and passwords out of version control.
-   Send `androidApp/build/outputs/apk/release/androidApp-release.apk` to the user for local installation.
+   Os builds de debug usam por padrão a API do emulador em `http://10.0.2.2:8080`; defina `HERMES_API_BASE_URL` ou
+   `-PhermesApiBaseUrl=...` para apontar para outra API. O HTTP sem criptografia fica habilitado apenas em builds de debug;
+   configure uma URL HTTPS para os builds de release.
+   Para um APK de release distribuído manualmente, configure `HERMES_RELEASE_KEYSTORE`,
+   `HERMES_RELEASE_STORE_PASSWORD`, `HERMES_RELEASE_KEY_ALIAS` e
+   `HERMES_RELEASE_KEY_PASSWORD` no ambiente de build e então execute
+   `./gradlew :androidApp:assembleRelease`. Mantenha o keystore e as senhas fora do controle de versão.
+   Envie `androidApp/build/outputs/apk/release/androidApp-release.apk` ao usuário para instalação local.
 
-## Deploying
+## Implantação
 
-Migrations are a deploy step, never a side effect of starting the service:
+As migrações são uma etapa da implantação, nunca um efeito colateral de iniciar o serviço:
 
-1. Run `hermes migrate` once against the target database. It takes a database lock,
-   so two deploy jobs running it at the same time are safe, and it is a no-op when nothing
-   is pending.
-2. Start (or roll) the service with `hermes` and no arguments.
+1. Execute `hermes migrate` uma vez contra o banco de destino. Ele toma um lock no banco,
+   então dois jobs de implantação rodando-o ao mesmo tempo são seguros, e ele não faz nada quando não há
+   migração pendente.
+2. Inicie (ou faça o rollout do) serviço com `hermes` e nenhum argumento.
 
-Never edit a migration that has been applied anywhere; fix forward with a new one (HRMS-026).
+Nunca edite uma migração que já foi aplicada em qualquer lugar; corrija avançando, com uma nova (HRMS-026).
 
-## Configuration
+## Configuração
 
-Every setting is an environment variable (a local `backend/.env` is read too; a malformed
-`.env` aborts start-up rather than being partially loaded). See `backend/.env.example` for
-the full list and local-development values matching `infra/dev/docker-compose.yml`.
+Toda configuração é uma variável de ambiente (um `backend/.env` local também é lido; um
+`.env` malformado aborta a inicialização em vez de ser carregado parcialmente). Veja `backend/.env.example` para
+a lista completa e os valores de desenvolvimento local que combinam com `infra/dev/docker-compose.yml`.
 
-| Variable | Required | Notes |
+| Variável | Obrigatória | Observações |
 |---|---|---|
-| `DATABASE_URL`, `HOST`, `PORT` | yes | |
-| `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET` | yes | ≥ 32 bytes each and different from each other, or start-up is refused |
-| `SYSADMIN_EMAIL`, `SYSADMIN_PASSWORD` | yes | The platform administrator, provisioned on first start |
-| `APP_ENV` | no | Unset or `development` = developer machine. Any other value (`production`, `staging`, …) turns Swagger UI **and** the OpenAPI document off, and makes `CORS_ALLOWED_ORIGINS` mandatory |
-| `CORS_ALLOWED_ORIGINS` | outside development | Comma-separated origins. In development, if unset, any origin is allowed; elsewhere start-up is refused without it |
-| `ACCESS_TOKEN_HOURS`, `REFRESH_TOKEN_DAYS` | no | Token lifetimes; default 3 hours / 7 days. Invalid values fall back to the default |
-| `SMTP_*`, `BACKOFFICE_BASE_URL` | no | Invitation email — see below |
+| `DATABASE_URL`, `HOST`, `PORT` | sim | |
+| `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET` | sim | ≥ 32 bytes cada e diferentes entre si, ou a inicialização é recusada |
+| `SYSADMIN_EMAIL`, `SYSADMIN_PASSWORD` | sim | O administrador da plataforma, provisionado na primeira inicialização |
+| `APP_ENV` | não | Ausente ou `development` = máquina de desenvolvedor. Qualquer outro valor (`production`, `staging`, …) desliga o Swagger UI **e** o documento OpenAPI, e torna `CORS_ALLOWED_ORIGINS` obrigatória |
+| `CORS_ALLOWED_ORIGINS` | fora do desenvolvimento | Origens separadas por vírgula. Em desenvolvimento, se ausente, qualquer origem é permitida; nos demais ambientes a inicialização é recusada sem ela |
+| `ACCESS_TOKEN_HOURS`, `REFRESH_TOKEN_DAYS` | não | Validade dos tokens; padrão de 3 horas / 7 dias. Valores inválidos voltam ao padrão |
+| `SMTP_*`, `BACKOFFICE_BASE_URL` | não | E-mail de convite — veja abaixo |
 
-The platform administrator account (`SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`) is provisioned on first
-start, and re-pointed if the configured email changes. Passwords are stored as Argon2id; any legacy
-bcrypt hash is upgraded on that user's next successful login.
+A conta do administrador da plataforma (`SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`) é provisionada na primeira
+inicialização e reapontada se o e-mail configurado mudar. As senhas são armazenadas com Argon2id; qualquer hash
+bcrypt legado é atualizado no próximo login bem-sucedido daquele usuário.
 
-**Account-invite email is the one non-fail-fast exception.** `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
-`SMTP_PASSWORD`/`SMTP_FROM`/`BACKOFFICE_BASE_URL` are read lazily by `POST /user`, not at boot.
-Without them, creating a user still works — the account and its 7-day invite token are created either
-way — the server just can't email the link, and says so loudly in the logs rather than silently
-dropping it. See `business/src/commons/email_sender.rs` for the reasoning.
+**O e-mail de convite de conta é a única exceção que não falha rápido.** `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
+`SMTP_PASSWORD`/`SMTP_FROM`/`BACKOFFICE_BASE_URL` são lidos sob demanda por `POST /user`, não na subida.
+Sem eles, criar um usuário continua funcionando — a conta e o token de convite de 7 dias são criados de qualquer
+forma — só que o servidor não consegue enviar o link por e-mail, e avisa de forma bem visível nos logs em vez de
+descartá-lo em silêncio. Veja `business/src/commons/email_sender.rs` para o raciocínio.
 
-## Verification
+## Verificação
 
-From `backend/`:
+A partir de `backend/`:
 
-- `cargo test --workspace` — unit tests across all four crates.
-- `cargo test -p business --features mock --test mock` — the database-free integration tests
-  proving tenant isolation actually reaches the gateway layer, not only the query builder.
-- `cargo clippy --workspace --all-targets -- -D warnings` — CI fails on any warning.
-- With the local database migrated:
+- `cargo test --workspace` — testes unitários nos quatro crates.
+- `cargo test -p business --features mock --test mock` — os testes de integração sem banco de dados
+  que provam que o isolamento entre tenants realmente chega à camada de gateway, e não só ao query builder.
+- `cargo clippy --workspace --all-targets -- -D warnings` — o CI falha com qualquer aviso.
+- Com o banco local migrado:
   `DATABASE_URL=mysql://hermes:brutal@localhost:3307/hermes cargo test -p business --test schema_matches_entities -- --ignored`
-  — proves every entity column exists in the migrated schema.
+  — prova que toda coluna de entidade existe no esquema migrado.
 
-Acceptance tests (Gate 3) live in [`acceptance/`](acceptance/README.md).
+Os testes de aceitação (Gate 3) ficam em [`acceptance/`](acceptance/README.md).
 
-From `backoffice/`, see [`backoffice/README.md`](backoffice/README.md).
+A partir de `backoffice/`, veja [`backoffice/README.md`](backoffice/README.md).
 
-## Further reading
+## Para saber mais
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — why Rust, why this crate split, why a
-  separately deployed console.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — por que Rust, por que esta divisão de crates, por que um
+  console implantado separadamente.
