@@ -33,6 +33,19 @@ def template(owner, name, kind, n_items=2, active=True):
     return t
 
 
+def second_tenant(admin):
+    """A second `qa-ga-` tenant with an owner and one checklist template, for the refusals that need another tenant."""
+    st, tenant = http("POST", "/tenant", {"businessName": "qa-ga-tenant-b", "taxId": f"QAGB{int(b.time.time()) % 100000000:08d}", "countryCode": "US"}, admin)
+    assert st == 201, (st, tenant)
+    email = "qa-ga-owner-b@hermes.test"
+    st, user = http("POST", "/user", {"email": email, "name": "qa-ga-owner-b", "role": "TenantOwner", "enabled": True, "tenantId": int(tenant["id"])}, admin)
+    assert st == 201, (st, user)
+    pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
+    assert http("POST", "/accept-invite", {"token": b.invite_token(email, pw, b.load_env()["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204
+    owner_b = b.login(email, b.PASSWORD)
+    return owner_b, template(owner_b, "qa-ga-dep-b", "Departure")
+
+
 def run_body(tmpl, driver, vehicle, kind, km, opening=None, answers=None):
     body = {"checklistTemplateUuid": tmpl["uuid"], "driverUuid": driver["uuid"], "vehicleUuid": vehicle["uuid"],
             "checklistType": kind, "odometerKm": km,
@@ -80,6 +93,12 @@ def run():
             refuse("item of another template", 400, "AnswerNotATemplateItem", run_body(dep, da, v2, "Standalone", 1100.0, answers=[
                 {"checklistTemplateItemUuid": ret["items"][0]["uuid"], "status": "Conforming"}])),
         ]
+        # The two that need a non-driver or another tenant. `ChecklistNotATenantVehicle` cannot be reached through the API: the run's
+        # tenant is taken from its vehicle and a tenant-bound caller only sees their own vehicles, so it stays a defensive check.
+        tu, _ = d.make_user(owner, "qa-ga-da-tu@hermes.test", "TenantUser")
+        ok.append(refuse("non-driver named as the driver", 400, "NotADriver", run_body(dep, tu, v2, "Standalone", 1100.0), token=owner))
+        _, dep_b = second_tenant(admin)
+        ok.append(refuse("template of another tenant", 400, "ChecklistNotATenantTemplate", run_body(dep_b, da, v2, "Standalone", 1100.0), token=admin))
         s_close, close = http("POST", "/checklist-run", run_body(ret, da, v1, "Return", 1100.0, opening=dep1["uuid"]), da_t)
         ok.append(s_close == 201)
         ok.append(refuse("opening already closed", 400, "OpeningChecklistAlreadyClosed", run_body(ret, da, v1, "Return", 1200.0, opening=dep1["uuid"])))
@@ -112,13 +131,16 @@ def run():
         s_stand, k_stand = put(stand, owner)
         s_off, k_off = put(inactive, owner)
         s_drv, _ = put(dep2, da_t)
+        mech, mech_t = d.make_user(owner, "qa-ga-da-mech@hermes.test", "Mechanic")
+        s_mech, _ = put(dep2, mech_t)
+        s_tu = put(dep2, b.login("qa-ga-da-tu@hermes.test", b.PASSWORD))[0]
         s_other, _ = put({"uuid": NIL}, owner)
         record("DA-003", s1 == 200 and r1["isDefault"] and s2 == 200 and r2["isDefault"]
                and listing.get("qa-ga-dep2") is True and listing.get("qa-ga-dep") is False and s_again == 200
                and (s_stand, b.ek(k_stand)) == (400, "ChecklistTemplateCannotBeDefault") and (s_off, b.ek(k_off)) == (400, "ChecklistTemplateCannotBeDefault")
-               and s_drv == 403 and s_other == 404,
+               and s_drv == 403 and s_mech == 403 and s_tu == 403 and s_other == 404,
                f"owner marks dep {s1}, then dep2 {s2}; the driver's list shows dep2 default={listing.get('qa-ga-dep2')}, dep={listing.get('qa-ga-dep')}; again {s_again}; "
-               f"Standalone {s_stand}, inactive {s_off}; a driver {s_drv}; an unknown uuid {s_other}")
+               f"Standalone {s_stand}, inactive {s_off}; a driver {s_drv}, a mechanic {s_mech}, a tenant user {s_tu}; an unknown uuid {s_other}")
 
         # DA-004 -- localization: the same refusal in pt-BR, es and en reads differently and is not the generic text
         texts = {}
