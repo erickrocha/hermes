@@ -53,7 +53,9 @@ import com.progressrail.hermes.client.shared.GarageMonitorCard
 import com.progressrail.hermes.client.shared.GarageMonitorEntry
 import java.text.DateFormat
 import java.util.Date
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 internal data class GarageMonitorUiState(
     val queue: List<GarageMonitorEntry> = emptyList(),
@@ -112,6 +114,7 @@ internal fun GarageMonitorScreen(
                 mutedText = mutedText,
                 warning = warning,
                 danger = danger,
+                accent = accent,
             )
             Spacer(Modifier.height(22.dp))
             Row(
@@ -198,6 +201,7 @@ private fun Header(
     mutedText: Color,
     warning: Color,
     danger: Color,
+    accent: Color,
 ) {
     val hasSnapshot = state.lastUpdatedAtMillis != null
     val status = when {
@@ -206,7 +210,7 @@ private fun Header(
         state.isRefreshing -> stringResource(R.string.monitor_updating)
         else -> stringResource(R.string.monitor_online)
     }
-    val statusColor = if (state.errorMessage != null) warning else if (state.isRefreshing) warning else Color(0xFF83D6B2)
+    val statusColor = if (state.errorMessage != null) warning else if (state.isRefreshing) warning else accent
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -620,7 +624,7 @@ private fun MatrixPage(
                                 .border(1.dp, if (cellFocused) accent else Color.Transparent)
                                 .padding(horizontal = 10.dp, vertical = 4.dp),
                         ) {
-                            Text(cell?.effectiveState?.uppercase(Locale("pt", "BR")) ?: "—", color = accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(cell?.effectiveState?.let { serviceStateLabel(it) } ?: "—", color = accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 "${stringResource(R.string.monitor_matrix_stamp)} ${formatTimestamp(cell?.stamp)}",
                                 color = mutedText,
@@ -662,8 +666,25 @@ private fun EmptyState(message: String, mutedText: Color) {
     }
 }
 
-private fun formatTimestamp(value: String?): String =
-    value?.replace('T', ' ')?.take(16) ?: "--"
+// shortcut: the API sends zone-less UTC timestamps (ICD has no zone field); upgrade if it ever emits an offset.
+private fun formatTimestamp(value: String?): String {
+    if (value == null) return "--"
+    val parsed = runCatching {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.ROOT)
+            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .parse(value.take(16))
+    }.getOrNull() ?: return value.replace('T', ' ').take(16)
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(parsed)
+}
+
+@Composable
+private fun serviceStateLabel(value: String): String = when (value) {
+    "Pending" -> stringResource(R.string.monitor_state_pending)
+    "Performed" -> stringResource(R.string.monitor_state_performed)
+    "NotNeeded" -> stringResource(R.string.monitor_state_not_needed)
+    "NotDone" -> stringResource(R.string.monitor_state_not_done)
+    else -> value.uppercase(Locale("pt", "BR"))
+}
 
 private fun formatPercent(value: Double): String =
     String.format(Locale("pt", "BR"), "%.0f%%", value)

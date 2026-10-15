@@ -63,5 +63,9 @@
     <string name="monitor_matrix_stamp">Registro</string>
     <string name="monitor_matrix_last_performed">Última execução</string>
     <string name="monitor_repair">Parear novamente</string>
+    <string name="monitor_state_pending">PENDENTE</string>
+    <string name="monitor_state_performed">REALIZADO</string>
+    <string name="monitor_state_not_needed">NÃO NECESSÁRIO</string>
+    <string name="monitor_state_not_done">NÃO REALIZADO</string>
     <string name="monitor_unknown">Não informado</string>
 </resources>
