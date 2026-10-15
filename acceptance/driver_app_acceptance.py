@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Acceptance for the backend half of C-031 / KAN-34 (driver app screens): distinct checklist refusals,
-the odometer guard and the tenant's default checklist template. Scenarios DA-001...DA-004.
+the odometer guard the tenant's default checklist template and the driver's own-trips scope. Scenarios DA-001...DA-005.
 
 Reuses garage_monitor_acceptance.py's helpers and `qa-ga-` fixtures (API + dev DB), like driver_scope_acceptance.py.
 """
@@ -128,6 +128,25 @@ def run():
         record("DA-004", all(s == 400 for s, _ in texts.values()) and len({m for _, m in texts.values()}) == 3
                and "quilometragem" in texts["pt-BR"][1].lower() and "kilometraje" in texts["es"][1].lower(),
                f"pt-BR: {texts['pt-BR'][1]!r}; es: {texts['es'][1]!r}; en: {texts['en'][1]!r}")
+        # DA-005 -- a driver sees only the trips that name them (C-031, HRMS-860)
+        def trip(code, driver, second=None):
+            body = {"orderCode": code, "tripDate": "2026-11-20", "startTime": "08:00:00", "destination": f"qa-ga {code}", "driverUuid": driver["uuid"], "status": "Scheduled"}
+            if second:
+                body["secondDriverUuid"] = second["uuid"]
+            st, t = http("POST", "/extra-trip", body, owner)
+            assert st == 201, (code, st, t)
+            return t
+        t_a = trip("QA-DA-1", da); t_b = trip("QA-DA-2", db_); t_sec = trip("QA-DA-3", db_, second=da)
+        s_list, lst = http("GET", "/extra-trip?page=0&pageSize=50", token=da_t)
+        mine = sorted(x["orderCode"] for x in lst["items"]) if s_list == 200 else []
+        s_own = http("GET", f"/extra-trip/uuid/{t_a['uuid']}", token=da_t)[0]
+        s_second = http("GET", f"/extra-trip/uuid/{t_sec['uuid']}", token=da_t)[0]
+        s_other, b_other = http("GET", f"/extra-trip/uuid/{t_b['uuid']}", token=da_t)
+        s_unknown, b_unknown = http("GET", f"/extra-trip/uuid/{NIL}", token=da_t)
+        owner_sees = len(http("GET", "/extra-trip?page=0&pageSize=50", token=owner)[1]["items"])
+        record("DA-005", mine == ["QA-DA-1", "QA-DA-3"] and s_own == 200 and s_second == 200 and s_other == 404 and b_other == b_unknown
+               and s_unknown == 404 and owner_sees == 3,
+               f"driver A lists {mine}; own trip {s_own}; as second driver {s_second}; driver B's {s_other} (body equals an unknown uuid's: {b_other == b_unknown}); the owner lists {owner_sees}")
     finally:
         cleanup()
     bad = [k for k, v in b.RESULTS.items() if v["status"] != "PASS"]

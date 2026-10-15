@@ -191,6 +191,24 @@ impl ExtraTripGateway {
         fetch_page(query, &self.db, page, page_size).await
     }
 
+    /// `C-031` (`HRMS-860`): a driver's own trips -- the ones naming them as the driver or the second driver.
+    pub async fn find_page_for_driver(
+        &self,
+        user_id: i64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Vec<extra_trip_entity::Model>, u64), DbErr> {
+        let query = tenant_select(ExtraTripQuery::find(), extra_trip_entity::Column::TenantId)
+            .filter(
+                Condition::any()
+                    .add(extra_trip_entity::Column::DriverId.eq(user_id))
+                    .add(extra_trip_entity::Column::SecondDriverId.eq(user_id)),
+            )
+            .order_by_desc(extra_trip_entity::Column::TripDate)
+            .order_by_desc(extra_trip_entity::Column::Id);
+        fetch_page(query, &self.db, page, page_size).await
+    }
+
     /// `D-24(d)`/`HRMS-607`: the duplicate check `uq_extra_trip_tenant_
     /// code_date` makes a reportable error rather than a raw constraint
     /// violation -- tenant-scoped for the same `DEF-FO-01` reason

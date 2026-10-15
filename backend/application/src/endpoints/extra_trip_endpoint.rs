@@ -21,8 +21,9 @@ use axum::http::StatusCode;
 use business::domain::authorization::{
     can_administer_extra_trip, can_create_extra_trip, can_read_extra_trip,
 };
-use business::domain::enums::TripStatus;
-use business::domain::extra_trip::ExtraTrip;
+use business::domain::enums::{Role, TripStatus};
+use business::domain::extra_trip::{ExtraTrip, ExtraTripEntityMapper};
+use business::commons::entity_mapper::EntityMapper;
 use business::domain::user::User;
 use business::gateway::customer_gateway::CustomerGateway;
 use business::gateway::extra_trip_gateway::ExtraTripGateway;
@@ -221,7 +222,7 @@ pub async fn add(
     path = "/extra-trip",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of the caller's own tenant's trips (PD-028), latest date first. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own).", body = PageJson<ExtraTripJson>),
+        (status = 200, description = "A page of the caller's own tenant's trips (PD-028), latest date first. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; SysAdmin sees every tenant, everyone else only their own; a Driver sees only the trips that name them as driver or second driver).", body = PageJson<ExtraTripJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -232,9 +233,23 @@ pub async fn list_all(
     state: State<AppState>,
     Query(page_query): Query<PageQuery>,
     Extension(locale): Extension<Locale>,
-    Extension(_current_user): Extension<User>,
+    Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<ExtraTripJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
+    // `C-031` (`HRMS-860`): a driver's list is the trips that name them.
+    if let (Role::Driver, Some(user_id)) = (&current_user.role, current_user.id) {
+        let gateway = ExtraTripGateway::new(state.conn.as_ref().clone());
+        return match gateway.find_page_for_driver(user_id, page, page_size).await {
+            Ok((models, total)) => {
+                let mut items = Vec::with_capacity(models.len());
+                for trip in ExtraTripEntityMapper::from_models(models) {
+                    items.push(json(&state, trip).await);
+                }
+                Ok(Json(PageJson::new(items, page, page_size, total)))
+            }
+            Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+        };
+    }
     let search = page_query.search();
     match use_case(&state)
         .find_page(page, page_size, search.as_deref())
@@ -260,7 +275,7 @@ pub async fn list_all(
     path = "/extra-trip/uuid/{uuid}",
     params(("uuid" = String, Path, description = "Trip UUID")),
     responses(
-        (status = 200, description = "Trip found. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only).", body = ExtraTripJson),
+        (status = 200, description = "Trip found. **Roles:** SysAdmin (any tenant); TenantOwner, TenantUser, Driver, Mechanic (own tenant only; a Driver only a trip that names them, otherwise 404).", body = ExtraTripJson),
         (status = 404, description = "Trip not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -413,6 +428,11 @@ async fn find_visible(
             locale.clone(),
             ErrorKey::ExtraTripNotFound,
         ));
+    }
+    // `C-031` (`HRMS-860`): another driver's trip is answered like an unknown one.
+    let names_the_driver = trip.driver_id == current_user.id || trip.second_driver_id == current_user.id;
+    if current_user.role == Role::Driver && !names_the_driver {
+        return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::ExtraTripNotFound));
     }
     Ok(trip)
 }

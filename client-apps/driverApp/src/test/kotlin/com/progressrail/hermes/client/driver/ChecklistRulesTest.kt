@@ -14,6 +14,10 @@ import com.progressrail.hermes.client.shared.canSubmitChecklist
 import com.progressrail.hermes.client.shared.decodeDriverSession
 import com.progressrail.hermes.client.shared.defaultTemplate
 import com.progressrail.hermes.client.shared.encode
+import com.progressrail.hermes.client.shared.buildFuelReceipt
+import com.progressrail.hermes.client.shared.canSubmitReceipt
+import com.progressrail.hermes.client.shared.parseCents
+import com.progressrail.hermes.client.shared.parseDecimal
 import com.progressrail.hermes.client.shared.parseOdometer
 import com.progressrail.hermes.client.shared.vehicleAction
 import org.junit.Assert.assertEquals
@@ -94,5 +98,41 @@ class ChecklistRulesTest {
         assertEquals("", decoded?.uuid)
         val withUuid = DriverSession("a", "r", 1L, "Maria", "Driver", "u-1")
         assertEquals(withUuid, decodeDriverSession(withUuid.encode()))
+    }
+
+    @Test
+    fun litersAndValueAcceptACommaAndBecomeCentavos() {
+        assertEquals(40.5, parseDecimal("40,5")!!, 0.0)
+        assertEquals(12345L, parseCents("123,45"))
+        assertEquals(1000L, parseCents("10"))
+        assertEquals(1L, parseCents("0.005"))
+        assertNull(parseCents("abc"))
+        assertNull(parseDecimal("Infinity"))
+    }
+
+    @Test
+    fun aReceiptNeedsPrefixLitersAndValueAndAValidOptionalReading() {
+        assertTrue(canSubmitReceipt("P-12", "40", "300", ""))
+        assertTrue(canSubmitReceipt("P-12", "40", "300", "1500,5"))
+        assertFalse(canSubmitReceipt(" ", "40", "300", ""))
+        assertFalse(canSubmitReceipt("P-12", "", "300", ""))
+        assertFalse(canSubmitReceipt("P-12", "40", "x", ""))
+        assertFalse(canSubmitReceipt("P-12", "40", "300", "abc"))
+    }
+
+    @Test
+    fun theReceiptCarriesWhatTheDriverTypedAndNoDriverUuid() {
+        val receipt = buildFuelReceipt("v1", " P-12 ", "2026-10-15T12:00:00", "40,5", "300,10", "", " Posto X ", true, false)!!
+        assertEquals("v1", receipt.vehicleUuid)
+        assertEquals("P-12", receipt.vehiclePrefix)
+        assertEquals("2026-10-15T12:00:00", receipt.recordedAt)
+        assertEquals(40.5, receipt.volumeLiters, 0.0)
+        assertEquals(30010L, receipt.valueCents)
+        assertNull(receipt.odometerKm)
+        assertEquals("Posto X", receipt.station)
+        assertTrue(receipt.fullTank)
+        assertFalse(receipt.overrideOdometer)
+        assertEquals(true, buildFuelReceipt("v1", "P", "t", "1", "1", "5", "", false, true)?.overrideOdometer)
+        assertNull(buildFuelReceipt("v1", "P", "t", "x", "1", "", "", false, false))
     }
 }

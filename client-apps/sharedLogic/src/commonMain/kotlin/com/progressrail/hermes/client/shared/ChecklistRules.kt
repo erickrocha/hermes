@@ -1,5 +1,7 @@
 package com.progressrail.hermes.client.shared
 
+import kotlin.math.roundToLong
+
 /** What the driver can do next with a vehicle, read from the server's possession answer (presentation only). */
 sealed interface VehicleAction {
     data object Depart : VehicleAction
@@ -47,3 +49,42 @@ fun buildChecklistRun(
         }
     },
 )
+
+// ---- Fuel receipt (SR-CA-03-13/14): presentation-side parsing only; ranges are the server's ----
+
+/** Accepts "40", "40.5" and "40,5"; null when it is not a finite number. */
+fun parseDecimal(text: String): Double? = text.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
+
+/** "12,34" -> 1234 centavos; null when not a number. Rounds half up; the server refuses negatives. */
+fun parseCents(text: String): Long? = parseDecimal(text)?.let { (it * 100.0).roundToLong() }
+
+/** "Enviar" needs the prefix confirmation, litres and value; the optional fields may stay empty. */
+fun canSubmitReceipt(prefix: String, litersText: String, valueText: String, odometerText: String): Boolean =
+    prefix.isNotBlank() && parseDecimal(litersText) != null && parseCents(valueText) != null &&
+        (odometerText.isBlank() || parseDecimal(odometerText) != null)
+
+fun buildFuelReceipt(
+    vehicleUuid: String,
+    prefix: String,
+    recordedAtUtc: String,
+    litersText: String,
+    valueText: String,
+    odometerText: String,
+    station: String,
+    fullTank: Boolean,
+    overrideOdometer: Boolean,
+): FuelReceiptRequest? {
+    val liters = parseDecimal(litersText) ?: return null
+    val cents = parseCents(valueText) ?: return null
+    return FuelReceiptRequest(
+        vehicleUuid = vehicleUuid,
+        vehiclePrefix = prefix.trim(),
+        recordedAt = recordedAtUtc,
+        volumeLiters = liters,
+        valueCents = cents,
+        odometerKm = odometerText.takeIf { it.isNotBlank() }?.let(::parseDecimal),
+        station = station.trim().ifEmpty { null },
+        fullTank = fullTank,
+        overrideOdometer = overrideOdometer,
+    )
+}

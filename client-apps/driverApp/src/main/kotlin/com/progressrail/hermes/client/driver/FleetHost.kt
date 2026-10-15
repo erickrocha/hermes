@@ -6,7 +6,7 @@ import android.widget.TextView
 import com.progressrail.hermes.client.shared.FleetApi
 
 /** The server refused the call; [message] is its localized reason (`SR-CA-03-07`), when it gave one. */
-internal class FleetRefused(val status: Int, val reason: String?) : Exception(reason)
+internal class FleetRefused(val status: Int, val reason: String?, val errorKey: String = "") : Exception(reason)
 
 /** No usable answer arrived (network, timeout): the outcome on the server is unknown. */
 internal class FleetUnreachable(cause: Throwable) : Exception(cause)
@@ -25,6 +25,9 @@ internal interface FleetHost {
      * never delivered.
      */
     fun <T> run(work: suspend (api: FleetApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit)
+
+    /** Opens [latitude]/[longitude] in the device's map app; false when there is none. */
+    fun openMap(latitude: Double, longitude: Double): Boolean
 
     fun text(value: String, appearance: Int): TextView
     fun spacing(): LinearLayout.LayoutParams

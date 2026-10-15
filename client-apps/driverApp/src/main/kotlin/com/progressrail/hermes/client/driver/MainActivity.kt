@@ -1,6 +1,9 @@
 package com.progressrail.hermes.client.driver
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -24,6 +27,7 @@ import com.progressrail.hermes.client.shared.isDriverRole
 import com.progressrail.hermes.client.shared.secondsUntilRefresh
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.ClientRequestException
+import io.ktor.client.plugins.ResponseException
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
@@ -233,8 +237,10 @@ class MainActivity : ComponentActivity(), FleetHost {
             } catch (ended: SessionEnded) {
                 mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }
                 return@execute
-            } catch (refused: ClientRequestException) {
-                Result.failure(FleetRefused(refused.response.status.value, runBlocking { refused.apiError() }?.message))
+            } catch (refused: ResponseException) {
+                // 4xx (ClientRequestException) and 5xx (ServerResponseException) both carry the platform's reason.
+                val reason = runBlocking { refused.apiError() }
+                Result.failure(FleetRefused(refused.response.status.value, reason?.message, reason?.errorKey.orEmpty()))
             } catch (other: Exception) {
                 Result.failure(FleetUnreachable(other))
             }
@@ -281,6 +287,13 @@ class MainActivity : ComponentActivity(), FleetHost {
             resources.getDimensionPixelSize(R.dimen.screen_vertical_padding),
         )
         setBackgroundResource(R.color.screen_background)
+    }
+
+    override fun openMap(latitude: Double, longitude: Double): Boolean = try {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude")))
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
     }
 
     override fun text(value: String, appearance: Int): TextView = TextView(this).apply {
