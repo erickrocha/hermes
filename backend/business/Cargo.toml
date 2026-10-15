@@ -13,10 +13,17 @@ utoipa = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 
+argon2 = "0.6.0"
+# PD-029: mantido só para verificar hashes legados; nada novo é gravado em bcrypt.
 bcrypt = "0.19.3"
 log = "0.4.34"
 jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 base64 = "0.23.1"
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder"] }
+# EPIC-FT-01: cliente HTTP da fronteira de ingestão de rastreamento (D-15).
+# native-tls para não arrastar uma segunda pilha TLS ao lado do lettre.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+unicode-normalization = "0.1.25"
 
 
 [dependencies.sea-orm]
@@ -28,4 +35,196 @@ mock = ["sea-orm/mock"]
 
 [[test]]
 name = "mock"
+required-features = ["mock"]
+
+[[test]]
+name = "use_cases"
+required-features = ["mock"]
+
+[[test]]
+name = "authentication"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_device_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_device_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "tenant_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "business_plan_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "service_type_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "priced_service_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "part_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "holiday_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "customer_day_off_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "customer_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "fuel_gauge_setting_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "tenant_rule_setting_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "internal_tank_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "vehicle_expense_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "vehicle_assignment_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "vehicle_presence_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_service_model_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "km_evolution_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "vehicle_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "maintenance_plan_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "fuel_gauge_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "inspection_model_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_call_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "schedule_exception_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "fuel_entry_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "fuel_receipt_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "preventive_plan_alert_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "transport_demand_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "transport_demand_allocation_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_validity_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "user_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_rollover_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_auto_departure_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "stock_movement_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "daily_schedule_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "province_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "city_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "checklist_template_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "work_order_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_attendance_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "checklist_run_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "technical_inspection_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "purchase_order_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "work_order_posting_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_fuelling_mark_use_case_test"
+required-features = ["mock"]
+
+[[test]]
+name = "preventive_plan_use_case_test"
 required-features = ["mock"]

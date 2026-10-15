@@ -1,41 +1,72 @@
 import { useEffect, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
+import type { Session } from './types'
+import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
-import { LoginPage, PasswordPage } from './pages/AuthPages'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
 import { DashboardPage } from './pages/DashboardPage'
-import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage } from './pages/ManagementPages'
+import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canSeeProfiles, canSeeTenants, canSeeUsers } from './pages/ManagementPages'
+import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
 import { SettingsPage } from './pages/SettingsPage'
+import { CostReportsPage, canSeeCosts } from './pages/CostPages'
+import { customRoutes } from './routes'
+import { NotFoundPage } from './pages/NotFoundPage'
+import { resourceConfigs } from './features/resources'
+import { ResourceEditRoute, ResourceListRoute, ResourceNewRoute } from './components/organisms/ResourceRoutes'
+import { SystemSettingsPage } from './pages/SystemSettingsPage'
 
-function Protected({ children, sysAdmin = false }: { children: ReactNode; sysAdmin?: boolean }) {
+function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
+  const location = useLocation()
   if (!session) return <Navigate to="/login" replace />
-  if (session.firstLogin) return <Navigate to="/first-access" replace />
   if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/" replace />
-  return <Shell>{children}</Shell>
+  // DEF-BO-04: a role check that only lives in the page's action bar is a
+  // suggestion -- the URL is still reachable by hand. The guard and the
+  // button share one predicate so they cannot disagree.
+  if (allow && !allow(session)) return <Navigate to="/" replace />
+  // U-1: keyed by route so navigating away from a page that threw clears the
+  // failure instead of stranding the operator on the error card.
+  return <Shell><ErrorBoundary key={location.pathname}>{children}</ErrorBoundary></Shell>
 }
 
-export default function App() {
+export function App() {
   const dispatch = useDispatch<AppDispatch>()
   const session = useSelector((state: RootState) => state.auth.session)
   useEffect(() => { const onLogout = () => dispatch(logout()); window.addEventListener('hermes:logout', onLogout); return () => window.removeEventListener('hermes:logout', onLogout) }, [dispatch])
+  // EPIC-BO-01-S02: a signed-out session (or one still on /login) never
+  // keeps a previous tenant's theme -- Shell is what applies one, and it
+  // isn't mounted here to un-apply it itself.
+  useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
-    <Route path="/login" element={session ? <Navigate to={session.firstLogin ? '/first-access' : '/'} replace /> : <LoginPage />} />
-    <Route path="/first-access" element={session ? <PasswordPage firstAccess /> : <Navigate to="/login" replace />} />
+    <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
+    <Route path="/accept-invite" element={<AcceptInvitePage />} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
-    <Route path="/tenants" element={<Protected><TenantsPage /></Protected>} />
+    <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
+    <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:id/edit" element={<Protected><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:id/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
+    <Route path="/tenants/:uuid/edit" element={<Protected allow={canSeeTenants}><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
-    <Route path="/plans/:id/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
-    <Route path="/users" element={<Protected><UsersPage /></Protected>} />
-    <Route path="/users/new" element={<Protected><UserEditorPage /></Protected>} />
-    <Route path="/users/:id/edit" element={<Protected><UserEditorPage /></Protected>} />
+    <Route path="/plans/:uuid/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
+    <Route path="/profiles" element={<Protected allow={canSeeProfiles}><ProfilesPage /></Protected>} />
+    <Route path="/profiles/new" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/profiles/:uuid/edit" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/costs" element={<Protected allow={canSeeCosts}><CostReportsPage /></Protected>} />
+    <Route path="/users" element={<Protected allow={canSeeUsers}><UsersPage /></Protected>} />
+    <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
+    <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
-    <Route path="*" element={<Navigate to="/" replace />} />
+    {customRoutes.map((route) => <Route key={route.path} path={route.path} element={<Protected allow={route.allow}>{route.element}</Protected>} />)}
+    {resourceConfigs.flatMap((config) => [
+      <Route key={`${config.route}-list`} path={`/${config.route}`} element={<Protected allow={(s) => config.read(s)}><ResourceListRoute config={config} /></Protected>} />,
+      ...(config.create ? [<Route key={`${config.route}-new`} path={`/${config.route}/new`} element={<Protected allow={(s) => config.create!(s)}><ResourceNewRoute config={config} /></Protected>} />] : []),
+      ...(config.edit ? [<Route key={`${config.route}-edit`} path={`/${config.route}/:uuid/edit`} element={<Protected allow={(s) => config.edit!(s)}><ResourceEditRoute config={config} /></Protected>} />] : []),
+    ])}
+    <Route path="*" element={session ? <Protected><NotFoundPage /></Protected> : <Navigate to="/login" replace />} />
   </Routes>
 }

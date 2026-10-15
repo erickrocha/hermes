@@ -1,0 +1,18 @@
+# Keep the build context small and, more importantly, keep secrets out of it.
+# `.env` is a real file on a developer machine (HRMS-040): if it entered the
+# context it could be copied into a layer by a later careless `COPY .`.
+.env
+.env.*
+!.env.example
+
+target/
+**/target/
+
+.git/
+.gitignore
+
+# Not part of the server build.
+../backoffice
+../acceptance
+../docs
+../infra

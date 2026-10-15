@@ -1,11 +1,46 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{tenant_delete, tenant_select, Gateway};
+use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::business_error::BusinessError;
+use crate::domain::enums::Role;
 use crate::domain::user::{User, UserEntityMapper};
 use entity::prelude::UserEntity as UserQuery;
 use entity::user_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
+    QueryFilter, QueryOrder,
+};
+
+#[async_trait]
+pub trait UserLookupStore: Send + Sync {
+    async fn get_by_id(&self, id: i64) -> Result<Option<User>, BusinessError>;
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<User>, BusinessError>;
+}
+
+#[async_trait]
+pub trait UserStore: UserLookupStore {
+    /// The authentication-time lookup by immutable id. Authentication runs
+    /// before any tenant scope exists, so an implementation backed by the
+    /// database must not go through `tenant_select` (see
+    /// `UserGateway::find_by_user_id`); `get_by_id` would answer "not found"
+    /// under D-05's deny-by-default scope. The default suits in-memory stores,
+    /// which have no scope.
+    async fn get_for_authentication(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        self.get_by_id(id).await
+    }
+    async fn save(&self, user: User) -> Result<User, BusinessError>;
+    async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError>;
+    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError>;
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<User>, u64), BusinessError>;
+    async fn list_all(&self) -> Result<Vec<User>, BusinessError>;
+    async fn list_by_tenant(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError>;
+}
 
 pub struct UserGateway {
     db: DbConn,
@@ -22,6 +57,92 @@ impl UserGateway {
 }
 
 #[async_trait]
+impl UserLookupStore for UserGateway {
+    async fn get_by_id(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_id(self, id)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn get_by_uuid(&self, uuid: String) -> Result<Option<User>, BusinessError> {
+        let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_uuid(self, uuid)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+}
+
+#[async_trait]
+impl UserStore for UserGateway {
+    async fn get_for_authentication(&self, id: i64) -> Result<Option<User>, BusinessError> {
+        let model = Self::find_by_user_id(&self.db, id)
+            .await
+            .map_err(lookup_database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn save(&self, user: User) -> Result<User, BusinessError> {
+        let active_model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::persist(self, user)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_active_model(active_model))
+    }
+
+    async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError> {
+        let model = UserGateway::find_by_email(&self.db, email)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError> {
+        let model = UserGateway::find_by_role(&self.db, role.to_string())
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn list_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<User>, u64), BusinessError> {
+        let (models, total) = UserGateway::find_page(self, page, page_size, search)
+            .await
+            .map_err(database_error)?;
+        Ok((UserEntityMapper::from_models(models), total))
+    }
+
+    async fn list_all(&self) -> Result<Vec<User>, BusinessError> {
+        let models = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_all(self)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_models(models))
+    }
+
+    async fn list_by_tenant(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
+        let models = UserGateway::find_all_by_tenant_id(self, tenant_id)
+            .await
+            .map_err(database_error)?;
+        Ok(UserEntityMapper::from_models(models))
+    }
+}
+
+fn database_error(error: DbErr) -> BusinessError {
+    let message = format!("User database error: {error}");
+    log::error!("[UserGateway] {message}");
+    BusinessError::new(message)
+}
+
+fn lookup_database_error(error: DbErr) -> BusinessError {
+    let message = format!("User lookup database error: {error}");
+    log::error!("[UserGateway] {message}");
+    BusinessError::new(message)
+}
+
+#[async_trait]
 impl Gateway<User, user_entity::Model, user_entity::ActiveModel> for UserGateway {
     async fn persist(&self, entity: User) -> Result<user_entity::ActiveModel, DbErr> {
         let active_model = UserEntityMapper::build_active_model(entity);
@@ -33,8 +154,8 @@ impl Gateway<User, user_entity::Model, user_entity::ActiveModel> for UserGateway
             UserQuery::delete_many().filter(user_entity::Column::Id.eq(id)),
             user_entity::Column::TenantId,
         )
-            .exec(&self.db)
-            .await
+        .exec(&self.db)
+        .await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<user_entity::Model>, DbErr> {
@@ -52,26 +173,77 @@ impl Gateway<User, user_entity::Model, user_entity::ActiveModel> for UserGateway
     }
 
     async fn find_all(&self) -> Result<Vec<user_entity::Model>, DbErr> {
-        tenant_select(UserQuery::find(), user_entity::Column::TenantId).all(&self.db).await
+        tenant_select(UserQuery::find(), user_entity::Column::TenantId)
+            .all(&self.db)
+            .await
     }
 }
 
 impl UserGateway {
-    pub async fn find_by_email(db: &DbConn, email: String) -> Result<Option<user_entity::Model>, DbErr> {
+    /// PD-028. Continua passando por `tenant_select`: paginar não pode ser um
+    /// caminho de leitura que escapa do escopo de tenant.
+    pub async fn find_page(
+        &self,
+        page: u64,
+        page_size: u64,
+        search: Option<&str>,
+    ) -> Result<(Vec<user_entity::Model>, u64), DbErr> {
+        let mut query = tenant_select(UserQuery::find(), user_entity::Column::TenantId)
+            .order_by_desc(user_entity::Column::Id);
+        if let Some(term) = search {
+            query = query.filter(
+                Condition::any()
+                    .add(user_entity::Column::Name.contains(term))
+                    .add(user_entity::Column::Email.contains(term)),
+            );
+        }
+        fetch_page(query, &self.db, page, page_size).await
+    }
+}
+
+impl UserGateway {
+    pub async fn find_by_email(
+        db: &DbConn,
+        email: String,
+    ) -> Result<Option<user_entity::Model>, DbErr> {
         UserQuery::find()
             .filter(user_entity::Column::Email.eq(email))
             .one(db)
             .await
     }
 
-    pub async fn find_by_role(db: &DbConn, role: String) -> Result<Option<user_entity::Model>, DbErr> {
+    /// DEF-IA-01/DEF-IA-02: the authentication-time lookup, keyed on the
+    /// account's immutable id rather than on its address.
+    ///
+    /// Deliberately *not* the `Gateway::find_by_id` above: that one goes
+    /// through `tenant_select`, and authentication happens before any tenant
+    /// scope exists. It is also deliberately not `find_by_email`: an address
+    /// is editable and reusable, so a token resolved by address follows the
+    /// address to whoever holds it next.
+    pub async fn find_by_user_id(
+        db: &DbConn,
+        id: i64,
+    ) -> Result<Option<user_entity::Model>, DbErr> {
+        UserQuery::find()
+            .filter(user_entity::Column::Id.eq(id))
+            .one(db)
+            .await
+    }
+
+    pub async fn find_by_role(
+        db: &DbConn,
+        role: String,
+    ) -> Result<Option<user_entity::Model>, DbErr> {
         UserQuery::find()
             .filter(user_entity::Column::Role.eq(role))
             .one(db)
             .await
     }
 
-    pub async fn find_all_by_tenant_id(&self, tenant_id: i64) -> Result<Vec<user_entity::Model>, DbErr> {
+    pub async fn find_all_by_tenant_id(
+        &self,
+        tenant_id: i64,
+    ) -> Result<Vec<user_entity::Model>, DbErr> {
         UserQuery::find()
             .filter(user_entity::Column::TenantId.eq(tenant_id))
             .all(&self.db)

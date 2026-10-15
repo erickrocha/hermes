@@ -12,8 +12,12 @@ describe('TenantEditorPage Country, Province, and City selection', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders BR and US radio buttons and switches countries', async () => {
+  // DEF-RD-08 (PD-027): the country list is whatever reference data has been
+  // imported, so this asserts the form offers what `GET /country` returned --
+  // a country onboarded by import must be selectable without a code change.
+  it('offers the countries reference data actually has, and switches between them', async () => {
     const apiGetSpy = vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+      if (url === '/country') return { data: ['BR', 'US', 'AR'] } as any
       if (url === '/province') {
         return {
           data: [
@@ -35,21 +39,19 @@ describe('TenantEditorPage Country, Province, and City selection', () => {
       </Provider>
     )
 
-    // Verify radio buttons
-    const brRadio = screen.getByRole('radio', { name: /BR/i })
-    const usRadio = screen.getByRole('radio', { name: /US/i })
-    expect(brRadio).toBeInTheDocument()
-    expect(usRadio).toBeInTheDocument()
+    const country = screen.getByLabelText(/country|país/i) as HTMLSelectElement
+    // Argentina is in the list purely because its provinces were imported --
+    // the old hardcoded BR/US pair could never have shown it.
+    await waitFor(() => {
+      expect(Array.from(country.options).map((option) => option.value)).toEqual(expect.arrayContaining(['BR', 'US', 'AR']))
+    })
 
-    // Initially loads provinces for the default country (BR or US)
     await waitFor(() => {
       expect(apiGetSpy).toHaveBeenCalledWith('/province', expect.anything())
     })
 
-    // Click US radio
-    fireEvent.click(usRadio)
-    expect(usRadio).toBeChecked()
-    expect(brRadio).not.toBeChecked()
+    fireEvent.change(country, { target: { value: 'US' } })
+    expect(country.value).toBe('US')
 
     await waitFor(() => {
       expect(apiGetSpy).toHaveBeenCalledWith(

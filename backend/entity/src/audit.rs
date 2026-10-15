@@ -19,14 +19,58 @@ pub enum TenantScope {
     Denied,
 }
 
+/// D-05: deny by default. Sem contexto de usuário — worker, job agendado, um
+/// segundo binário, um teste — o escopo é `Denied`, não irrestrito. Acesso a
+/// toda a plataforma passou a ser uma concessão explícita (`run_as_platform`)
+/// em vez do que se ganha por esquecimento.
 pub fn tenant_scope() -> TenantScope {
     CURRENT_USER
         .try_with(|user| match user {
             Some(user) if !user.enforce_tenant => TenantScope::Unrestricted,
             Some(user) => user.tenant_id.map(TenantScope::Tenant).unwrap_or(TenantScope::Denied),
-            None => TenantScope::Unrestricted,
+            None => TenantScope::Denied,
         })
-        .unwrap_or(TenantScope::Unrestricted)
+        .unwrap_or(TenantScope::Denied)
+}
+
+/// O identificador que carimba `created_by`/`updated_by` no que a plataforma
+/// escreve fora de qualquer requisição.
+pub const PLATFORM_ACTOR: &str = "system";
+
+/// D-05: a concessão explícita. Envolve trabalho que legitimamente roda fora de
+/// uma requisição e precisa de alcance de plataforma — seed de boot, migração
+/// de dados, e a reescrita de hash legado no login (que acontece antes de
+/// existir sessão). Deve envolver o menor trecho possível.
+pub async fn run_as_platform<F: Future>(fut: F) -> F::Output {
+    let actor = AuditUser {
+        id: 0,
+        email: PLATFORM_ACTOR.to_string(),
+        tenant_id: None,
+        enforce_tenant: false,
+    };
+    run_with_user(Some(actor), fut).await
+}
+
+/// HRMS-903: a *named* tenant scope for work that runs outside a request.
+///
+/// Until this existed, out-of-request code had exactly two options: inherit
+/// `Denied` (D-05's default) or take `run_as_platform` and get the whole
+/// platform. Anything that legitimately acts for **one** tenant had to reach
+/// for the platform-wide grant, which is the accident U-016 was raised about —
+/// scope acquired by omission rather than named.
+///
+/// `actor` names the component in `created_by`/`updated_by`, so a row written
+/// by a background component is attributable to it rather than to `system`.
+/// The scope is `Tenant(tenant_id)` and nothing wider: `enforce_tenant` stamps
+/// that tenant, and a read through `tenant_select` is filtered to it.
+pub async fn run_for_tenant<F: Future>(tenant_id: i64, actor: &str, fut: F) -> F::Output {
+    let actor = AuditUser {
+        id: 0,
+        email: actor.to_string(),
+        tenant_id: Some(tenant_id),
+        enforce_tenant: true,
+    };
+    run_with_user(Some(actor), fut).await
 }
 
 /// Runs `fut` with `user` visible to `stamp_audit` via the `CURRENT_USER` task-local.
@@ -63,13 +107,23 @@ pub async fn stamp_audit<T: AuditableActiveModel>(mut am: T, insert: bool) -> T 
     am
 }
 
-pub async fn enforce_tenant<T: TenantActiveModel>(mut am: T) -> T {
+/// D-06: `Denied` recusa a escrita. Antes gravava `tenant_id = NULL` e seguia,
+/// produzindo uma linha órfã sem dono — silenciosa, e impossível de atribuir
+/// depois. Com D-05 tornando `Denied` alcançável por qualquer código fora de
+/// requisição, falhar alto é a única opção defensável.
+pub async fn enforce_tenant<T: TenantActiveModel>(mut am: T) -> Result<T, sea_orm::DbErr> {
     match tenant_scope() {
         TenantScope::Tenant(id) => am.set_tenant_id(Some(id)),
-        TenantScope::Denied => am.set_tenant_id(None),
         TenantScope::Unrestricted => {}
+        TenantScope::Denied => {
+            return Err(sea_orm::DbErr::Custom(
+                "Refusing to write a tenant-scoped record without a tenant scope. \
+                 Wrap deliberate platform-wide work in entity::audit::run_as_platform (D-05/D-06)."
+                    .to_string(),
+            ));
+        }
     }
-    am
+    Ok(am)
 }
 
 #[macro_export]
@@ -124,7 +178,7 @@ macro_rules! impl_tenant_auditable_before_save {
         impl sea_orm::ActiveModelBehavior for $active_model {
             async fn before_save<C>(self, _db: &C, insert: bool) -> Result<Self, sea_orm::DbErr>
             where C: sea_orm::ConnectionTrait {
-                let model = $crate::audit::enforce_tenant(self).await;
+                let model = $crate::audit::enforce_tenant(self).await?;
                 Ok($crate::audit::stamp_audit(model, insert).await)
             }
         }
@@ -133,7 +187,58 @@ macro_rules! impl_tenant_auditable_before_save {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_with_user, tenant_scope, AuditUser, TenantScope};
+    use super::{enforce_tenant, run_as_platform, run_for_tenant, run_with_user, tenant_scope, AuditUser, TenantActiveModel, TenantScope};
+
+    /// A minimal `TenantActiveModel` double, so `enforce_tenant`'s effect can
+    /// be asserted without a real SeaORM entity or a database.
+    struct FakeTenantModel {
+        tenant_id: Option<i64>,
+    }
+
+    impl TenantActiveModel for FakeTenantModel {
+        fn set_tenant_id(&mut self, tenant_id: Option<i64>) {
+            self.tenant_id = tenant_id;
+        }
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_stamps_the_requests_tenant_over_whatever_the_model_carried() {
+        let user = AuditUser {
+            id: 1,
+            email: "owner@example.com".to_string(),
+            tenant_id: Some(42),
+            enforce_tenant: true,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_with_user(Some(user), enforce_tenant(model)).await.expect("scoped write is allowed");
+        assert_eq!(stamped.tenant_id, Some(42));
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_refuses_the_write_when_the_caller_is_denied() {
+        let user = AuditUser {
+            id: 1,
+            email: "orphan@example.com".to_string(),
+            tenant_id: None,
+            enforce_tenant: true,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        // D-06: recusa, em vez de gravar uma linha órfã com tenant_id NULL.
+        assert!(run_with_user(Some(user), enforce_tenant(model)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn enforce_tenant_leaves_an_unrestricted_writers_model_untouched() {
+        let user = AuditUser {
+            id: 1,
+            email: "admin@example.com".to_string(),
+            tenant_id: None,
+            enforce_tenant: false,
+        };
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_with_user(Some(user), enforce_tenant(model)).await.expect("unrestricted write is allowed");
+        assert_eq!(stamped.tenant_id, Some(999));
+    }
 
     #[tokio::test]
     async fn derives_tenant_scope_from_authenticated_user() {
@@ -158,5 +263,49 @@ mod tests {
         let scope = run_with_user(Some(user), async { tenant_scope() }).await;
         assert_eq!(scope, TenantScope::Unrestricted);
     }
-}
 
+    #[tokio::test]
+    async fn scope_outside_any_request_is_denied_not_unrestricted() {
+        // D-05: o padrão histórico era Unrestricted, que dava alcance de
+        // plataforma de graça a qualquer worker que alguém viesse a escrever.
+        assert_eq!(tenant_scope(), TenantScope::Denied);
+        let scope = run_with_user(None, async { tenant_scope() }).await;
+        assert_eq!(scope, TenantScope::Denied);
+    }
+
+    #[tokio::test]
+    async fn run_as_platform_is_the_explicit_grant() {
+        let scope = run_as_platform(async { tenant_scope() }).await;
+        assert_eq!(scope, TenantScope::Unrestricted);
+
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_as_platform(enforce_tenant(model)).await.expect("platform write is allowed");
+        assert_eq!(stamped.tenant_id, Some(999));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_names_one_tenant_and_grants_nothing_wider() {
+        // HRMS-903: o ponto da ingestão de rastreamento. Antes disso, código
+        // fora de requisição só podia escolher entre Denied e a plataforma
+        // inteira; agir por um tenant exigia o alcance total.
+        let scope = run_for_tenant(42, "fleet-telemetry", async { tenant_scope() }).await;
+        assert_eq!(scope, TenantScope::Tenant(42));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_stamps_its_tenant_over_whatever_the_model_carried() {
+        let model = FakeTenantModel { tenant_id: Some(999) };
+        let stamped = run_for_tenant(42, "fleet-telemetry", enforce_tenant(model))
+            .await
+            .expect("a named tenant scope may write");
+        assert_eq!(stamped.tenant_id, Some(42));
+    }
+
+    #[tokio::test]
+    async fn run_for_tenant_does_not_leak_scope_to_the_surrounding_code() {
+        // O escopo vale só dentro do future. Depois dele, o padrão D-05 volta.
+        let inner = run_for_tenant(42, "fleet-telemetry", async { tenant_scope() }).await;
+        assert_eq!(inner, TenantScope::Tenant(42));
+        assert_eq!(tenant_scope(), TenantScope::Denied);
+    }
+}

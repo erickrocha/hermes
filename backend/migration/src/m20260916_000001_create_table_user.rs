@@ -20,7 +20,6 @@ impl MigrationTrait for Migration {
                     .col(boolean(User::Enabled).default(true))
                     .col(integer(User::TenantId).null())
                     .col(string_len(User::Role,50).not_null())
-                    .col(string_len(User::BlockedReason,32).null())
                     .col(date_time(User::CreatedAt).null())
                     .col(string_len(User::CreatedBy,50).null())
                     .col(date_time(User::UpdatedAt).null())
@@ -50,7 +49,6 @@ pub enum User {
     Enabled,
     TenantId,
     Role,
-    BlockedReason,
     CreatedAt,
     CreatedBy,
     UpdatedAt,

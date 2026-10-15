@@ -1,0 +1,200 @@
+use business::domain::business_error::BusinessError;
+use business::domain::enums::Role;
+use business::domain::garage_device::GarageDevice;
+use business::domain::user::User;
+use business::gateway::garage_device_gateway::GarageDeviceStore;
+use business::use_cases::garage_device_use_case::{DEVICE_OWNER_REQUIRED, GarageDeviceUseCase};
+use sea_orm::prelude::async_trait::async_trait;
+use std::sync::{Arc, Mutex, Once};
+
+static SECRET: Once = Once::new();
+
+fn secret() {
+    SECRET.call_once(|| unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", "device-test-secret".repeat(4));
+    });
+}
+
+#[derive(Clone, Default)]
+struct MemoryStore(Arc<Mutex<Vec<GarageDevice>>>);
+
+#[async_trait]
+impl GarageDeviceStore for MemoryStore {
+    async fn save(&self, mut device: GarageDevice) -> Result<GarageDevice, BusinessError> {
+        let mut devices = self.0.lock().expect("device store lock");
+        match device.id {
+            Some(id) => {
+                let existing = devices
+                    .iter_mut()
+                    .find(|current| current.id == Some(id))
+                    .ok_or_else(|| BusinessError::new("Garage device not found".into()))?;
+                *existing = device.clone();
+            }
+            None => {
+                let id = devices
+                    .iter()
+                    .filter_map(|current| current.id)
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                let uuid = uuid::Uuid::new_v4().to_string();
+                device.id = Some(id);
+                device.uuid = Some(uuid);
+                devices.push(device.clone());
+            }
+        }
+        Ok(device)
+    }
+
+    async fn find_by_uuid(&self, uuid: String) -> Result<Option<GarageDevice>, BusinessError> {
+        Ok(self
+            .0
+            .lock()
+            .expect("device store lock")
+            .iter()
+            .find(|device| device.uuid.as_deref() == Some(&uuid))
+            .cloned())
+    }
+
+    async fn find_by_pairing_code(
+        &self,
+        code: String,
+    ) -> Result<Option<GarageDevice>, BusinessError> {
+        Ok(self
+            .0
+            .lock()
+            .expect("device store lock")
+            .iter()
+            .find(|device| device.pairing_code.as_deref() == Some(&code))
+            .cloned())
+    }
+
+    async fn consume_pairing_code(
+        &self,
+        code: String,
+        now: chrono::NaiveDateTime,
+    ) -> Result<Option<GarageDevice>, BusinessError> {
+        let mut devices = self.0.lock().expect("device store lock");
+        let Some(device) = devices.iter_mut().find(|device| {
+            device.pairing_code.as_deref() == Some(&code)
+                && device
+                    .pairing_code_expires_at
+                    .is_some_and(|expires| expires > now)
+                && device.paired_at.is_none()
+                && device.revoked_at.is_none()
+        }) else {
+            return Ok(None);
+        };
+        device.pairing_code = None;
+        device.pairing_code_expires_at = None;
+        device.paired_at = Some(now);
+        Ok(Some(device.clone()))
+    }
+
+    async fn find_for_authentication(
+        &self,
+        id: i64,
+    ) -> Result<Option<GarageDevice>, BusinessError> {
+        Ok(self
+            .0
+            .lock()
+            .expect("device store lock")
+            .iter()
+            .find(|device| device.id == Some(id))
+            .cloned())
+    }
+
+    async fn list(&self) -> Result<Vec<GarageDevice>, BusinessError> {
+        Ok(self.0.lock().expect("device store lock").clone())
+    }
+}
+
+fn owner() -> User {
+    User {
+        id: Some(7),
+        uuid: Some("owner-uuid".into()),
+        email: "owner@example.com".into(),
+        name: Some("Owner".into()),
+        password: "unused".into(),
+        enabled: true,
+        tenant_id: Some(42),
+        role: Role::TenantOwner,
+        cpf: None,
+        principal_function: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
+#[tokio::test]
+async fn pairing_is_single_use_and_revocation_invalidates_the_live_device_token() {
+    secret();
+    let use_case = GarageDeviceUseCase::new(MemoryStore::default());
+    let pairing = use_case
+        .issue_pairing_code(&owner(), "Garage wall".into())
+        .await
+        .expect("owner can issue code");
+    assert_eq!(pairing.code.len(), 32);
+
+    let (first, second) = tokio::join!(
+        use_case.pair(pairing.code.clone()),
+        use_case.pair(pairing.code.clone()),
+    );
+    assert_ne!(
+        first.is_ok(),
+        second.is_ok(),
+        "a code can be consumed by only one concurrent request"
+    );
+    let credential = first.or(second).expect("one display pairs successfully");
+    let principal = use_case
+        .validate_credential(credential.access_token.clone())
+        .await
+        .expect("paired token validates");
+    assert_eq!(principal.tenant_id, 42);
+    assert_eq!(principal.uuid, pairing.device_uuid);
+    assert!(
+        use_case.pair(pairing.code).await.is_err(),
+        "pairing code is consumed once"
+    );
+
+    use_case
+        .revoke(&owner(), credential.device_uuid.clone())
+        .await
+        .expect("owner can revoke device");
+    assert!(
+        use_case
+            .validate_credential(credential.access_token)
+            .await
+            .is_err(),
+        "revocation takes effect immediately"
+    );
+
+    let replacement = use_case
+        .reissue_pairing_code(&owner(), credential.device_uuid)
+        .await
+        .expect("owner can re-pair device");
+    let next = use_case
+        .pair(replacement.code)
+        .await
+        .expect("replacement code pairs");
+    assert!(
+        use_case
+            .validate_credential(next.access_token)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn only_a_tenant_owner_can_issue_device_pairing_codes() {
+    let use_case = GarageDeviceUseCase::new(MemoryStore::default());
+    let mut mechanic = owner();
+    mechanic.role = Role::Mechanic;
+    let error = use_case
+        .issue_pairing_code(&mechanic, "Garage wall".into())
+        .await
+        .expect_err("mechanic cannot provision devices");
+    assert_eq!(error.message, DEVICE_OWNER_REQUIRED);
+}

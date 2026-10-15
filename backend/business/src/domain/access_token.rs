@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::domain::enums::Role;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessToken {
@@ -13,10 +13,14 @@ pub struct AccessToken {
     pub user_id: i64,
     pub role: Role,
     pub tenant_id: Option<i64>,
-    pub first_login: bool,
+    /// HRMS-204/OBS-TP-05: the session tenant's public identifier. Resolved by
+    /// the endpoint after the token is minted; it is deliberately not a JWT
+    /// claim, since nothing authorizes on it.
+    pub tenant_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Claims {
     pub sub: String,
     pub exp: i64,
@@ -25,6 +29,27 @@ pub struct Claims {
     pub user_id: i64,
     pub role: Role,
     pub tenant_id: Option<i64>,
+}
+
+/// A wall-display credential is a device principal, never a user `Role`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrincipalType {
+    Device,
+}
+
+/// Claims for the long-lived, tenant-bound, read-only Android TV credential.
+/// Its required marker and device-only fields keep it disjoint from user JWTs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceClaims {
+    pub sub: String,
+    pub exp: i64,
+    pub device_id: i64,
+    pub device_uuid: String,
+    pub tenant_id: i64,
+    pub credential_version: i64,
+    pub principal_type: PrincipalType,
 }
 
 #[derive(Default)]
