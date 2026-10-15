@@ -1,199 +1,199 @@
-# Cutover runbook — onboarding Transmega onto hermes
+# Runbook da virada — onboarding da Transmega no hermes
 
 > **EPIC-XF-10-S07 · `HRMS-043` · `PD-018` · `D-02`**
 >
-> This is the procedure for putting hermes into production and onboarding its
-> first tenant. It exists because `D-02` committed to *"everything running in
-> production by 2026-10-17"* and, until 2026-09-21, no document said how.
+> Este é o procedimento para colocar o hermes em produção e fazer o onboarding do seu
+> primeiro tenant. Ele existe porque o `D-02` assumiu o compromisso de *"tudo rodando
+> em produção até 2026-10-17"* e, até 2026-09-21, nenhum documento dizia como.
 >
-> **Read the whole thing before starting.** The point of a runbook is that
-> nobody is deciding anything at 22:00 on cutover night.
+> **Leia tudo antes de começar.** O objetivo de um runbook é que
+> ninguém esteja decidindo nada às 22:00 na noite da virada.
 
 ---
 
-## 0. Who
+## 0. Quem
 
-| Role | Responsibility on the night |
+| Papel | Responsabilidade na noite |
 |---|---|
-| **Cutover lead** | Runs every command in §3. The only person who types. |
-| **Product owner** | Owns the go/no-go at each gate and the §6 rollback trigger. Confirms Transmega's data looks right. |
-| **Transmega contact** | Available by phone. Confirms they can log in and that the branding is theirs. |
+| **Líder da virada** | Executa todos os comandos do §3. A única pessoa que digita. |
+| **Product owner** | Detém o go/no-go em cada portão e o gatilho de rollback do §6. Confirma que os dados da Transmega estão corretos. |
+| **Contato da Transmega** | Disponível por telefone. Confirma que consegue entrar e que a identidade visual é a deles. |
 
-One person runs the commands. Everyone else watches. If the lead is unsure at
-any gate, the answer is **stop and call the owner**, never improvise.
+Uma pessoa executa os comandos. Todos os demais observam. Se o líder tiver dúvida em
+qualquer portão, a resposta é **parar e chamar o responsável**, nunca improvisar.
 
 ---
 
-## 1. Prerequisites — days before, not on the night
+## 1. Pré-requisitos — dias antes, não na noite
 
-Nothing in §3 starts until every line here is true.
+Nada do §3 começa até que cada linha aqui seja verdadeira.
 
-| # | Item | How it is confirmed | Owner |
+| # | Item | Como é confirmado | Responsável |
 |---|---|---|---|
-| 1 | **`D-18` is settled**: a VPS exists, sized and paid for, and someone is named as its operator | The operator can SSH in | Owner + tech lead |
-| 2 | DNS for `$HERMES_DOMAIN` points at the VPS, TTL lowered to 300s at least 24h ahead | `dig +short $HERMES_DOMAIN` | Cutover lead |
-| 3 | Docker Engine + Compose v2 installed on the VPS | `docker compose version` | Cutover lead |
-| 4 | Repository checked out on the host at `$PRODUCTION_PATH` | `ls infra/prod/docker-compose.yml` | Cutover lead |
-| 5 | `infra/prod/.env` created from `.env.example`, **every** value filled | `./deploy.sh` refuses otherwise | Cutover lead |
-| 6 | Token secrets generated **on the host** with `openssl rand -hex 32`, and the two differ | `deploy.sh` checks both | Cutover lead |
-| 7 | A release tag exists and its images are published | `docker manifest inspect $API_IMAGE:$IMAGE_TAG` | Tech lead |
-| 8 | **Transmega's palette is signed off** (`EPIC-XF-10-S09`, `HRMS-409`, `D-12`) | Written confirmation from Transmega | Product owner |
-| 9 | Ports 80 and 443 open to the world; **3306 is not** | `ss -tlnp` on the host | Cutover lead |
-| 10 | Rehearsed: §3 run end to end against a throwaway host or domain | The rehearsal's smoke check passed | Cutover lead |
+| 1 | **`D-18` está resolvido**: existe uma VPS, dimensionada e paga, e alguém está nomeado como seu operador | O operador consegue entrar por SSH | Product owner + líder técnico |
+| 2 | O DNS de `$HERMES_DOMAIN` aponta para a VPS, com TTL reduzido para 300s pelo menos 24h antes | `dig +short $HERMES_DOMAIN` | Líder da virada |
+| 3 | Docker Engine + Compose v2 instalados na VPS | `docker compose version` | Líder da virada |
+| 4 | Repositório clonado no host em `$PRODUCTION_PATH` | `ls infra/prod/docker-compose.yml` | Líder da virada |
+| 5 | `infra/prod/.env` criado a partir de `.env.example`, **todos** os valores preenchidos | `./deploy.sh` se recusa a rodar caso contrário | Líder da virada |
+| 6 | Segredos de token gerados **no host** com `openssl rand -hex 32`, e os dois diferentes | `deploy.sh` verifica ambos | Líder da virada |
+| 7 | Existe uma tag de release e suas imagens estão publicadas | `docker manifest inspect $API_IMAGE:$IMAGE_TAG` | Líder técnico |
+| 8 | **A paleta da Transmega está aprovada** (`EPIC-XF-10-S09`, `HRMS-409`, `D-12`) | Confirmação por escrito da Transmega | Product owner |
+| 9 | Portas 80 e 443 abertas para o mundo; **3306 não** | `ss -tlnp` no host | Líder da virada |
+| 10 | Ensaiado: §3 executado de ponta a ponta contra um host ou domínio descartável | O smoke check do ensaio passou | Líder da virada |
 
-> **Item 8 is the one that will slip.** It is the only item here that depends on
-> another company's marketing department rather than on engineering, and
-> `EPIC-BO-01` is already accepted with a *draft* palette (commit `8acb161`),
-> which makes it easy to believe it is done. It is not done. Start it first.
+> **O item 8 é o que vai atrasar.** É o único item aqui que depende do
+> departamento de marketing de outra empresa, e não da engenharia, e
+> o `EPIC-BO-01` já está aceito com uma paleta *rascunho* (commit `8acb161`),
+> o que facilita acreditar que está pronto. Não está pronto. Comece por ele.
 
-> **Item 10 is the one that will be skipped.** Don't. A rehearsal is the only
-> thing that turns this document from a plan into a procedure.
-
----
-
-## 2. Freeze
-
-From the start of §3 until §5 passes:
-
-- no merges to `develop`,
-- no new release tags,
-- no schema changes.
+> **O item 10 é o que será pulado.** Não pule. Um ensaio é a única
+> coisa que transforma este documento de um plano em um procedimento.
 
 ---
 
-## 3. The cutover
+## 2. Congelamento
 
-Every step below is run from `infra/prod` on the production host.
+Do início do §3 até o §5 passar:
 
-### 3.1 Deploy
+- sem merges em `develop`,
+- sem novas tags de release,
+- sem alterações de schema.
+
+---
+
+## 3. A virada
+
+Cada passo abaixo é executado a partir de `infra/prod` no host de produção.
+
+### 3.1 Implantação
 
 ```bash
 cd $PRODUCTION_PATH/infra/prod
 ./deploy.sh
 ```
 
-`deploy.sh` does this, in this order, and stops at the first failure:
+O `deploy.sh` faz o seguinte, nesta ordem, e para na primeira falha:
 
-| Step | What it does | Can it damage a running system? |
+| Passo | O que faz | Pode danificar um sistema em execução? |
 |---|---|---|
-| 1 | Refuses to run on an incomplete `.env` | No |
-| 2 | Pulls the exact `IMAGE_TAG` | No |
-| 3 | **Dumps the database** into the `mariadb-backups` volume | No |
-| 4 | Runs migrations as a deploy step (`PD-033`, `HRMS-045`) | **Yes — first destructive step** |
-| 5 | Starts Traefik, MariaDB, the API and the console | Yes |
-| 6 | Runs `smoke.sh` (`HRMS-042`) | No |
+| 1 | Se recusa a rodar com um `.env` incompleto | Não |
+| 2 | Baixa o `IMAGE_TAG` exato | Não |
+| 3 | **Faz o dump do banco de dados** no volume `mariadb-backups` | Não |
+| 4 | Executa as migrações como etapa de implantação (`PD-033`, `HRMS-045`) | **Sim — primeiro passo destrutivo** |
+| 5 | Inicia o Traefik, o MariaDB, a API e o console | Sim |
+| 6 | Executa o `smoke.sh` (`HRMS-042`) | Não |
 
-Steps 1–3 are all reversible by doing nothing. The first step that changes
-anything is 4, and it does not run until a restorable dump exists.
+Os passos 1–3 são todos reversíveis sem fazer nada. O primeiro passo que altera
+alguma coisa é o 4, e ele não roda até que exista um dump restaurável.
 
-> **GATE A — the deploy script exited 0.** If it did not, stop. Go to §6.
-> Do not re-run it "to see if it works this time".
+> **PORTÃO A — o script de implantação terminou com código 0.** Se não terminou, pare. Vá para o §6.
+> Não o execute de novo "para ver se funciona desta vez".
 
 ### 3.2 TLS
 
-The first `docker compose up` triggers a Let's Encrypt TLS-ALPN challenge.
-It fails if DNS is wrong or port 443 is blocked — which is why those are §1
-items.
+O primeiro `docker compose up` dispara um desafio TLS-ALPN do Let's Encrypt.
+Ele falha se o DNS estiver errado ou a porta 443 estiver bloqueada — por isso esses
+são itens do §1.
 
 ```bash
 curl -sSI https://$HERMES_DOMAIN/ | head -1        # expect HTTP/2 200
 curl -sS  https://$HERMES_DOMAIN/api/health        # expect {"status":"ok","database":"up"}
 ```
 
-> **GATE B — TLS is valid and `/api/health` reports the database up.**
-> Let's Encrypt rate-limits failures. If the certificate did not issue, fix DNS
-> or the firewall and wait; do not loop `deploy.sh`.
+> **PORTÃO B — o TLS é válido e `/api/health` informa o banco de dados no ar.**
+> O Let's Encrypt aplica limite de taxa a falhas. Se o certificado não foi emitido, corrija o DNS
+> ou o firewall e aguarde; não rode o `deploy.sh` em loop.
 
-### 3.3 First login
+### 3.3 Primeiro login
 
-The SysAdmin is seeded from `.env` at every boot (`HRMS-024`).
+O SysAdmin é criado a partir do `.env` a cada inicialização (`HRMS-024`).
 
 ```bash
 ./smoke.sh
 ```
 
-Then log in through the browser at `https://$HERMES_DOMAIN` as
+Em seguida, entre pelo navegador em `https://$HERMES_DOMAIN` como
 `$SYSADMIN_EMAIL`.
 
-> **GATE C — a human logged into the console in a browser.** `smoke.sh` proves
-> the API answers; only a browser proves the console, the session storage and
-> the same-origin `/api` routing all work together.
+> **PORTÃO C — uma pessoa entrou no console em um navegador.** O `smoke.sh` comprova
+> que a API responde; somente um navegador comprova que o console, o armazenamento de sessão e
+> o roteamento `/api` de mesma origem funcionam juntos.
 
-> **`D-17` (resolved 2026-09-18): there is no password-rotation mechanism and
-> none will be built.** Changing the SysAdmin password means editing `.env` and
-> restarting the API. Whoever can read `.env` is the platform administrator —
-> treat host access accordingly.
+> **`D-17` (resolvido em 2026-09-18): não existe mecanismo de rotação de senha e
+> nenhum será construído.** Trocar a senha do SysAdmin significa editar o `.env` e
+> reiniciar a API. Quem puder ler o `.env` é o administrador da plataforma —
+> trate o acesso ao host de acordo.
 
-### 3.4 Create Transmega
+### 3.4 Criar a Transmega
 
-In the console, as SysAdmin:
+No console, como SysAdmin:
 
-1. Create the tenant **Transmega** with its real tax identifier (`EPIC-TP-01`).
-2. Put it on its plan (`EPIC-TP-02`, exactly one active plan).
-3. Apply Transmega's **signed-off** palette (`HRMS-409`, §1 item 8).
-4. Create Transmega's first tenant owner.
+1. Crie o tenant **Transmega** com seu identificador fiscal real (`EPIC-TP-01`).
+2. Associe-o ao seu plano (`EPIC-TP-02`, exatamente um plano ativo).
+3. Aplique a paleta **aprovada** da Transmega (`HRMS-409`, item 8 do §1).
+4. Crie o primeiro proprietário do tenant da Transmega.
 
-> **GATE D — the Transmega contact logs in, in their own colours, and confirms
-> the branding is theirs.** This is `PD-018`'s acceptance target, and it is the
-> owner's call, not the cutover lead's.
+> **PORTÃO D — o contato da Transmega entra, nas suas próprias cores, e confirma
+> que a identidade visual é a deles.** Este é o alvo de aceitação do `PD-018`, e é
+> decisão do responsável, não do líder da virada.
 
-### 3.5 Invitations
+### 3.5 Convites
 
-If `SMTP_*` is configured, invite Transmega's users and confirm one email
-arrives. If it is not configured, accounts are still created and invite tokens
-still issued — the link has to be delivered another way, and someone must be
-told that is the plan (`EPIC-IA-07`).
+Se `SMTP_*` estiver configurado, convide os usuários da Transmega e confirme que um e-mail
+chega. Se não estiver configurado, as contas ainda são criadas e os tokens de convite
+ainda são emitidos — o link precisa ser entregue de outra forma, e alguém deve ser
+avisado de que esse é o plano (`EPIC-IA-07`).
 
 ---
 
-## 4. Post-cutover watch
+## 4. Acompanhamento pós-virada
 
-For **24 hours** after Gate D:
+Por **24 horas** após o Portão D:
 
 ```bash
 docker compose -f infra/prod/docker-compose.yml logs -f --tail=200 api
 ```
 
-Watch for the conditions in [`OPERATIONS.md`](OPERATIONS.md). Raise the DNS
-TTL back up only after the watch ends.
+Fique atento às condições descritas em [`OPERATIONS.md`](OPERATIONS.md). Só aumente o TTL do DNS
+de volta depois que o acompanhamento terminar.
 
 ---
 
-## 5. Done
+## 5. Concluído
 
-The cutover is complete when all four gates passed, the 24-hour watch found
-nothing, and the owner says so. Record the deployed `IMAGE_TAG` and the date in
-the change register.
+A virada está completa quando os quatro portões passaram, o acompanhamento de 24 horas não encontrou
+nada e o responsável confirma. Registre o `IMAGE_TAG` implantado e a data no
+registro de mudanças.
 
 ---
 
 ## 6. Rollback
 
-**Trigger — any one of these, no debate required:**
+**Gatilho — qualquer um destes, sem necessidade de debate:**
 
-- `deploy.sh` exited non-zero and the cause is not understood within **15 minutes**;
-- `smoke.sh` fails after a successful deploy;
-- Gate C or Gate D fails;
-- tenant data looks wrong in any way;
-- the owner says roll back.
+- o `deploy.sh` terminou com código diferente de zero e a causa não é compreendida em **15 minutos**;
+- o `smoke.sh` falha após uma implantação bem-sucedida;
+- o Portão C ou o Portão D falha;
+- os dados do tenant parecem errados de qualquer forma;
+- o responsável manda fazer rollback.
 
-**Losing an evening is cheap. Transmega's first day on a broken platform is not.**
+**Perder uma noite é barato. O primeiro dia da Transmega em uma plataforma quebrada não é.**
 
-### 6.1 Application-only rollback (no schema change in this release)
+### 6.1 Rollback somente da aplicação (sem alteração de schema nesta release)
 
-Redeploy the previous tag. This is why `latest` is never published.
+Reimplante a tag anterior. É por isso que `latest` nunca é publicada.
 
 ```bash
 sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=<previous-tag>|" .env
 ./deploy.sh
 ```
 
-### 6.2 Rollback including a schema change
+### 6.2 Rollback incluindo uma alteração de schema
 
-Migrations here are **forward-only**: there is no `down` step, deliberately.
-An untested down-migration run against live data is not a safer position than a
-restore from ten minutes ago. The rollback position is the dump `deploy.sh`
-took at step 3.
+As migrações aqui são **somente para frente**: não existe passo `down`, de propósito.
+Uma down-migration não testada executada contra dados em produção não é uma posição mais segura do que
+uma restauração de dez minutos atrás. A posição de rollback é o dump que o `deploy.sh`
+fez no passo 3.
 
 ```bash
 # 1. Stop serving. Do this first: nothing should write during a restore.
@@ -215,31 +215,31 @@ sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=<previous-tag>|" .env
 ./smoke.sh
 ```
 
-> **Why step 4 works.** The API refuses to start against a schema that is
-> *behind* the binary. After a restore the schema matches the *previous* tag, so
-> the previous image starts and the new one would not — the guard that makes a
-> bad deploy fail loudly is the same one that makes this rollback safe.
+> **Por que o passo 4 funciona.** A API se recusa a iniciar contra um schema que está
+> *atrasado* em relação ao binário. Após uma restauração, o schema corresponde à tag *anterior*;
+> então a imagem anterior inicia e a nova não iniciaria — a proteção que faz uma
+> implantação ruim falhar de forma explícita é a mesma que torna este rollback seguro.
 
-### 6.3 If the restore also fails
+### 6.3 Se a restauração também falhar
 
-Stop. Leave the system down and call the owner and the tech lead. A partially
-restored database serving live traffic is worse than an outage, and the dump in
-`/backups` is still there.
+Pare. Deixe o sistema fora do ar e chame o responsável e o líder técnico. Um banco de dados
+parcialmente restaurado atendendo tráfego real é pior do que uma indisponibilidade, e o dump em
+`/backups` continua lá.
 
 ---
 
-## 7. What this runbook does not cover
+## 7. O que este runbook não cobre
 
-Stated so nobody discovers it at 02:00:
+Declarado para que ninguém descubra isso às 02:00:
 
-- **Backups after cutover.** `deploy.sh` dumps *before each deploy*. That is a
-  rollback position, **not** a backup schedule. A scheduled off-host backup is
-  an `OPERATIONS.md` item and is **not built** — the first tenant's data is
-  protected only against a bad deploy, not against losing the VPS.
-- **Zero-downtime deploys.** Single host, single API container: a deploy is a
-  short outage. Accepted for one tenant; revisit before the second.
-- **Horizontal scale.** `HRMS-022`'s advisory lock means multiple instances
-  *can* be migrated safely, but nothing here runs more than one.
-- **Disaster recovery of the host itself.** Rebuilding from this repository
-  restores the *environment* (`HRMS-039`); it does not restore *data* without
-  an off-host backup.
+- **Backups após a virada.** O `deploy.sh` faz dump *antes de cada implantação*. Isso é uma
+  posição de rollback, **não** uma agenda de backup. Um backup agendado fora do host é
+  um item do `OPERATIONS.md` e **não está construído** — os dados do primeiro tenant estão
+  protegidos apenas contra uma implantação ruim, não contra a perda da VPS.
+- **Implantações sem indisponibilidade.** Host único, container de API único: uma implantação é uma
+  indisponibilidade curta. Aceito para um tenant; reavaliar antes do segundo.
+- **Escala horizontal.** O advisory lock do `HRMS-022` significa que várias instâncias
+  *podem* ser migradas com segurança, mas nada aqui executa mais de uma.
+- **Recuperação de desastre do próprio host.** Reconstruir a partir deste repositório
+  restaura o *ambiente* (`HRMS-039`); não restaura os *dados* sem
+  um backup fora do host.

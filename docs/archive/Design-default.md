@@ -1,15 +1,16 @@
-> **Archived (EPIC-BO-01-S04, HRMS-410, U-002).** This document was inherited under the title
-> "Design System — Hermes (Web)" but its body describes a different, earlier product: a pt-BR
-> nutrition-clinic SaaS ("clínicas de nutrição", patient macro chips, a `frontend/src/styles/`
-> tree that does not exist in this repository). Project Truth's own note is that retitling it to
-> "Hermes" without updating the body made the confusion *more* urgent, not less — someone building
-> a screen from this file would be building the wrong product's screen under the right name.
+> **Arquivado (EPIC-BO-01-S04, HRMS-410, U-002).** Este documento foi herdado com o título
+> "Design System — Hermes (Web)", mas seu corpo descreve um produto diferente e anterior: um SaaS
+> pt-BR para clínicas de nutrição ("clínicas de nutrição", chips de macros do paciente, uma árvore
+> `frontend/src/styles/` que não existe neste repositório). A própria observação do Project Truth é
+> que renomeá-lo para "Hermes" sem atualizar o corpo tornou a confusão *mais* urgente, não menos —
+> quem construísse uma tela a partir deste arquivo estaria construindo a tela do produto errado
+> sob o nome certo.
 >
-> It is kept here, unedited below this notice, only as a record of what the console's *current*
-> default palette happened to be copied from before the Transmega tenant theme existed
-> (`backoffice/src/theme.ts`, `backoffice/src/styles/main.scss`) — the actual, current source of
-> truth for both the vendor's own theme and any tenant's. Do not build a new screen from the
-> component/layout guidance below; it was never accepted for Hermes.
+> Ele é mantido aqui, sem edições abaixo deste aviso, apenas como registro de onde a paleta padrão
+> *atual* do console foi copiada antes de existir o tema do tenant Transmega
+> (`backoffice/src/theme.ts`, `backoffice/src/styles/main.scss`) — a fonte de verdade real e atual
+> tanto para o tema do próprio fornecedor quanto para o de qualquer tenant. Não construa uma nova
+> tela a partir das orientações de componentes/layout abaixo; elas nunca foram aceitas para o Hermes.
 >
 > ---
 

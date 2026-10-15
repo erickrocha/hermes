@@ -1,68 +1,72 @@
-# Architecture rationale
+# Justificativa da arquitetura
 
-EPIC-XF-08-S02 (HRMS-034). The three decisions below — Rust, the crate split, and the
-separately deployed console — were made by the project owner before this repository had any
-ADR or design note, so nothing in the commit history records them.
+EPIC-XF-08-S02 (HRMS-034). As três decisões abaixo — Rust, a divisão em crates e o console
+implantado separadamente — foram tomadas pelo dono do projeto antes de este repositório ter
+qualquer ADR ou nota de design, portanto nada no histórico de commits as registra.
 
-The owner's reasoning was captured directly on **2026-09-19, closing decision D-13**. Each
-section states that reasoning first, then what the built structure observably buys. The two
-are kept apart on purpose: the first is why the choice was made, the second is why it still
-holds up. A later reader should be able to tell the difference.
+O raciocínio do dono foi capturado diretamente em **2026-09-19, ao fechar a decisão D-13**. Cada
+seção apresenta primeiro esse raciocínio e depois o que a estrutura construída entrega de forma
+observável. Os dois são mantidos separados de propósito: o primeiro é o motivo pelo qual a escolha
+foi feita, o segundo é o motivo pelo qual ela continua se sustentando. Um leitor futuro deve
+conseguir distinguir um do outro.
 
-## Why Rust
+## Por que Rust
 
-**Owner's reasoning (D-13).** Existing knowledge of the language, and the fact that it is
-safe and fast. The choice was deliberate on those grounds, not the result of a survey of
-alternatives.
+**Raciocínio do dono (D-13).** Conhecimento prévio da linguagem e o fato de ela ser segura e
+rápida. A escolha foi deliberada com base nesses motivos, e não o resultado de um levantamento de
+alternativas.
 
-What it buys, observably: memory safety and compile-time correctness for a service holding
-credentials and billing data, a single self-contained binary to deploy, and a release profile
-tuned for it (`opt-level = 3`, thin LTO, in `backend/Cargo.toml`).
+O que ela entrega, de forma observável: segurança de memória e correção em tempo de compilação para
+um serviço que guarda credenciais e dados de cobrança, um único binário autocontido para implantar
+e um perfil de release ajustado para isso (`opt-level = 3`, LTO thin, em `backend/Cargo.toml`).
 
-## Why a four-crate workspace (`entity` / `business` / `migration` / `application`)
+## Por que um workspace de quatro crates (`entity` / `business` / `migration` / `application`)
 
-**Owner's reasoning (D-13).** Organisation, reuse, and good practice. The split is a
-structural default the owner applies deliberately, not a reaction to a specific problem this
-codebase hit.
+**Raciocínio do dono (D-13).** Organização, reuso e boas práticas. A divisão é um padrão estrutural
+que o dono aplica deliberadamente, e não uma reação a um problema específico que esta base de
+código tenha enfrentado.
 
-What it buys, observably — the dependency graph is strictly one-way (`application → business →
-entity`, `application → migration`) and the `application` crate builds the single `hermes` binary:
+O que ela entrega, de forma observável — o grafo de dependências é estritamente de mão única
+(`application → business → entity`, `application → migration`) e o crate `application` gera o
+único binário `hermes`:
 
-- `business` has no `axum` dependency and no HTTP types at all — it compiles and is testable
-  as a plain library, independent of whether a server exists.
-- The `mock` cargo feature (`business/mock` → `sea-orm/mock`) exists specifically so domain
-  logic can be tested with no database at all — see `business/tests/mock.rs`.
-- `entity` carries table definitions and nothing else, so a migration or a query never has
-  business logic hiding inside a `Model`.
+- `business` não tem dependência de `axum` e não usa nenhum tipo HTTP — compila e é testável como
+  uma biblioteca comum, independentemente de existir um servidor.
+- A feature do cargo `mock` (`business/mock` → `sea-orm/mock`) existe justamente para que a lógica
+  de domínio possa ser testada sem nenhum banco de dados — veja `business/tests/mock.rs`.
+- `entity` carrega definições de tabelas e nada além disso, de modo que uma migração ou uma consulta
+  nunca tenha lógica de negócio escondida dentro de um `Model`.
 
-Two owner-ratified rules now sit on top of this layout as standing constraints: English-only
-persistence identifiers, and this exact four-crate layering with no bypass (AD-019, AD-020).
-Those arrived after the fact — they codify the split rather than explain its origin.
+Duas regras ratificadas pelo dono agora se somam a esse layout como restrições permanentes:
+identificadores de persistência somente em inglês, e exatamente esta divisão em quatro crates, sem
+desvios (AD-019, AD-020). Elas vieram depois do fato — codificam a divisão em vez de explicar sua
+origem.
 
-## Why a separately deployed console (`backoffice/`)
+## Por que um console implantado separadamente (`backoffice/`)
 
-**Owner's reasoning (D-13).** The backend is expected to serve **many clients** — a mobile
-app, the web console, and third-party integrations. A console welded to the server would make
-the first additional client a rewrite, so the API was kept as the product and the console as
-one consumer of it.
+**Raciocínio do dono (D-13).** Espera-se que o backend atenda **muitos clientes** — um aplicativo
+móvel, o console web e integrações de terceiros. Um console soldado ao servidor faria do primeiro
+cliente adicional uma reescrita; por isso a API foi mantida como o produto e o console como um
+consumidor dela.
 
-This settles a question the structure alone could not answer: the separation was for multiple
-anticipated clients, not for deployment independence or a team split.
+Isso resolve uma questão que a estrutura sozinha não conseguia responder: a separação foi feita
+para múltiplos clientes previstos, e não por independência de implantação nem por divisão de
+equipes.
 
-What it buys, observably: `backoffice/` is its own npm package with its own toolchain,
-reaching the API only over HTTP at a configurable `VITE_API_URL`. It holds no privileged
-access of its own — every authorization decision it displays is enforced again by the API,
-never delegated to it (see `backend/business/src/domain/authorization.rs`). The API is
-therefore the sole integration seam: the console can be replaced, or joined by a second
-client, without the backend changing.
+O que ela entrega, de forma observável: `backoffice/` é seu próprio pacote npm, com sua própria
+cadeia de ferramentas, e acessa a API somente por HTTP em um `VITE_API_URL` configurável. Ele não
+possui nenhum acesso privilegiado próprio — toda decisão de autorização que ele exibe é imposta
+novamente pela API, nunca delegada a ele (veja `backend/business/src/domain/authorization.rs`). A
+API é, portanto, o único ponto de integração: o console pode ser substituído, ou ganhar um segundo
+cliente ao lado, sem que o backend mude.
 
-There is no second client in this repository today; the design anticipates one.
+Não há um segundo cliente neste repositório hoje; o design prevê um.
 
-## What this document is not
+## O que este documento não é
 
-It does not restate the platform, interface and structural constraints already tracked as
-`AD-###` entries in this project's SDD project-truth workspace (outside this repository) —
-that's the authoritative, versioned record, and duplicating it here would just create a
-second copy to drift. This file exists so a new engineer working from a checkout of *this*
-repository alone — without access to that workspace — isn't left reconstructing the "why"
-from the migrations.
+Ele não repete as restrições de plataforma, de interface e de estrutura já registradas como
+entradas `AD-###` no workspace de project-truth do SDD deste projeto (fora deste repositório) — esse
+é o registro autoritativo e versionado, e duplicá-lo aqui apenas criaria uma segunda cópia sujeita
+a divergir. Este arquivo existe para que um(a) engenheiro(a) novo(a) trabalhando a partir de um
+checkout apenas *deste* repositório — sem acesso àquele workspace — não precise reconstruir o
+"porquê" a partir das migrações.
