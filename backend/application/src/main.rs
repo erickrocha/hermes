@@ -585,6 +585,7 @@ pub fn main() {
     if env::args().nth(1).as_deref() == Some("migrate") {
         if let Err(err) = migrate() {
             log::error!("Migration failed: {err}");
+            eprintln!("Migration failed: {err}");
             std::process::exit(1);
         }
         return;
@@ -599,6 +600,9 @@ pub fn main() {
     // instance served traffic either way; what was missing was the signal.
     if let Err(err) = start() {
         log::error!("Startup failed: {err}");
+        // The logger may not be up yet (a configuration refused before it starts), and a container that dies
+        // with no output at all is the worst way to report it: say it on stderr as well.
+        eprintln!("Startup failed: {err}");
         std::process::exit(1);
     }
 }

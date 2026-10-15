@@ -120,7 +120,7 @@ impl PinMeTrackingProvider {
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(format!("{email}:{password}"));
         Self {
-            client: reqwest::Client::new(),
+            client: crate::gateway::http_client::provider_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             authorization: format!("Basic {encoded}"),
         }
@@ -176,14 +176,21 @@ impl TrackingProvider for PinMeTrackingProvider {
             .iter()
             .map(|id| ("deviceId".to_string(), id.to_string()))
             .collect();
-        query.push(("from".to_string(), from.to_rfc3339()));
-        query.push(("to".to_string(), to.to_rfc3339()));
+        // `Z` com milissegundos, como o `operacao-trm` manda: o PinME responde `500` ao `+00:00` do `to_rfc3339()`
+        // (visto na validação do `C-028` com o PinME real).
+        query.push(("from".to_string(), provider_instant(from)));
+        query.push(("to".to_string(), provider_instant(to)));
         query.push(("type".to_string(), "ignitionOn".to_string()));
         query.push(("type".to_string(), "ignitionOff".to_string()));
         Ok(parse_ignition_events(
             &self.get("/reports/events", &query).await?,
         ))
     }
+}
+
+/// O instante como o PinME aceita: UTC, `Z`, milissegundos (`2026-10-15T20:28:05.296Z`).
+fn provider_instant(instant: DateTime<Utc>) -> String {
+    instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// `serverTime` / `fixTime` / `deviceTime`, first present wins — the order
@@ -274,6 +281,13 @@ fn parse_ignition_events(body: &Value) -> Vec<ProviderIgnitionEvent> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_report_window_is_sent_in_utc_with_z_and_milliseconds() {
+        // O PinME responde 500 a `+00:00`; o `operacao-trm` manda `Z` com milissegundos.
+        let instant = DateTime::parse_from_rfc3339("2026-10-15T20:28:05.296123+00:00").unwrap().with_timezone(&Utc);
+        assert_eq!(super::provider_instant(instant), "2026-10-15T20:28:05.296Z");
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -116,7 +116,7 @@ impl CtaSmartFuelProvider {
 
     pub fn new(base_url: &str, token: &str) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::gateway::http_client::provider_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             authorization: format!("Bearer {token}"),
         }

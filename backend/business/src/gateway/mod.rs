@@ -3,6 +3,7 @@ pub mod city_gateway;
 pub mod customer_gateway;
 pub mod customer_day_off_gateway;
 pub mod holiday_gateway;
+pub mod http_client;
 pub mod transport_demand_gateway;
 pub mod transport_demand_allocation_gateway;
 pub mod daily_schedule_gateway;
