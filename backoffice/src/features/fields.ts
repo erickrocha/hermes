@@ -4,6 +4,8 @@ import type { LookupKind } from './lookupSlice'
 export type FieldType = 'text' | 'number' | 'date' | 'datetime' | 'time' | 'textarea' | 'checkbox' | 'select' | 'lookup' | 'money' | 'list' | 'hidden'
 export interface FieldDef {
   name: string; labelKey: string; type: FieldType; required?: boolean; min?: number
+  /** Texto: tamanho máximo, igual ao do servidor. */
+  maxLength?: number
   options?: string[]; optionPrefix?: string; lookup?: LookupKind; defaultValue?: string | boolean
   /** Só no cadastro: o servidor não aceita mudar o campo depois. */
   createOnly?: boolean
@@ -31,6 +33,7 @@ export function buildSchema(fields: FieldDef[]) {
     }
     let schema: yup.StringSchema = yup.string().trim()
     if (field.required) schema = schema.required(requiredText)
+    if (field.maxLength !== undefined) schema = schema.max(field.maxLength, 'max')
     if (field.type === 'number' || field.type === 'money') {
       schema = schema.test('number', 'number', (value) => !value || !Number.isNaN(Number(value)))
       if (field.min !== undefined) { const min = field.min; schema = schema.test('min', 'min', (value) => !value || Number(value) >= min) }

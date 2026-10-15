@@ -51,7 +51,13 @@ LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.
          ("GET", "/maintenance-notification", "maintenance-notification.read"),
          ("GET", "/maintenance-notification/unread-count", "maintenance-notification.read"),
          ("PUT", "/maintenance-notification/uuid/{uuid}/read", "maintenance-notification.update"),
-         ("PUT", "/maintenance-notification/read-all", "maintenance-notification.update")]
+         ("PUT", "/maintenance-notification/read-all", "maintenance-notification.update"),
+         # C-026 EPIC-MT-04: planned maintenance that was not carried out.
+         ("GET", "/non-execution", "non-execution.read"),
+         ("GET", "/non-execution/work-order/uuid/{uuid}", "non-execution.read"),
+         ("PUT", "/non-execution/occurrence/uuid/{uuid}/justify", "non-execution.justify"),
+         ("POST", "/non-execution/manual", "non-execution.record-manual"),
+         ("POST", "/non-execution/evaluate", "non-execution.evaluate")]
 table = list(PROFILE) + COST + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)

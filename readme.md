@@ -103,6 +103,7 @@ a lista completa e os valores de desenvolvimento local que combinam com `infra/d
 | `APP_ENV` | não | Ausente ou `development` = máquina de desenvolvedor. Qualquer outro valor (`production`, `staging`, …) desliga o Swagger UI **e** o documento OpenAPI, e torna `CORS_ALLOWED_ORIGINS` obrigatória |
 | `CORS_ALLOWED_ORIGINS` | fora do desenvolvimento | Origens separadas por vírgula. Em desenvolvimento, se ausente, qualquer origem é permitida; nos demais ambientes a inicialização é recusada sem ela |
 | `ACCESS_TOKEN_HOURS`, `REFRESH_TOKEN_DAYS` | não | Validade dos tokens; padrão de 3 horas / 7 dias. Valores inválidos voltam ao padrão |
+| `NON_EXECUTION_EVALUATION_INTERVAL_SECONDS` | não | Período da avaliação da manutenção planejada não executada, em segundos; padrão 300, `0` desliga |
 | `SMTP_*`, `BACKOFFICE_BASE_URL` | não | E-mail de convite — veja abaixo |
 
 A conta do administrador da plataforma (`SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`) é provisionada na primeira

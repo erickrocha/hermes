@@ -208,6 +208,18 @@ pub enum ErrorKey {
     MaintenanceNotificationForbidden,
     /// `EPIC-MT-06`: no such maintenance notice, or it belongs to another tenant.
     MaintenanceNotificationNotFound,
+    /// `EPIC-MT-04`: a role that may not see or act on non-executions.
+    NonExecutionForbidden,
+    /// `EPIC-MT-04`: no such occurrence or history, or it belongs to another tenant.
+    NonExecutionOccurrenceNotFound,
+    /// `EPIC-MT-04`: the occurrence already has a justification.
+    NonExecutionAlreadyJustified,
+    /// `EPIC-MT-04`: the same manual occurrence was already recorded.
+    NonExecutionAlreadyRecorded,
+    /// `EPIC-MT-04`: the tracker does not evidence the manual non-execution.
+    NonExecutionNotEvidenced,
+    /// `EPIC-MT-04`: the work order is already concluded or cancelled.
+    NonExecutionWorkOrderNotOpen,
     /// `HRMS-803`: a role that may not record vehicle expenses.
     VehicleExpenseForbidden,
     /// `HRMS-803`: no such vehicle expense, or it belongs to another tenant.
@@ -380,6 +392,12 @@ impl ErrorKey {
             ErrorKey::PurchaseOrderNotFound => "PurchaseOrderNotFound",
             ErrorKey::MaintenanceNotificationForbidden => "MaintenanceNotificationForbidden",
             ErrorKey::MaintenanceNotificationNotFound => "MaintenanceNotificationNotFound",
+            ErrorKey::NonExecutionForbidden => "NonExecutionForbidden",
+            ErrorKey::NonExecutionOccurrenceNotFound => "NonExecutionOccurrenceNotFound",
+            ErrorKey::NonExecutionAlreadyJustified => "NonExecutionAlreadyJustified",
+            ErrorKey::NonExecutionAlreadyRecorded => "NonExecutionAlreadyRecorded",
+            ErrorKey::NonExecutionNotEvidenced => "NonExecutionNotEvidenced",
+            ErrorKey::NonExecutionWorkOrderNotOpen => "NonExecutionWorkOrderNotOpen",
             ErrorKey::VehicleExpenseForbidden => "VehicleExpenseForbidden",
             ErrorKey::VehicleExpenseNotFound => "VehicleExpenseNotFound",
             ErrorKey::DuplicateExpenseInvoice => "DuplicateExpenseInvoice",
@@ -508,6 +526,12 @@ impl ErrorKey {
             ErrorKey::PurchaseOrderNotFound => "purchase-order-not-found",
             ErrorKey::MaintenanceNotificationForbidden => "maintenance-notification-forbidden",
             ErrorKey::MaintenanceNotificationNotFound => "maintenance-notification-not-found",
+            ErrorKey::NonExecutionForbidden => "non-execution-forbidden",
+            ErrorKey::NonExecutionOccurrenceNotFound => "non-execution-occurrence-not-found",
+            ErrorKey::NonExecutionAlreadyJustified => "non-execution-already-justified",
+            ErrorKey::NonExecutionAlreadyRecorded => "non-execution-already-recorded",
+            ErrorKey::NonExecutionNotEvidenced => "non-execution-not-evidenced",
+            ErrorKey::NonExecutionWorkOrderNotOpen => "non-execution-work-order-not-open",
             ErrorKey::VehicleExpenseForbidden => "vehicle-expense-forbidden",
             ErrorKey::VehicleExpenseNotFound => "vehicle-expense-not-found",
             ErrorKey::DuplicateExpenseInvoice => "duplicate-expense-invoice",
@@ -809,6 +833,12 @@ mod tests {
             ErrorKey::PurchaseOrderNotFound,
             ErrorKey::MaintenanceNotificationForbidden,
             ErrorKey::MaintenanceNotificationNotFound,
+            ErrorKey::NonExecutionForbidden,
+            ErrorKey::NonExecutionOccurrenceNotFound,
+            ErrorKey::NonExecutionAlreadyJustified,
+            ErrorKey::NonExecutionAlreadyRecorded,
+            ErrorKey::NonExecutionNotEvidenced,
+            ErrorKey::NonExecutionWorkOrderNotOpen,
             ErrorKey::VehicleExpenseForbidden,
             ErrorKey::VehicleExpenseNotFound,
             ErrorKey::DuplicateExpenseInvoice,

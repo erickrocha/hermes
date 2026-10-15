@@ -28,6 +28,8 @@ pub mod part_entity;
 pub mod stock_movement_entity;
 pub mod purchase_order_entity;
 pub mod maintenance_notification_entity;
+pub mod non_execution_record_entity;
+pub mod non_execution_occurrence_entity;
 pub mod vehicle_entity;
 pub mod vehicle_assignment_entity;
 pub mod vehicle_expense_entity;

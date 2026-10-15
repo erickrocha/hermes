@@ -21,6 +21,7 @@ use crate::routes::priced_service_routes::priced_service_routes;
 use crate::routes::part_routes::part_routes;
 use crate::routes::purchase_order_routes::purchase_order_routes;
 use crate::routes::maintenance_notification_routes::maintenance_notification_routes;
+use crate::routes::non_execution_routes::non_execution_routes;
 use crate::routes::transport_demand_routes::transport_demand_routes;
 use crate::routes::extra_trip_routes::extra_trip_routes;
 use crate::routes::resource_routes::resources_routes;
@@ -184,6 +185,11 @@ impl Modify for SecurityAddon {
         endpoints::maintenance_notification_endpoint::unread_count,
         endpoints::maintenance_notification_endpoint::mark_read,
         endpoints::maintenance_notification_endpoint::mark_all_read,
+        endpoints::non_execution_endpoint::list_all,
+        endpoints::non_execution_endpoint::history,
+        endpoints::non_execution_endpoint::justify,
+        endpoints::non_execution_endpoint::record_manual,
+        endpoints::non_execution_endpoint::evaluate,
         endpoints::vehicle_expense_endpoint::add,
         endpoints::vehicle_expense_endpoint::get_by_uuid,
         endpoints::vehicle_expense_endpoint::list_all,
@@ -315,6 +321,14 @@ impl Modify for SecurityAddon {
             endpoints::json::maintenance_notification_json::MaintenanceNotificationJson,
             endpoints::json::maintenance_notification_json::UnreadCountJson,
             endpoints::json::maintenance_notification_json::MarkedReadJson,
+            endpoints::json::non_execution_json::NonExecutionOccurrenceJson,
+            endpoints::json::non_execution_json::NonExecutionVehicleJson,
+            endpoints::json::non_execution_json::NonExecutionWorkOrderJson,
+            endpoints::json::non_execution_json::NonExecutionVehicleGroupJson,
+            endpoints::json::non_execution_json::NonExecutionHistoryJson,
+            endpoints::json::non_execution_json::JustifyJson,
+            endpoints::json::non_execution_json::ManualNonExecutionJson,
+            endpoints::json::non_execution_json::EvaluationJson,
             endpoints::json::vehicle_expense_json::VehicleExpenseJson,
             endpoints::json::fuel_entry_json::FuelEntryJson,
             endpoints::json::fuel_entry_json::FuelSyncOutcomeJson,
@@ -441,6 +455,7 @@ async fn start() -> anyhow::Result<()> {
     // EPIC-GA-06-S03: the garage's day boundary runs in the background.
     crate::infrastructure::garage_jobs::spawn_rollover(state.conn.as_ref().clone());
     crate::infrastructure::garage_jobs::spawn_auto_departure(state.conn.as_ref().clone());
+    crate::infrastructure::non_execution_job::spawn_evaluation(state.conn.as_ref().clone());
     crate::infrastructure::garage_presence_job::spawn_presence_poll(state.clone());
 
     log::info!("Starting server...");
@@ -498,6 +513,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/part", part_routes(state.clone()))
         .nest("/purchase-order", purchase_order_routes(state.clone()))
         .nest("/maintenance-notification", maintenance_notification_routes(state.clone()))
+        .nest("/non-execution", non_execution_routes(state.clone()))
         .nest("/transport-demand", transport_demand_routes(state.clone()))
         .nest("/extra-trip", extra_trip_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
@@ -674,6 +690,7 @@ mod openapi_contract_tests {
             "part_routes" => "/part",
             "purchase_order_routes" => "/purchase-order",
             "maintenance_notification_routes" => "/maintenance-notification",
+            "non_execution_routes" => "/non-execution",
             "vehicle_expense_routes" => "/vehicle-expense",
             "fuel_entry_routes" => "/fuel-entry",
             "preventive_plan_routes" => "/preventive-plan",

@@ -715,6 +715,22 @@ pub fn can_read_preventive_plan(actor: &User, preventive_plan_tenant_id: Option<
         || (actor.tenant_id.is_some() && actor.tenant_id == preventive_plan_tenant_id)
 }
 
+/// `EPIC-MT-04` (`C-026`): the non-execution inbox is read by everyone in the tenant's office and
+/// workshop -- owner, tenant user, mechanic -- but not by the driver. Which tenant's rows is the
+/// gateway's scope. Acting on it (justify, record manually) is `can_administer_purchase_order`'s
+/// owner/mechanic/platform set.
+pub fn can_read_non_execution(actor: &User) -> bool {
+    is_unbound_sys_admin(actor)
+        || (actor.tenant_id.is_some()
+            && matches!(actor.role, Role::TenantOwner | Role::TenantUser | Role::Mechanic))
+}
+
+/// `EPIC-MT-04` (`C-026`, `SR-MT-04-12`): triggering an evaluation is the tenant owner's and the
+/// platform's alone; the mechanic only sees the result.
+pub fn can_evaluate_non_execution(actor: &User) -> bool {
+    is_unbound_sys_admin(actor) || (actor.role == Role::TenantOwner && actor.tenant_id.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,6 +765,25 @@ mod tests {
         assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, None)));
         assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, Some(1))));
         assert!(!is_unbound_sys_admin(&user(Role::TenantUser, Some(1))));
+    }
+
+    #[test]
+    fn non_execution_is_read_by_the_office_and_evaluated_by_the_owner_alone() {
+        let platform = user(Role::SysAdmin, None);
+        let owner = user(Role::TenantOwner, Some(1));
+        let mechanic = user(Role::Mechanic, Some(1));
+        let member = user(Role::TenantUser, Some(1));
+        let driver = user(Role::Driver, Some(1));
+        for reader in [&platform, &owner, &mechanic, &member] {
+            assert!(can_read_non_execution(reader));
+        }
+        assert!(!can_read_non_execution(&driver));
+        assert!(!can_read_non_execution(&user(Role::SysAdmin, Some(1))));
+        assert!(can_evaluate_non_execution(&platform) && can_evaluate_non_execution(&owner));
+        for other in [&mechanic, &member, &driver] {
+            assert!(!can_evaluate_non_execution(other));
+        }
+        assert!(!can_evaluate_non_execution(&user(Role::TenantOwner, None)));
     }
 
     #[test]

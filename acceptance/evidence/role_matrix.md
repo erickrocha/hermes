@@ -21,7 +21,7 @@
 | `PUT /checklist-template/uuid/{uuid}/default` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /cities` | Sy | 200 | 403 | 403 | 403 | 403 |
 | `GET /cities/by-province/{province_id}` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
-| `POST /city` | Sy | 200 | 403 | 403 | 403 | 403 |
+| `POST /city` | Sy | 400 | 403 | 403 | 403 | 403 |
 | `POST /city/import` | Sy | 200 | 403 | 403 | 403 | 403 |
 | `GET /city/{id}` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `GET /cost-report/supplier-closing` | Sy,Te,Te | 200 | 200 | 200 | 403 | 403 |
@@ -97,6 +97,11 @@
 | `GET /maintenance-plan` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /maintenance-plan` | Me,Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /maintenance-plan/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
+| `GET /non-execution` | Me,Sy,Te,Te | 200 | 200 | 200 | 403 | 200 |
+| `POST /non-execution/evaluate` | Sy,Te | 200 | 200 | 403 | 403 | 403 |
+| `POST /non-execution/manual` | Me,Sy,Te | 404 | 404 | 403 | 403 | 404 |
+| `PUT /non-execution/occurrence/uuid/{uuid}/justify` | Me,Sy,Te | 404 | 404 | 403 | 403 | 404 |
+| `GET /non-execution/work-order/uuid/{uuid}` | Me,Sy,Te,Te | 404 | 404 | 404 | 403 | 404 |
 | `GET /part` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /part` | Me,Sy,Te | 201 | 201 | 403 | 403 | 201 |
 | `GET /part/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |

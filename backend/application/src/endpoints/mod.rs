@@ -22,6 +22,7 @@ pub mod priced_service_endpoint;
 pub mod part_endpoint;
 pub mod purchase_order_endpoint;
 pub mod maintenance_notification_endpoint;
+pub mod non_execution_endpoint;
 pub mod user_endpoint;
 pub mod vehicle_endpoint;
 pub mod vehicle_assignment_endpoint;

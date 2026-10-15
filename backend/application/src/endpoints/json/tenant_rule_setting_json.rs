@@ -86,6 +86,20 @@ pub struct TenantRuleSettingJson {
     pub garage_cycle_fallback_distance_km: f64,
     #[serde(default = "default_garage_odometer_max_single_jump_km")]
     pub garage_odometer_max_single_jump_km: f64,
+    /// Default 60. `TRM-262`: the "did not appear" occurrence waits this many minutes after the window ends
+    #[serde(default = "default_non_execution_grace_minutes")]
+    pub non_execution_grace_minutes: i32,
+    /// Default 10. `TRM-272`: a manual non-execution needs this many minutes of dwell
+    #[serde(default = "default_non_execution_min_dwell_minutes")]
+    pub non_execution_min_dwell_minutes: i32,
+}
+
+fn default_non_execution_grace_minutes() -> i32 {
+    60
+}
+
+fn default_non_execution_min_dwell_minutes() -> i32 {
+    10
 }
 
 fn default_garage_base_radius_meters() -> f64 {

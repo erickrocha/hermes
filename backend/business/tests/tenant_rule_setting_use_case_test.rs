@@ -121,3 +121,19 @@ async fn invalid_rule_settings_are_rejected_without_storage() {
         RuleSettings::default()
     );
 }
+
+#[tokio::test]
+async fn the_non_execution_settings_default_to_the_legacy_values_and_refuse_out_of_range_ones() {
+    let defaults = RuleSettings::default();
+    assert_eq!((defaults.non_execution_grace_minutes, defaults.non_execution_min_dwell_minutes), (60, 10));
+    let use_case = TenantRuleSettingUseCase::new(MemoryTenantRuleSettingStore::default());
+    let zero_grace = RuleSettings { non_execution_grace_minutes: 0, ..RuleSettings::default() };
+    assert!(use_case.configure(setting(Some(42), zero_grace)).await.is_ok(), "a grace of 0 is allowed");
+    for invalid in [
+        RuleSettings { non_execution_grace_minutes: -1, ..RuleSettings::default() },
+        RuleSettings { non_execution_min_dwell_minutes: 0, ..RuleSettings::default() },
+    ] {
+        let error = use_case.configure(setting(Some(42), invalid)).await.expect_err("refused");
+        assert_eq!(error.message, SETTING_INVALID);
+    }
+}

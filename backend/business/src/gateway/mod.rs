@@ -24,6 +24,7 @@ pub mod part_gateway;
 pub mod stock_movement_gateway;
 pub mod purchase_order_gateway;
 pub mod maintenance_notification_gateway;
+pub mod non_execution_gateway;
 pub mod province_gateway;
 pub mod tenant_gateway;
 pub mod tracking_provider;

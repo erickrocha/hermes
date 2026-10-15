@@ -76,6 +76,8 @@ mod m20261014_000001_add_garage_auto_departure_justification;
 mod m20261014_000002_add_trip_preparation_skip_authorization;
 mod m20261015_000001_add_checklist_template_default;
 mod m20261015_000002_create_maintenance_notification;
+mod m20261015_000003_add_non_execution_settings;
+mod m20261015_000004_create_non_execution;
 mod m20260930_000012_create_garage_attendance_tables;
 mod m20260930_000013_create_vehicle_presence_event;
 mod m20260930_000014_add_garage_validity_settings;
@@ -179,6 +181,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000002_add_trip_preparation_skip_authorization::Migration),
             Box::new(m20261015_000001_add_checklist_template_default::Migration),
             Box::new(m20261015_000002_create_maintenance_notification::Migration),
+            Box::new(m20261015_000003_add_non_execution_settings::Migration),
+            Box::new(m20261015_000004_create_non_execution::Migration),
         ]
     }
 }

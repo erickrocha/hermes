@@ -23,6 +23,8 @@ pub mod part_use_case;
 pub mod stock_movement_use_case;
 pub mod purchase_order_use_case;
 pub mod maintenance_notification_use_case;
+pub mod non_execution_evaluation;
+pub mod non_execution_use_case;
 pub mod extra_trip_import;
 pub mod province_use_case;
 pub mod reference_import;
