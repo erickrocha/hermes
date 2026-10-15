@@ -602,6 +602,8 @@
   "readinessReady": "Pronto",
   "recordInspection": "Registrar inspeção",
   "recordInspectionText": "Respostas não conformes abrem uma ordem de serviço quando o modelo manda",
+  "setAsDefault": "Definir como padrão",
+  "defaultTemplate": "Modelo padrão",
   "recordRun": "Registrar checklist",
   "recordRunText": "Uma resposta por item do modelo",
   "releasedAt": "Liberado em",

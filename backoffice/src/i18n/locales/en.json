@@ -602,6 +602,8 @@
   "readinessReady": "Ready",
   "recordInspection": "Record inspection",
   "recordInspectionText": "Non-conforming answers open a work order when the model says so",
+  "setAsDefault": "Set as default",
+  "defaultTemplate": "Default template",
   "recordRun": "Record checklist",
   "recordRunText": "One answer per template item",
   "releasedAt": "Released at",

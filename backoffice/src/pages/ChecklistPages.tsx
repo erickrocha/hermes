@@ -4,8 +4,8 @@ import { useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import { can, OWNER, OWNER_MECHANIC } from '../features/access'
 import type { FieldDef } from '../features/fields'
-import { usePanel, useResourceForm } from '../features/hooks'
-import { checklistRuns, technicalInspections, type Row } from '../features/resources'
+import { useAction, usePanel, useResourceForm } from '../features/hooks'
+import { checklistRuns, checklistTemplates, technicalInspections, type Row } from '../features/resources'
 import type { RootState } from '../store'
 import { PageHeader } from '../components/UI'
 import { DetailCard } from '../components/molecules/DetailCard'
@@ -30,13 +30,18 @@ const inspectionFields: FieldDef[] = [
 export function ChecklistTemplateDetailPage() {
   const { uuid } = useParams(); const { t } = useTranslation(); const session = useSelector((state: RootState) => state.auth.session)
   const template = usePanel<Row & { items: Row[] }>(`/checklist-template/uuid/${uuid}`)
+  const run = useAction(checklistTemplates)
   const data = template.data
+  // C-031: o modelo padrão do tipo é o que o app do motorista usa; só um modelo ativo de saída ou chegada pode sê-lo.
+  const canMakeDefault = can(session, 'checklist-template.create', OWNER) && data?.active && data.checklistType !== 'Standalone' && !data.isDefault
+  const makeDefault = async () => { if (await run('put', `/checklist-template/uuid/${uuid}/default`)) template.reload() }
   return <>
     <PageHeader title={data ? String(data.name) : t('checklistTemplates')} actions={<>
       <Link className="btn secondary" to="/checklist-templates">{t('back')}</Link>
+      {canMakeDefault && <button type="button" className="btn secondary" onClick={makeDefault}>{t('setAsDefault')}</button>}
       {can(session, 'checklist-run.create', [...OWNER, 'Driver']) && <Link className="btn primary" to={`/checklist-templates/${uuid}/run`}>{t('recordRun')}</Link>}</>} />
     <PanelSection titleKey="checklistTemplates" loading={template.loading} error={template.error} empty={!data}>
-      {data && <><DetailCard rows={[{ label: t('checklistType'), value: t(`checklistType${String(data.checklistType)}`) }, { label: t('activeFlag'), value: data.active ? t('yes') : t('no') }]} />
+      {data && <><DetailCard rows={[{ label: t('checklistType'), value: t(`checklistType${String(data.checklistType)}`) }, { label: t('activeFlag'), value: data.active ? t('yes') : t('no') }, { label: t('defaultTemplate'), value: data.isDefault ? t('yes') : t('no') }]} />
         <div className="table-card"><table><thead><tr><th>{t('description')}</th><th>{t('generatesWorkOrder')}</th></tr></thead>
           <tbody>{data.items.map((i) => <tr key={String(i.uuid)}><td>{String(i.description)}</td><td>{i.generatesWorkOrder ? t('yes') : t('no')}</td></tr>)}</tbody></table></div></>}
     </PanelSection></>

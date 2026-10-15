@@ -140,7 +140,7 @@ export const resourceConfigs: ResourceConfig[] = [
     resource: checklistTemplates, route: 'checklist-templates', detail: true, titleKey: 'checklistTemplates', summaryKey: 'checklistTemplatesSummary', newKey: 'newChecklistTemplate', editKey: 'newChecklistTemplate', icon: ClipboardCheck,
     fields: [text('name', 'name', true), pick('checklistType', 'checklistType', ['Departure', 'Return', 'Standalone'], 'checklistType', true), { name: 'active', labelKey: 'activeFlag', type: 'checkbox', defaultValue: true },
       { name: 'items', labelKey: 'items', type: 'list', required: true, itemFields: [text('description', 'description', true), { name: 'generatesWorkOrder', labelKey: 'generatesWorkOrder', type: 'checkbox' }] }],
-    columns: [{ key: 'name', labelKey: 'name' }, { key: 'checklistType', labelKey: 'checklistType', kind: 'badge', prefix: 'checklistType' }, { key: 'active', labelKey: 'activeFlag', kind: 'bool' }],
+    columns: [{ key: 'name', labelKey: 'name' }, { key: 'checklistType', labelKey: 'checklistType', kind: 'badge', prefix: 'checklistType' }, { key: 'active', labelKey: 'activeFlag', kind: 'bool' }, { key: 'isDefault', labelKey: 'defaultTemplate', kind: 'bool' }],
     read: (s) => can(s, 'checklist-template.read', OFFICE), create: (s) => can(s, 'checklist-template.create', OWNER),
   },
   {

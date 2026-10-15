@@ -4,7 +4,7 @@ import { api } from '../api'
 import { resourceConfigs } from '../features/resources'
 import { renderPage, signIn } from '../test/render'
 import { ResourceNewRoute } from '../components/organisms/ResourceRoutes'
-import { ChecklistRunNewPage, TechnicalInspectionNewPage } from './ChecklistPages'
+import { ChecklistRunNewPage, ChecklistTemplateDetailPage, TechnicalInspectionNewPage } from './ChecklistPages'
 import { GarageMonitorPage, GaragePage, GarageTriagePage } from './GaragePages'
 import { PreventivePlanDetailPage } from './PreventivePages'
 import { SchedulePage, TripImportPage, tripsFromCsv } from './SchedulePages'
@@ -54,6 +54,31 @@ describe('operations screens', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/checklist-run', {
       vehicleUuid: 'v1', driverUuid: 'd1', odometerKm: 1200, checklistTemplateUuid: 't1', checklistType: 'Departure',
       answers: [{ checklistTemplateItemUuid: 'i1', status: 'NonConforming' }, { checklistTemplateItemUuid: 'i2', status: 'Conforming' }] }))
+  })
+
+  it('lets the owner make an active departure template the default, once', async () => {
+    let isDefault = false
+    vi.spyOn(api, 'get').mockImplementation(async () => ({ data: { uuid: 't1', name: 'Pre-trip', checklistType: 'Departure', active: true, isDefault, items: [{ uuid: 'i1', description: 'Brakes' }] } }) as never)
+    const put = vi.spyOn(api, 'put').mockImplementation(async () => { isDefault = true; return { data: {} } as never })
+    signIn('TenantOwner')
+    renderPage(<ChecklistTemplateDetailPage />, '/checklist-templates/t1', '/checklist-templates/:uuid')
+    fireEvent.click(await screen.findByRole('button', { name: /set as default|definir como padr|definir como predeterminado/i }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/checklist-template/uuid/t1/default', undefined))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /set as default|definir como padr|definir como predeterminado/i })).not.toBeInTheDocument())
+  })
+
+  it('offers no default action for a standalone template or to a non-owner', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { uuid: 't1', name: 'One-off', checklistType: 'Standalone', active: true, isDefault: false, items: [] } } as never)
+    signIn('TenantOwner')
+    const { unmount } = renderPage(<ChecklistTemplateDetailPage />, '/checklist-templates/t1', '/checklist-templates/:uuid')
+    await screen.findByText('One-off')
+    expect(screen.queryByRole('button', { name: /set as default|definir como padr|definir como predeterminado/i })).not.toBeInTheDocument()
+    unmount()
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { uuid: 't1', name: 'Pre-trip', checklistType: 'Departure', active: true, isDefault: false, items: [] } } as never)
+    signIn('TenantUser')
+    renderPage(<ChecklistTemplateDetailPage />, '/checklist-templates/t1', '/checklist-templates/:uuid')
+    await screen.findByText('Pre-trip')
+    expect(screen.queryByRole('button', { name: /set as default|definir como padr|definir como predeterminado/i })).not.toBeInTheDocument()
   })
 
   it('records an inspection with the model chosen by name', async () => {

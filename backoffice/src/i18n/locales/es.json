@@ -602,6 +602,8 @@
   "readinessReady": "Listo",
   "recordInspection": "Registrar inspección",
   "recordInspectionText": "Las respuestas no conformes abren una orden cuando el modelo lo indica",
+  "setAsDefault": "Definir como predeterminado",
+  "defaultTemplate": "Plantilla predeterminada",
   "recordRun": "Registrar checklist",
   "recordRunText": "Una respuesta por ítem del modelo",
   "releasedAt": "Liberado el",
