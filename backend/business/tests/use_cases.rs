@@ -2541,6 +2541,7 @@ fn new_checklist_template(tenant_id: Option<i64>, name: &str) -> ChecklistTempla
         name: name.into(),
         checklist_type: ChecklistType::Departure,
         active: true,
+        is_default: false,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -2692,7 +2693,8 @@ use business::use_cases::checklist_run_use_case::{
     DRIVER_ALREADY_HOLDS_A_VEHICLE, DUPLICATE_ANSWER_FOR_ITEM, MAY_NOT_NAME_AN_OPENING_CHECKLIST,
     NOT_A_DRIVER as RUN_NOT_A_DRIVER, NOT_A_TENANT_TEMPLATE,
     NOT_A_TENANT_VEHICLE as RUN_NOT_A_TENANT_VEHICLE, OPENING_CHECKLIST_ALREADY_CLOSED,
-    OPENING_CHECKLIST_WRONG_VEHICLE, RETURN_REQUIRES_OPENING_CHECKLIST,
+    OPENING_CHECKLIST_WRONG_VEHICLE, ODOMETER_BELOW_OFFICIAL, ODOMETER_NEGATIVE,
+    RETURN_REQUIRES_OPENING_CHECKLIST,
 };
 
 fn checklist_run_use_case(db: &DatabaseConnection) -> ChecklistRunUseCase {
@@ -2839,6 +2841,30 @@ async fn a_vehicle_outside_the_runs_own_tenant_may_not_be_named() {
     .expect_err("vehicle belongs to another tenant");
     assert_eq!(refused.message, RUN_NOT_A_TENANT_VEHICLE);
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+/// `SR-CA-03-08` (`C-031`): a checklist never moves the official reading
+/// backwards, and a negative reading is refused before any write.
+#[tokio::test]
+async fn a_checklist_odometer_below_the_official_reading_or_negative_is_refused() {
+    for (km, expected) in [(999.0, ODOMETER_BELOW_OFFICIAL), (-1.0, ODOMETER_NEGATIVE)] {
+        let mut run = new_checklist_run(Some(42), ChecklistType::Standalone);
+        run.odometer_km = km;
+        let mut vehicle = vehicle_row(10, 42, "ABC1D23", "Active");
+        vehicle.odometer_km = Some(1000.0);
+        let db = mock()
+            .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
+            .append_query_results([[vehicle]])
+            .into_connection();
+        let refused = run_with_user(
+            Some(owner(42)),
+            checklist_run_use_case(&db).create(run, Vec::new()),
+        )
+        .await
+        .expect_err("odometer must not go backwards");
+        assert_eq!(refused.message, expected);
+        assert!(!format!("{:?}", log(db)).contains("INSERT"));
+    }
 }
 
 #[tokio::test]

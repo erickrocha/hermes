@@ -23,6 +23,7 @@ use business::gateway::checklist_template_gateway::{
 use business::gateway::checklist_template_item_gateway::ChecklistTemplateItemGateway;
 use business::use_cases::checklist_template_use_case::{
     AT_LEAST_ONE_ITEM_REQUIRED, ChecklistTemplateUseCase, ITEM_DESCRIPTION_REQUIRED, NAME_REQUIRED,
+    TEMPLATE_CANNOT_BE_DEFAULT,
 };
 use std::str::FromStr;
 
@@ -38,6 +39,9 @@ fn error(locale: Locale, message: &str) -> ExceptionResponse {
     match message {
         NAME_REQUIRED | AT_LEAST_ONE_ITEM_REQUIRED | ITEM_DESCRIPTION_REQUIRED => {
             ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
+        }
+        TEMPLATE_CANNOT_BE_DEFAULT => {
+            ExceptionResponse::BadRequest(locale, ErrorKey::ChecklistTemplateCannotBeDefault)
         }
         _ => ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError),
     }
@@ -76,6 +80,7 @@ fn template_json(
         name: template.name,
         checklist_type: template.checklist_type.to_string(),
         active: template.active,
+        is_default: template.is_default,
         items: items.into_iter().map(item_json).collect(),
     }
 }
@@ -121,6 +126,7 @@ pub async fn add(
         checklist_type: ChecklistType::from_str(&payload.checklist_type)
             .unwrap_or(ChecklistType::Standalone),
         active: payload.active,
+        is_default: false,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -168,6 +174,49 @@ pub async fn get_by_uuid(
     }
 
     Ok(Json(template_json(template, items)))
+}
+
+#[utoipa::path(
+    put,
+    tag = "ChecklistTemplate",
+    path = "/checklist-template/uuid/{uuid}/default",
+    params(("uuid" = String, Path, description = "Checklist template UUID")),
+    responses(
+        (status = 200, description = "The template is now its tenant's default for its type (`C-031`, `SR-CA-03-09`); the previous default is cleared. Idempotent. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = ChecklistTemplateJson),
+        (status = 400, description = "`ChecklistTemplateCannotBeDefault`: the template is inactive or `Standalone`", body = BadRequestErrorJson),
+        (status = 403, description = "The caller's role may not manage checklist templates", body = ForbiddenErrorJson),
+        (status = 404, description = "Template not found, **or it belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn set_default(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(uuid): Path<String>,
+) -> HttpResponse<Json<ChecklistTemplateJson>> {
+    let (template, _) = use_case(&state).find_by_uuid(uuid.clone()).await.map_err(|_| {
+        ExceptionResponse::NotFound(locale.clone(), ErrorKey::ChecklistTemplateNotFound)
+    })?;
+    if !can_read_checklist_template(&current_user, template.tenant_id) {
+        return Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::ChecklistTemplateNotFound,
+        ));
+    }
+    if !can_create_checklist_template(&current_user, template.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::ChecklistTemplateForbidden,
+        ));
+    }
+
+    match use_case(&state).set_default(uuid).await {
+        Ok((updated, items)) => Ok(Json(template_json(updated, items))),
+        Err(e) => Err(error(locale, &e.message)),
+    }
 }
 
 #[utoipa::path(

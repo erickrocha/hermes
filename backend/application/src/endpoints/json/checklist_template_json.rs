@@ -17,6 +17,10 @@ pub struct ChecklistTemplateJson {
     /// One of `Departure`, `Return`, `Standalone`.
     pub checklist_type: String,
     pub active: bool,
+    /// `C-031`: the tenant's default template for this type. Read-only here;
+    /// set it with `PUT /checklist-template/uuid/{uuid}/default`.
+    #[serde(default)]
+    pub is_default: bool,
     #[serde(default)]
     pub items: Vec<ChecklistTemplateItemJson>,
 }

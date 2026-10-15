@@ -17,6 +17,8 @@ pub struct Model {
     /// wording ("departure / return / standalone"), not invented here.
     pub checklist_type: String,
     pub active: bool,
+    /// `C-031`: the tenant's default template for its `checklist_type`.
+    pub is_default: bool,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

@@ -1036,6 +1036,7 @@ fn checklist_template_model() -> checklist_template_entity::Model {
         name: "Departure inspection".into(),
         checklist_type: "Departure".into(),
         active: true,
+        is_default: false,
         created_at: at(),
         created_by: Some("owner@example.com".into()),
         updated_at: at(),

@@ -290,6 +290,20 @@ pub enum ErrorKey {
     NoLiveAssignment,
     /// HRMS-932: not an active driver of the vehicle's tenant.
     NotADriver,
+    ChecklistNotATenantTemplate,
+    ChecklistNotATenantVehicle,
+    DriverAlreadyHoldsAVehicle,
+    ReturnRequiresOpeningChecklist,
+    MayNotNameAnOpeningChecklist,
+    OpeningChecklistNotFound,
+    OpeningChecklistWrongVehicle,
+    OpeningChecklistAlreadyClosed,
+    AtLeastOneAnswerRequired,
+    DuplicateAnswerForItem,
+    AnswerNotATemplateItem,
+    OdometerNegative,
+    OdometerBelowOfficial,
+    ChecklistTemplateCannotBeDefault,
 }
 
 impl ErrorKey {
@@ -402,6 +416,20 @@ impl ErrorKey {
             ErrorKey::VehicleAlreadyAssigned => "VehicleAlreadyAssigned",
             ErrorKey::NoLiveAssignment => "NoLiveAssignment",
             ErrorKey::NotADriver => "NotADriver",
+            ErrorKey::ChecklistNotATenantTemplate => "ChecklistNotATenantTemplate",
+            ErrorKey::ChecklistNotATenantVehicle => "ChecklistNotATenantVehicle",
+            ErrorKey::DriverAlreadyHoldsAVehicle => "DriverAlreadyHoldsAVehicle",
+            ErrorKey::ReturnRequiresOpeningChecklist => "ReturnRequiresOpeningChecklist",
+            ErrorKey::MayNotNameAnOpeningChecklist => "MayNotNameAnOpeningChecklist",
+            ErrorKey::OpeningChecklistNotFound => "OpeningChecklistNotFound",
+            ErrorKey::OpeningChecklistWrongVehicle => "OpeningChecklistWrongVehicle",
+            ErrorKey::OpeningChecklistAlreadyClosed => "OpeningChecklistAlreadyClosed",
+            ErrorKey::AtLeastOneAnswerRequired => "AtLeastOneAnswerRequired",
+            ErrorKey::DuplicateAnswerForItem => "DuplicateAnswerForItem",
+            ErrorKey::AnswerNotATemplateItem => "AnswerNotATemplateItem",
+            ErrorKey::OdometerNegative => "OdometerNegative",
+            ErrorKey::OdometerBelowOfficial => "OdometerBelowOfficial",
+            ErrorKey::ChecklistTemplateCannotBeDefault => "ChecklistTemplateCannotBeDefault",
         }
     }
 
@@ -514,6 +542,20 @@ impl ErrorKey {
             ErrorKey::VehicleAlreadyAssigned => "vehicle-already-assigned",
             ErrorKey::NoLiveAssignment => "no-live-assignment",
             ErrorKey::NotADriver => "not-a-driver",
+            ErrorKey::ChecklistNotATenantTemplate => "checklist-not-a-tenant-template",
+            ErrorKey::ChecklistNotATenantVehicle => "checklist-not-a-tenant-vehicle",
+            ErrorKey::DriverAlreadyHoldsAVehicle => "driver-already-holds-a-vehicle",
+            ErrorKey::ReturnRequiresOpeningChecklist => "return-requires-opening-checklist",
+            ErrorKey::MayNotNameAnOpeningChecklist => "may-not-name-an-opening-checklist",
+            ErrorKey::OpeningChecklistNotFound => "opening-checklist-not-found",
+            ErrorKey::OpeningChecklistWrongVehicle => "opening-checklist-wrong-vehicle",
+            ErrorKey::OpeningChecklistAlreadyClosed => "opening-checklist-already-closed",
+            ErrorKey::AtLeastOneAnswerRequired => "at-least-one-answer-required",
+            ErrorKey::DuplicateAnswerForItem => "duplicate-answer-for-item",
+            ErrorKey::AnswerNotATemplateItem => "answer-not-a-template-item",
+            ErrorKey::OdometerNegative => "odometer-negative",
+            ErrorKey::OdometerBelowOfficial => "odometer-below-official",
+            ErrorKey::ChecklistTemplateCannotBeDefault => "checklist-template-cannot-be-default",
         }
     }
 }
@@ -791,6 +833,20 @@ mod tests {
             ErrorKey::PresenceForbidden,
             ErrorKey::PresenceOutOfOrder,
             ErrorKey::GarageVehicleNotAway,
+            ErrorKey::ChecklistNotATenantTemplate,
+            ErrorKey::ChecklistNotATenantVehicle,
+            ErrorKey::DriverAlreadyHoldsAVehicle,
+            ErrorKey::ReturnRequiresOpeningChecklist,
+            ErrorKey::MayNotNameAnOpeningChecklist,
+            ErrorKey::OpeningChecklistNotFound,
+            ErrorKey::OpeningChecklistWrongVehicle,
+            ErrorKey::OpeningChecklistAlreadyClosed,
+            ErrorKey::AtLeastOneAnswerRequired,
+            ErrorKey::DuplicateAnswerForItem,
+            ErrorKey::AnswerNotATemplateItem,
+            ErrorKey::OdometerNegative,
+            ErrorKey::OdometerBelowOfficial,
+            ErrorKey::ChecklistTemplateCannotBeDefault,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

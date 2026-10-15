@@ -11,7 +11,7 @@ use entity::checklist_template_entity;
 use entity::prelude::ChecklistTemplateEntity as ChecklistTemplateQuery;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, Set,
     TransactionTrait,
 };
 
@@ -32,6 +32,12 @@ pub trait ChecklistTemplateStore: Send + Sync {
         page: u64,
         page_size: u64,
     ) -> Result<(Vec<ChecklistTemplate>, u64), BusinessError>;
+    /// `SR-CA-03-09`: makes `template` the default of its tenant and type and
+    /// clears the previous one, in one transaction.
+    async fn set_default(
+        &self,
+        template: ChecklistTemplate,
+    ) -> Result<ChecklistTemplate, BusinessError>;
 }
 
 /// `HRMS-651` (`D-09`): every read and delete goes through
@@ -137,6 +143,59 @@ impl ChecklistTemplateStore for ChecklistTemplateDatabaseGateway {
             .await
             .map(|(models, total)| (ChecklistTemplateEntityMapper::from_models(models), total))
             .map_err(database_error)
+    }
+
+    async fn set_default(
+        &self,
+        template: ChecklistTemplate,
+    ) -> Result<ChecklistTemplate, BusinessError> {
+        let id = template.id.unwrap_or_default();
+        let transaction = self.templates.db().begin().await.map_err(database_error)?;
+        match Self::swap_default(&transaction, &template, id).await {
+            Ok(updated) => {
+                transaction.commit().await.map_err(database_error)?;
+                Ok(ChecklistTemplateEntityMapper::from_model(updated))
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(database_error(error))
+            }
+        }
+    }
+}
+
+impl ChecklistTemplateDatabaseGateway {
+    /// Each row goes through `ActiveModel::update` (not `update_many`) so the
+    /// audit columns are stamped like every other write.
+    async fn swap_default(
+        transaction: &sea_orm::DatabaseTransaction,
+        template: &ChecklistTemplate,
+        id: i64,
+    ) -> Result<checklist_template_entity::Model, DbErr> {
+        use checklist_template_entity::Column;
+        let same_tenant = match template.tenant_id {
+            Some(tenant_id) => Column::TenantId.eq(tenant_id),
+            None => Column::TenantId.is_null(),
+        };
+        let current = ChecklistTemplateQuery::find()
+            .filter(same_tenant)
+            .filter(Column::ChecklistType.eq(template.checklist_type.to_string()))
+            .filter(Column::IsDefault.eq(true))
+            .filter(Column::Id.ne(id))
+            .all(transaction)
+            .await?;
+        for model in current {
+            let mut active: checklist_template_entity::ActiveModel = model.into();
+            active.is_default = Set(false);
+            active.update(transaction).await?;
+        }
+        let target = ChecklistTemplateQuery::find_by_id(id)
+            .one(transaction)
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound(format!("checklist_template {id}")))?;
+        let mut active: checklist_template_entity::ActiveModel = target.into();
+        active.is_default = Set(true);
+        active.update(transaction).await
     }
 }
 

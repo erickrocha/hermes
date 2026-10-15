@@ -33,7 +33,11 @@ use business::gateway::km_evolution_gateway::KmEvolutionGateway;
 use business::gateway::user_gateway::UserGateway;
 use business::gateway::vehicle_gateway::VehicleGateway;
 use business::use_cases::checklist_run_use_case::{
-    ChecklistRunUseCase, DRIVER_ALREADY_HOLDS_A_VEHICLE, NOT_A_DRIVER,
+    ANSWER_NOT_A_TEMPLATE_ITEM, AT_LEAST_ONE_ANSWER_REQUIRED, ChecklistRunUseCase,
+    DRIVER_ALREADY_HOLDS_A_VEHICLE, DUPLICATE_ANSWER_FOR_ITEM, MAY_NOT_NAME_AN_OPENING_CHECKLIST,
+    NOT_A_DRIVER, NOT_A_TENANT_TEMPLATE, NOT_A_TENANT_VEHICLE, ODOMETER_BELOW_OFFICIAL,
+    ODOMETER_NEGATIVE, OPENING_CHECKLIST_ALREADY_CLOSED, OPENING_CHECKLIST_NOT_FOUND,
+    OPENING_CHECKLIST_WRONG_VEHICLE, RETURN_REQUIRES_OPENING_CHECKLIST,
 };
 use business::use_cases::km_evolution_use_case::KmEvolutionUseCase;
 use business::use_cases::user_use_case::UserUseCase;
@@ -55,13 +59,27 @@ fn use_case(state: &AppState) -> ChecklistRunUseCase {
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {
-    match message {
-        NOT_A_DRIVER => ExceptionResponse::BadRequest(locale, ErrorKey::NotADriver),
+    // `SR-CA-03-07`: one key per refusal so the client can say why.
+    let key = match message {
+        NOT_A_TENANT_TEMPLATE => ErrorKey::ChecklistNotATenantTemplate,
+        NOT_A_TENANT_VEHICLE => ErrorKey::ChecklistNotATenantVehicle,
+        NOT_A_DRIVER => ErrorKey::NotADriver,
         DRIVER_ALREADY_HOLDS_A_VEHICLE => {
-            ExceptionResponse::Conflict(locale, ErrorKey::InvalidParameterValue)
+            return ExceptionResponse::Conflict(locale, ErrorKey::DriverAlreadyHoldsAVehicle);
         }
-        _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
-    }
+        RETURN_REQUIRES_OPENING_CHECKLIST => ErrorKey::ReturnRequiresOpeningChecklist,
+        MAY_NOT_NAME_AN_OPENING_CHECKLIST => ErrorKey::MayNotNameAnOpeningChecklist,
+        OPENING_CHECKLIST_NOT_FOUND => ErrorKey::OpeningChecklistNotFound,
+        OPENING_CHECKLIST_WRONG_VEHICLE => ErrorKey::OpeningChecklistWrongVehicle,
+        OPENING_CHECKLIST_ALREADY_CLOSED => ErrorKey::OpeningChecklistAlreadyClosed,
+        AT_LEAST_ONE_ANSWER_REQUIRED => ErrorKey::AtLeastOneAnswerRequired,
+        DUPLICATE_ANSWER_FOR_ITEM => ErrorKey::DuplicateAnswerForItem,
+        ANSWER_NOT_A_TEMPLATE_ITEM => ErrorKey::AnswerNotATemplateItem,
+        ODOMETER_NEGATIVE => ErrorKey::OdometerNegative,
+        ODOMETER_BELOW_OFFICIAL => ErrorKey::OdometerBelowOfficial,
+        _ => ErrorKey::InvalidParameterValue,
+    };
+    ExceptionResponse::BadRequest(locale, key)
 }
 
 async fn resolve_checklist_template_id(
@@ -101,7 +119,9 @@ async fn resolve_opening_checklist_id(
         .find_by_uuid(uuid)
         .await
         .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue))?;
-    Ok(run.map(|r| r.id))
+    // A uuid that names nothing is its own refusal, not "no opening named".
+    run.map(|r| Some(r.id))
+        .ok_or_else(|| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::OpeningChecklistNotFound))
 }
 
 async fn answer_json(state: &AppState, answer: ChecklistAnswer) -> ChecklistAnswerJson {

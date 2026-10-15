@@ -147,6 +147,7 @@ impl Modify for SecurityAddon {
         endpoints::checklist_template_endpoint::add,
         endpoints::checklist_template_endpoint::get_by_uuid,
         endpoints::checklist_template_endpoint::list_all,
+        endpoints::checklist_template_endpoint::set_default,
         endpoints::checklist_run_endpoint::add,
         endpoints::checklist_run_endpoint::get_by_uuid,
         endpoints::checklist_run_endpoint::possession,

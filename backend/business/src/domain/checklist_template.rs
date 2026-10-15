@@ -18,6 +18,9 @@ pub struct ChecklistTemplate {
     pub name: String,
     pub checklist_type: ChecklistType,
     pub active: bool,
+    /// `C-031` (`SR-CA-03-09`): the tenant's default for this type; set only
+    /// through `ChecklistTemplateUseCase::set_default`.
+    pub is_default: bool,
     pub created_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
     pub updated_at: Option<NaiveDateTime>,
@@ -41,6 +44,7 @@ impl EntityMapper<ChecklistTemplate, Model, ActiveModel> for ChecklistTemplateEn
             name: Set(d.name),
             checklist_type: Set(d.checklist_type.to_string()),
             active: Set(d.active),
+            is_default: Set(d.is_default),
             created_at: NotSet,
             created_by: NotSet,
             updated_at: NotSet,
@@ -57,6 +61,7 @@ impl EntityMapper<ChecklistTemplate, Model, ActiveModel> for ChecklistTemplateEn
             checklist_type: ChecklistType::from_str(&e.checklist_type)
                 .unwrap_or(ChecklistType::Standalone),
             active: e.active,
+            is_default: e.is_default,
             created_at: Some(e.created_at.naive_utc()),
             created_by: e.created_by,
             updated_at: Some(e.updated_at.naive_utc()),
@@ -80,6 +85,7 @@ impl EntityMapper<ChecklistTemplate, Model, ActiveModel> for ChecklistTemplateEn
                     .and_then(|value| ChecklistType::from_str(&value).ok())
                     .unwrap_or(ChecklistType::Standalone),
                 active: e.active.take().unwrap_or_default(),
+                is_default: e.is_default.take().unwrap_or_default(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),
                 created_by: e.created_by.take().flatten(),
                 updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),

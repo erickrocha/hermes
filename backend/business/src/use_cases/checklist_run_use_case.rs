@@ -34,6 +34,13 @@ pub const DUPLICATE_ANSWER_FOR_ITEM: &str = "An item may be answered at most onc
 pub const ANSWER_NOT_A_TEMPLATE_ITEM: &str =
     "An answered item does not belong to this checklist's own template";
 
+/// `SR-CA-03-08` (`C-031`): the official reading never moves backwards by a
+/// checklist; a wrong official reading is corrected through the manual
+/// kilometre record (`HRMS-650`), not by submitting a lower one.
+pub const ODOMETER_NEGATIVE: &str = "The odometer reading cannot be negative";
+pub const ODOMETER_BELOW_OFFICIAL: &str =
+    "The odometer reading is lower than the vehicle's official reading";
+
 pub struct ChecklistRunUseCase {
     store: Box<dyn ChecklistRunStore>,
     km_evolution: KmEvolutionUseCase,
@@ -241,8 +248,14 @@ impl ChecklistRunUseCase {
         }
 
         let vehicle = self.store.find_vehicle(run.vehicle_id).await?;
-        if !vehicle.is_some_and(|v| v.tenant_id == run.tenant_id) {
+        let Some(vehicle) = vehicle.filter(|v| v.tenant_id == run.tenant_id) else {
             return Err(BusinessError::new(NOT_A_TENANT_VEHICLE.to_string()));
+        };
+        if run.odometer_km < 0.0 {
+            return Err(BusinessError::new(ODOMETER_NEGATIVE.to_string()));
+        }
+        if vehicle.odometer_km.is_some_and(|official| run.odometer_km < official) {
+            return Err(BusinessError::new(ODOMETER_BELOW_OFFICIAL.to_string()));
         }
 
         let driver = self.store.find_driver(run.driver_id).await?;
