@@ -469,7 +469,7 @@ async fn start() -> anyhow::Result<()> {
     let mut app = Router::new();
     if api_docs_enabled() {
         app = app
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", commons::openapi_permissions::with_permissions(ApiDoc::openapi())));
     }
     let app = app
         // Public routes (no authentication)
@@ -739,5 +739,43 @@ mod openapi_contract_tests {
             missing.is_empty(),
             "these operations document no response with a **Roles:** statement (HRMS-132): {missing:?}"
         );
+    }
+
+    /// `EPIC-AC-02-S04` (`HRMS-856`): the published document names the permission each operation asks for, and
+    /// every operation that is not public has one in the table (so a new endpoint cannot ship without it).
+    #[test]
+    fn every_operation_names_its_permission() {
+        use crate::commons::openapi_permissions::with_permissions;
+        use business::domain::permission;
+        use utoipa::openapi::path::{Operation, PathItem};
+
+        fn operations(item: &PathItem) -> Vec<(&'static str, &Operation)> {
+            [("GET", &item.get), ("PUT", &item.put), ("POST", &item.post), ("DELETE", &item.delete)]
+                .into_iter()
+                .filter_map(|(method, op)| op.as_ref().map(|op| (method, op)))
+                .collect()
+        }
+
+        // Public, or reachable by every signed-in user, or owner/platform-only with no catalogue permission to
+        // grant (device credentials, `HRMS-418`): these state "none" instead of a code.
+        let ungrantable = [
+            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/garage-device", "/garage-device/pair",
+            "/garage-device/pairing-code", "/garage-device/uuid/{uuid}", "/garage-device/uuid/{uuid}/pairing-code",
+        ];
+        let openapi = with_permissions(ApiDoc::openapi());
+        let (mut unstated, mut unlisted) = (Vec::new(), Vec::new());
+        for (path, item) in &openapi.paths.paths {
+            for (method, operation) in operations(item) {
+                let described = operation.description.as_deref().unwrap_or_default();
+                if !described.contains("**Permission:**") {
+                    unstated.push(format!("{method} {path}"));
+                }
+                if permission::for_operation(method, path).is_none() && !ungrantable.contains(&path.as_str()) {
+                    unlisted.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(unstated.is_empty(), "these operations do not state a **Permission:** (HRMS-856): {unstated:?}");
+        assert!(unlisted.is_empty(), "these operations are not in the operation->permission table: {unlisted:?}");
     }
 }

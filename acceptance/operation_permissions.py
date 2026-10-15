@@ -44,7 +44,10 @@ GARAGE = [("POST", "/garage-attendance/uuid/{uuid}/release-with-pendency", "gara
 COST = [("GET", "/cost-report/vehicle/uuid/{uuid}", "cost-report.vehicle.read"), ("GET", "/cost-report/vehicle/uuid/{uuid}/export", "cost-report.vehicle.read"),
         ("GET", "/cost-report/work-order/uuid/{uuid}", "cost-report.work-order.read"), ("GET", "/cost-report/suppliers", "cost-report.supplier.read"),
         ("GET", "/cost-report/supplier-closing", "cost-report.supplier.read"), ("GET", "/cost-report/supplier-closing/export", "cost-report.supplier.read")]
-table = list(PROFILE) + COST + GARAGE
+# C-031 (the tenant's default checklist template) and an owner-only trip edit that the scan missed.
+LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.create"),
+         ("POST", "/extra-trip/uuid/{uuid}/preparation-skip", "extra-trip.update")]
+table = list(PROFILE) + COST + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)
     if not m or m.group(1) in PUBLIC:
