@@ -86,6 +86,12 @@ Para rodar o Hermes completo (MariaDB, API e console) num servidor de rede confi
 2. `./deploy-internal.sh` — constrói as imagens, faz o dump do banco, roda as migrações, sobe tudo e verifica.
 3. Abra `HERMES_URL` no navegador e entre com `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`.
 
+Para olhar o banco com o DBeaver (ou outro cliente SQL): o banco não é publicado por padrão. Suba-o com
+`docker compose --env-file .env -f docker-compose.internal.yml -f docker-compose.db-access.yml up -d mariadb` (dentro de
+`infra/prod`) e conecte em `127.0.0.1:3307`, banco `hermes`, usuário e senha `MARIADB_USER`/`MARIADB_PASSWORD` do `.env`
+(driver MariaDB; se o DBeaver reclamar de chave pública, ligue `allowPublicKeyRetrieval`). A porta só escuta no próprio
+servidor; de outra máquina use um túnel: `ssh -L 3307:127.0.0.1:3307 usuario@servidor`.
+
 Sem HTTPS o login trafega em texto puro: não exponha a porta à internet. Para a internet, use `docker-compose.yml`
 (Traefik + Let's Encrypt) e `deploy.sh`.
 
