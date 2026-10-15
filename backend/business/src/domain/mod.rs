@@ -25,6 +25,7 @@ pub mod priced_service;
 pub mod part;
 pub mod stock_movement;
 pub mod purchase_order;
+pub mod maintenance_notification;
 pub mod enums;
 pub mod password_policy;
 pub mod province;

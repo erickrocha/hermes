@@ -73,6 +73,8 @@ pub const GRANTABLE: &[Permission] = &[
     Permission { code: "inspection-model.read", module: "Inspections", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "technical-inspection.create", module: "Inspections", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "technical-inspection.read", module: "Inspections", tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "maintenance-notification.read", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "maintenance-notification.update", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "maintenance-plan.create", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "maintenance-plan.read", module: "Maintenance", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "preventive-plan.alert.discharge", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },

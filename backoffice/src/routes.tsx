@@ -8,6 +8,8 @@ import { GarageDevicesPage } from './pages/GarageDevicesPage'
 import { PreventiveAlertPage, PreventiveExtensionPage, PreventivePlanDetailPage } from './pages/PreventivePages'
 import { SchedulePage, TripImportPage } from './pages/SchedulePages'
 import { FuelEntryNewPage, FuelGaugePage, FuelPage, FuelReceiptPage, FuelReportPage, FuelRestorePage, FuelSettingsPage, FuelUnifyPage, InternalTankConfigPage, InternalTankPage, RuleSettingsPage } from './pages/FuelPages'
+import { MaintenanceNotificationsPage } from './pages/MaintenanceNotificationsPage'
+import { canSeeMaintenanceNotifications } from './components/molecules/NotificationBell'
 import { PartAdjustPage, PartDetailPage, PartEntryPage, PurchaseOrderDetailPage, PurchaseOrderOrderedPage } from './pages/StockPages'
 import { WorkOrderDetailPage, WorkOrderIssuePartPage, WorkOrderItemPage, WorkOrderNewPage, WorkOrdersPage, canSeeWorkOrders } from './pages/WorkOrderPages'
 
@@ -21,6 +23,7 @@ export const customRoutes: AppRoute[] = [
   { path: '/work-orders/:uuid', element: <WorkOrderDetailPage />, allow: canSeeWorkOrders },
   { path: '/work-orders/:uuid/items/new', element: <WorkOrderItemPage />, allow: (s) => can(s, 'work-order.item.add', OWNER_MECHANIC) },
   { path: '/work-orders/:uuid/issue-part', element: <WorkOrderIssuePartPage />, allow: (s) => can(s, 'work-order.issue-part', OWNER_MECHANIC) },
+  { path: '/maintenance-notifications', element: <MaintenanceNotificationsPage />, allow: canSeeMaintenanceNotifications },
   { path: '/vehicles/:uuid', element: <VehicleDetailPage />, allow: (s) => can(s, 'vehicle.read', OFFICE) },
   { path: '/vehicles/:uuid/odometer', element: <VehicleOdometerPage />, allow: (s) => can(s, 'vehicle.odometer.record', OWNER) },
   { path: '/vehicles/:uuid/assign', element: <VehicleAssignPage />, allow: (s) => can(s, 'vehicle.assign-driver', OWNER) },

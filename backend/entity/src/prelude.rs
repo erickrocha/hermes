@@ -25,6 +25,7 @@ pub use super::priced_service_entity::Entity as PricedServiceEntity;
 pub use super::part_entity::Entity as PartEntity;
 pub use super::stock_movement_entity::Entity as StockMovementEntity;
 pub use super::purchase_order_entity::Entity as PurchaseOrderEntity;
+pub use super::maintenance_notification_entity::Entity as MaintenanceNotificationEntity;
 pub use super::vehicle_entity::Entity as VehicleEntity;
 pub use super::vehicle_assignment_entity::Entity as VehicleAssignmentEntity;
 pub use super::vehicle_expense_entity::Entity as VehicleExpenseEntity;

@@ -8,6 +8,7 @@ import { loadCurrentTenant, loadPermissions, logout } from '../store'
 import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
+import { NotificationBell } from './molecules/NotificationBell'
 import { canSeeCosts } from '../pages/CostPages'
 import { operationNav } from '../features/navigation'
 import { canSeeProfiles, canSeeTenants, canSeeUsers } from '../pages/ManagementPages'
@@ -58,6 +59,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <button className="menu-button" onClick={() => setMobile(true)} aria-label={t('menu')}><Menu /></button>
         <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{t(`role${session.role}`)}</small></div>
         <div className="topbar-actions">
+          <NotificationBell session={session} />
           <LanguagePicker />
           <div className="user-menu-wrap">
             <button className="user-trigger" onClick={() => setUserMenu(!userMenu)}><span className="avatar">{userLabel.slice(0, 1).toUpperCase()}</span><span className="user-copy"><b>{userLabel}</b><small>{session.email || ''}</small></span><ChevronDown size={16} /></button>

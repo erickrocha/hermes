@@ -6,6 +6,7 @@ import { managementReducer } from './features/managementSlice'
 import { costReducer } from './features/costSlice'
 import { referenceDataReducer } from './features/referenceDataSlice'
 import { garageDeviceReducer } from './features/garageDeviceSlice'
+import { maintenanceNotificationReducer } from './features/maintenanceNotificationSlice'
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { apiMessage, normalizeSession } from './api'
 import * as authService from './services/authService'
@@ -109,7 +110,7 @@ const dataSlice = createSlice({
 
 // Uma slice por feature (resourceSlice) mais os seletores (lookup): o registro único mantém o store e os testes de acordo.
 const featureReducers = Object.fromEntries(allResources.map((resource) => [resource.name, resource.reducer]))
-export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, ...featureReducers } })
+export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, maintenanceNotifications: maintenanceNotificationReducer, ...featureReducers } })
 export const { logout, clearAuthError } = authSlice.actions
 export const { clearDataError, clearCities } = dataSlice.actions
 export type RootState = ReturnType<typeof store.getState>

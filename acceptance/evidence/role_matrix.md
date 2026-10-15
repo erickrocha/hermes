@@ -18,9 +18,10 @@
 | `GET /checklist-template` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /checklist-template` | Sy,Te | 400 | 400 | 403 | 403 | 403 |
 | `GET /checklist-template/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
+| `PUT /checklist-template/uuid/{uuid}/default` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /cities` | Sy | 200 | 403 | 403 | 403 | 403 |
 | `GET /cities/by-province/{province_id}` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
-| `POST /city` | Sy | 400 | 403 | 403 | 403 | 403 |
+| `POST /city` | Sy | 200 | 403 | 403 | 403 | 403 |
 | `POST /city/import` | Sy | 200 | 403 | 403 | 403 | 403 |
 | `GET /city/{id}` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `GET /cost-report/supplier-closing` | Sy,Te,Te | 200 | 200 | 200 | 403 | 403 |
@@ -43,6 +44,7 @@
 | `POST /extra-trip/import/preview` | Sy,Te | 400 | 400 | 403 | 403 | 403 |
 | `GET /extra-trip/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
 | `PUT /extra-trip/uuid/{uuid}` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
+| `POST /extra-trip/uuid/{uuid}/preparation-skip` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /fuel-entry` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /fuel-entry` | Me,Sy,Te | 404 | 404 | 403 | 403 | 404 |
 | `GET /fuel-entry/average` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
@@ -65,10 +67,16 @@
 | `GET /garage-attendance/queue` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `GET /garage-attendance/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
 | `POST /garage-attendance/uuid/{uuid}/checkout` | Me,Sy,Te | 404 | 404 | 404 | 404 | 404 |
+| `POST /garage-attendance/uuid/{uuid}/release-with-pendency` | Me,Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `PUT /garage-attendance/uuid/{uuid}/service/{service_uuid}` | Me,Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /garage-call` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
 | `POST /garage-call` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `POST /garage-call/cancel` | Sy,Te | 404 | 404 | 404 | 404 | 404 |
+| `GET /garage-device` | Te | 403 | 200 | 403 | 403 | 403 |
+| `POST /garage-device/pair` |  | 401 | 401 | 401 | 401 | 401 |
+| `POST /garage-device/pairing-code` | Te | 403 | 201 | 403 | 403 | 403 |
+| `DELETE /garage-device/uuid/{uuid}` | Te | 403 | 404 | 403 | 403 | 403 |
+| `POST /garage-device/uuid/{uuid}/pairing-code` | Te | 403 | 404 | 403 | 403 | 403 |
 | `GET /garage-service` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /garage-service` | Sy,Te | 400 | 400 | 403 | 403 | 403 |
 | `GET /garage-service/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
@@ -82,6 +90,10 @@
 | `GET /internal-tank` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |
 | `PUT /internal-tank` | Sy,Te | 200 | 200 | 403 | 403 | 403 |
 | `GET /internal-tank/stock` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
+| `GET /maintenance-notification` | Me,Sy,Te | 200 | 200 | 403 | 403 | 200 |
+| `PUT /maintenance-notification/read-all` | Me,Sy,Te | 200 | 200 | 403 | 403 | 200 |
+| `GET /maintenance-notification/unread-count` | Me,Sy,Te | 200 | 200 | 403 | 403 | 200 |
+| `PUT /maintenance-notification/uuid/{uuid}/read` | Me,Sy,Te | 404 | 404 | 403 | 403 | 404 |
 | `GET /maintenance-plan` | Dr,Me,Sy,Te,Te | 200 | 200 | 200 | 200 | 200 |
 | `POST /maintenance-plan` | Me,Sy,Te | 404 | 404 | 404 | 404 | 404 |
 | `GET /maintenance-plan/uuid/{uuid}` | Dr,Me,Sy,Te,Te | 404 | 404 | 404 | 404 | 404 |

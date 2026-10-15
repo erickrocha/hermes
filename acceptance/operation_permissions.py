@@ -46,7 +46,12 @@ COST = [("GET", "/cost-report/vehicle/uuid/{uuid}", "cost-report.vehicle.read"),
         ("GET", "/cost-report/supplier-closing", "cost-report.supplier.read"), ("GET", "/cost-report/supplier-closing/export", "cost-report.supplier.read")]
 # C-031 (the tenant's default checklist template) and an owner-only trip edit that the scan missed.
 LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.create"),
-         ("POST", "/extra-trip/uuid/{uuid}/preparation-skip", "extra-trip.update")]
+         ("POST", "/extra-trip/uuid/{uuid}/preparation-skip", "extra-trip.update"),
+         # C-026 EPIC-MT-06: the in-app "awaited part arrived" notices.
+         ("GET", "/maintenance-notification", "maintenance-notification.read"),
+         ("GET", "/maintenance-notification/unread-count", "maintenance-notification.read"),
+         ("PUT", "/maintenance-notification/uuid/{uuid}/read", "maintenance-notification.update"),
+         ("PUT", "/maintenance-notification/read-all", "maintenance-notification.update")]
 table = list(PROFILE) + COST + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)

@@ -683,5 +683,15 @@
   "garageBaseLongitude": "Garage base longitude",
   "garageBaseRadiusMeters": "Garage geofence radius (m; default 75)",
   "garageCycleFallbackDistanceKm": "Garage cycle fallback threshold (km; default 2)",
-  "garageOdometerMaxSingleJumpKm": "Maximum odometer jump per poll (km; default 300)"
+  "garageOdometerMaxSingleJumpKm": "Maximum odometer jump per poll (km; default 300)",
+  "maintenanceNotifications": "Maintenance notices",
+  "maintenanceNotificationsText": "Parts you were waiting for that have arrived",
+  "maintenanceNotificationsBell": "Maintenance notices ({{count}} unread)",
+  "onlyUnread": "Unread only",
+  "markAllRead": "Mark all as read",
+  "markRead": "Mark as read",
+  "noticeRead": "Read",
+  "partArrived": "Part arrived: {{part}}",
+  "partArrivedDetail": "Quantity received: {{quantity}}",
+  "openWorkOrder": "Open work order"
 }

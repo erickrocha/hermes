@@ -31,6 +31,7 @@ pub mod priced_service_json;
 pub mod part_json;
 pub mod stock_movement_json;
 pub mod purchase_order_json;
+pub mod maintenance_notification_json;
 pub mod user_json;
 pub mod vehicle_json;
 pub mod vehicle_assignment_json;

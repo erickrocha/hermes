@@ -20,6 +20,7 @@ use crate::routes::service_type_routes::service_type_routes;
 use crate::routes::priced_service_routes::priced_service_routes;
 use crate::routes::part_routes::part_routes;
 use crate::routes::purchase_order_routes::purchase_order_routes;
+use crate::routes::maintenance_notification_routes::maintenance_notification_routes;
 use crate::routes::transport_demand_routes::transport_demand_routes;
 use crate::routes::extra_trip_routes::extra_trip_routes;
 use crate::routes::resource_routes::resources_routes;
@@ -179,6 +180,10 @@ impl Modify for SecurityAddon {
         endpoints::purchase_order_endpoint::mark_ordered,
         endpoints::purchase_order_endpoint::mark_purchased,
         endpoints::purchase_order_endpoint::cancel,
+        endpoints::maintenance_notification_endpoint::list_all,
+        endpoints::maintenance_notification_endpoint::unread_count,
+        endpoints::maintenance_notification_endpoint::mark_read,
+        endpoints::maintenance_notification_endpoint::mark_all_read,
         endpoints::vehicle_expense_endpoint::add,
         endpoints::vehicle_expense_endpoint::get_by_uuid,
         endpoints::vehicle_expense_endpoint::list_all,
@@ -307,6 +312,9 @@ impl Modify for SecurityAddon {
             endpoints::json::stock_movement_json::StockAdjustmentJson,
             endpoints::json::purchase_order_json::PurchaseOrderJson,
             endpoints::json::purchase_order_json::MarkOrderedJson,
+            endpoints::json::maintenance_notification_json::MaintenanceNotificationJson,
+            endpoints::json::maintenance_notification_json::UnreadCountJson,
+            endpoints::json::maintenance_notification_json::MarkedReadJson,
             endpoints::json::vehicle_expense_json::VehicleExpenseJson,
             endpoints::json::fuel_entry_json::FuelEntryJson,
             endpoints::json::fuel_entry_json::FuelSyncOutcomeJson,
@@ -489,6 +497,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/priced-service", priced_service_routes(state.clone()))
         .nest("/part", part_routes(state.clone()))
         .nest("/purchase-order", purchase_order_routes(state.clone()))
+        .nest("/maintenance-notification", maintenance_notification_routes(state.clone()))
         .nest("/transport-demand", transport_demand_routes(state.clone()))
         .nest("/extra-trip", extra_trip_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
@@ -664,6 +673,7 @@ mod openapi_contract_tests {
             "priced_service_routes" => "/priced-service",
             "part_routes" => "/part",
             "purchase_order_routes" => "/purchase-order",
+            "maintenance_notification_routes" => "/maintenance-notification",
             "vehicle_expense_routes" => "/vehicle-expense",
             "fuel_entry_routes" => "/fuel-entry",
             "preventive_plan_routes" => "/preventive-plan",

@@ -683,5 +683,15 @@
   "garageBaseLongitude": "Longitude da base da garagem",
   "garageBaseRadiusMeters": "Raio da cerca geográfica (m; padrão 75)",
   "garageCycleFallbackDistanceKm": "Limite de ciclo sem saída registrada (km; padrão 2)",
-  "garageOdometerMaxSingleJumpKm": "Salto máximo do odômetro por leitura (km; padrão 300)"
+  "garageOdometerMaxSingleJumpKm": "Salto máximo do odômetro por leitura (km; padrão 300)",
+  "maintenanceNotifications": "Avisos de manutenção",
+  "maintenanceNotificationsText": "Peças aguardadas que chegaram",
+  "maintenanceNotificationsBell": "Avisos de manutenção ({{count}} não lidos)",
+  "onlyUnread": "Só não lidos",
+  "markAllRead": "Marcar todas como lidas",
+  "markRead": "Marcar como lida",
+  "noticeRead": "Lida",
+  "partArrived": "Peça chegou: {{part}}",
+  "partArrivedDetail": "Quantidade recebida: {{quantity}}",
+  "openWorkOrder": "Abrir ordem de serviço"
 }

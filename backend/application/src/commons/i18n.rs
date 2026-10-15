@@ -204,6 +204,10 @@ pub enum ErrorKey {
     PurchaseOrderForbidden,
     /// `HRMS-802`: no such purchase order, or it belongs to another tenant.
     PurchaseOrderNotFound,
+    /// `EPIC-MT-06`: a role that may not read the maintenance notices.
+    MaintenanceNotificationForbidden,
+    /// `EPIC-MT-06`: no such maintenance notice, or it belongs to another tenant.
+    MaintenanceNotificationNotFound,
     /// `HRMS-803`: a role that may not record vehicle expenses.
     VehicleExpenseForbidden,
     /// `HRMS-803`: no such vehicle expense, or it belongs to another tenant.
@@ -374,6 +378,8 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "PartNotFound",
             ErrorKey::PurchaseOrderForbidden => "PurchaseOrderForbidden",
             ErrorKey::PurchaseOrderNotFound => "PurchaseOrderNotFound",
+            ErrorKey::MaintenanceNotificationForbidden => "MaintenanceNotificationForbidden",
+            ErrorKey::MaintenanceNotificationNotFound => "MaintenanceNotificationNotFound",
             ErrorKey::VehicleExpenseForbidden => "VehicleExpenseForbidden",
             ErrorKey::VehicleExpenseNotFound => "VehicleExpenseNotFound",
             ErrorKey::DuplicateExpenseInvoice => "DuplicateExpenseInvoice",
@@ -500,6 +506,8 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "part-not-found",
             ErrorKey::PurchaseOrderForbidden => "purchase-order-forbidden",
             ErrorKey::PurchaseOrderNotFound => "purchase-order-not-found",
+            ErrorKey::MaintenanceNotificationForbidden => "maintenance-notification-forbidden",
+            ErrorKey::MaintenanceNotificationNotFound => "maintenance-notification-not-found",
             ErrorKey::VehicleExpenseForbidden => "vehicle-expense-forbidden",
             ErrorKey::VehicleExpenseNotFound => "vehicle-expense-not-found",
             ErrorKey::DuplicateExpenseInvoice => "duplicate-expense-invoice",
@@ -799,6 +807,8 @@ mod tests {
             ErrorKey::PartNotFound,
             ErrorKey::PurchaseOrderForbidden,
             ErrorKey::PurchaseOrderNotFound,
+            ErrorKey::MaintenanceNotificationForbidden,
+            ErrorKey::MaintenanceNotificationNotFound,
             ErrorKey::VehicleExpenseForbidden,
             ErrorKey::VehicleExpenseNotFound,
             ErrorKey::DuplicateExpenseInvoice,
