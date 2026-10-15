@@ -143,7 +143,8 @@ class MainActivity : ComponentActivity() {
         val next = response.toSession()
         if (next == null || !isDriverRole(response.role)) {
             // Interface courtesy only: nothing is stored; the server remains the authority.
-            showLogin(getString(R.string.not_a_driver), email)
+            val message = if (isDriverRole(response.role)) R.string.login_failed else R.string.not_a_driver
+            showLogin(getString(message), email)
             return
         }
         store.save(next)
@@ -163,7 +164,8 @@ class MainActivity : ComponentActivity() {
                     if (!alive()) return@post
                     val next = response.toSession()
                     if (next == null || !isDriverRole(response.role)) {
-                        endSession(getString(R.string.not_a_driver))
+                        // A driver role without usable tokens is a bad response, not a role change.
+                        endSession(getString(if (isDriverRole(response.role)) R.string.session_expired else R.string.not_a_driver))
                     } else {
                         // The backend issues a new refresh token on every refresh: replace what is stored.
                         store.save(next)

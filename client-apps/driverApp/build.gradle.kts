@@ -24,9 +24,15 @@ val verifyReleaseSigning by tasks.registering {
     }
 }
 
+val verifyReleaseApiUrl by tasks.registering {
+    doLast {
+        check(apiBaseUrl.startsWith("https://")) { "A release build requires an https API base URL, got: $apiBaseUrl" }
+    }
+}
+
 tasks.configureEach {
     if (name == "packageRelease" || name == "bundleRelease") {
-        dependsOn(verifyReleaseSigning)
+        dependsOn(verifyReleaseSigning, verifyReleaseApiUrl)
     }
 }
 
