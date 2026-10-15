@@ -159,7 +159,7 @@ def run():
             "no events": lambda v: None,
             "present when the window opened": lambda v: presence(admin, v, "Arrival", ago(hours=20)),
             "arrived inside the window, still there": lambda v: (out_since(admin, v, 12), presence(admin, v, "Arrival", ago(hours=5))),
-            "arrived only after the window": lambda v: (out_since(admin, v, 12), presence(admin, v, "Arrival", ago(hours=3))),
+            "arrived only after the window, still there": lambda v: (out_since(admin, v, 12), presence(admin, v, "Arrival", ago(hours=3))),
         }.items():
             v = d.vehicle(owner, f"NE4{len(cases)}")
             o = order(owner, v, f"ne4-{len(cases)}")
@@ -177,6 +177,18 @@ def run():
         visit = occurrences(o4v)
         record("NE-004", all(v == (0, "Scheduled") for v in silent.values()) and [r[0] for r in visit] == ["EnteredAndLeft"],
                f"no occurrence and the plan stays Scheduled for {silent}; an out-since-before vehicle that also made a visit across the window gets {[r[0] for r in visit]} (the visit wins)")
+
+        # NE-013 -- a late visit that leaves with the order unresolved is still an occurrence (TRM-261): it needs no crossing
+        v13 = d.vehicle(owner, "NE13")
+        o13 = order(owner, v13, "ne13-late")
+        out_since(admin, v13, 12)
+        presence(admin, v13, "Arrival", ago(hours=3)); presence(admin, v13, "Departure", ago(hours=2))
+        p13 = plan(owner, v13, *win, [o13])
+        evaluate(owner)
+        late = occurrences(o13)
+        late_in_inbox = in_inbox(owner, o13)
+        record("NE-013", [r[0] for r in late] == ["EnteredAndLeft"] and plan_status(owner, p13) == "NotExecuted" and late_in_inbox is not None,
+               f"out since before the window, back 3 h ago after it ended and gone 2 h ago, order unresolved: {[r[0] for r in late]}, plan {plan_status(owner, p13)}, in the inbox: {late_in_inbox is not None}")
 
         # NE-005 -- idempotent: the same occurrence is never recorded twice
         keys_before = occurrences(o2)

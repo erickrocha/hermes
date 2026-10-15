@@ -87,11 +87,13 @@ fn minutes(span: Duration) -> i32 {
     i32::try_from(span.num_minutes()).unwrap_or(i32::MAX)
 }
 
-/// The first closed interval that crosses `[start, end]`.
+/// The first closed interval that left after the window opened: a visit across `[start, end]` or a
+/// late one, after it (`TRM-261`: leaving the base with the plan's orders unresolved needs no crossing).
+/// A visit that ended before the window opened says nothing about it. `minutes_in_window` is 0 for a late visit.
 pub fn entered_and_left(intervals: &[Interval], start: NaiveDateTime, end: NaiveDateTime) -> Option<Evidence> {
     intervals.iter().find_map(|interval| {
         let departed = interval.departed_at?;
-        crosses(interval, start, end).then(|| evidence_of(interval, departed, start, end))
+        (departed > start).then(|| evidence_of(interval, departed, start, end))
     })
 }
 

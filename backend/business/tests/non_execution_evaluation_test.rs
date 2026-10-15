@@ -138,8 +138,24 @@ fn an_arrival_inside_the_window_withholds_the_absence() {
 
 #[test]
 fn an_arrival_only_after_the_window_withholds_the_absence() {
+    // Still there: not a departure yet, and the absence is not claimed.
     assert_eq!(run(&[ev(Departure, 100), ev(Arrival, 790)], 900, 60), Decision::Nothing);
-    assert_eq!(run(&[ev(Departure, 100), ev(Arrival, 790), ev(Departure, 850)], 900, 60), Decision::Nothing);
+}
+
+#[test]
+fn a_late_visit_that_left_is_an_entered_and_left_with_no_minutes_in_the_window() {
+    // The window ended at 700; the bus came at 790 and left at 850 with the order unresolved (TRM-261).
+    let Decision::EnteredAndLeft(evidence) = run(&[ev(Departure, 100), ev(Arrival, 790), ev(Departure, 850)], 900, 60) else {
+        panic!("a late visit that left must be recorded");
+    };
+    assert_eq!(evidence.dwell_minutes, Some(60));
+    assert_eq!(evidence.minutes_in_window, 0);
+}
+
+#[test]
+fn a_visit_that_ended_before_the_window_opened_says_nothing_about_it() {
+    // Window opens at 600: a visit 200..300 is history, the absence is still the absence.
+    assert_eq!(run(&[ev(Departure, 100), ev(Arrival, 200), ev(Departure, 300)], NOW, 60), Decision::DidNotAppear);
 }
 
 #[test]
