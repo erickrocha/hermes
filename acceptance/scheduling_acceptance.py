@@ -1113,9 +1113,12 @@ def sched(token, date, tenant_uuid=None, headers=None):
 
 
 def by_name(resp):
-    """Items of a schedule keyed by their name (a demand's line name); trips have none and are listed apart."""
+    """Items of a schedule keyed by their name (a demand's line name); trips are listed apart.
+
+    A trip carries its order code as `name` since 2026-10-14 (`effective_schedule.rs`), so it is told apart by `kind`.
+    """
     items = resp[1]["items"] if resp[0] == 200 else []
-    return {i["name"]: i for i in items if i.get("name")}, [i for i in items if i["kind"] == "ExtraTrip"]
+    return {i["name"]: i for i in items if i.get("name") and i["kind"] != "ExtraTrip"}, [i for i in items if i["kind"] == "ExtraTrip"]
 
 
 def names(resp):
