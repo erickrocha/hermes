@@ -14,19 +14,23 @@ operação de frotas) por uma arquitetura multi-tenant adequada. A Transmega, op
 |---|---|
 | `backend/` | Workspace Cargo em Rust — veja abaixo |
 | `backoffice/` | Console administrativo em Vite + React + TypeScript — veja [`backoffice/README.md`](backoffice/README.md) |
-| `client-apps/` | Lógica compartilhada em Kotlin Multiplatform e o app Android TV nativo da garagem |
+| `client-apps/` | Kotlin Multiplatform: lógica compartilhada (`sharedLogic`), o app Android TV da garagem (`androidApp`) e o app Android do motorista (`driverApp`) |
+| `acceptance/` | Testes de aceitação (Gate 3) — veja [`acceptance/README.md`](acceptance/README.md) |
 | `infra/dev/docker-compose.yml` | MariaDB local para desenvolvimento |
+| `infra/test/` | Stack descartável de teste (banco, API, console e mock de rastreamento) — veja [`infra/test/README.md`](infra/test/README.md) |
+| `infra/prod/` | Implantação de produção — veja [`docs/OPERATIONS.md`](docs/OPERATIONS.md) |
+| `docs/` | Arquitetura, operação, runbook de virada e integração de rastreamento |
 
 ### O workspace do backend
 
-Quatro crates com um grafo de dependência estritamente em um sentido, `web → business → entity`, `web → migration`:
+Quatro crates com um grafo de dependência estritamente em um sentido, `application → business → entity`, `application → migration`:
 
 | Crate | Responsabilidade |
 |---|---|
 | `entity` | Apenas as definições de tabela do SeaORM. Nenhuma lógica de negócio. |
 | `migration` | Migrações do SeaORM e os dados iniciais em `migration/data/`. |
 | `business` | Estruturas de domínio, casos de uso, gateways. Nenhum tipo HTTP — testável sem servidor e, pela feature `mock` do cargo, sem banco de dados. |
-| `web` | A API HTTP em Axum: rotas, endpoints, contratos JSON, autenticação, OpenAPI. |
+| `application` | A API HTTP em Axum: rotas, endpoints, contratos JSON, autenticação, OpenAPI. |
 
 Toda tabela, coluna, entidade e valor de enum é nomeado em inglês, sem exceção — uma reação
 deliberada ao esquema em português do operacao-trm, e uma regra que vale para toda tabela futura,
@@ -55,6 +59,12 @@ não só para as que um dia substituirão parte do domínio do operacao-trm.
    `HERMES_RELEASE_KEY_PASSWORD` no ambiente de build e então execute
    `./gradlew :androidApp:assembleRelease`. Mantenha o keystore e as senhas fora do controle de versão.
    Envie `androidApp/build/outputs/apk/release/androidApp-release.apk` ao usuário para instalação local.
+7. Compile o app do motorista (`driverApp`): na mesma pasta, `./gradlew :driverApp:assembleDebug`, com as mesmas variáveis
+   `HERMES_API_BASE_URL` / `-PhermesApiBaseUrl=...` (padrão `http://10.0.2.2:8080`). Para testar contra a stack de teste, use
+   `-PhermesApiBaseUrl=http://10.0.2.2:8082`. O build de **release** exige uma URL `https://` e as variáveis
+   `HERMES_DRIVER_RELEASE_KEYSTORE`, `HERMES_DRIVER_RELEASE_STORE_PASSWORD`, `HERMES_DRIVER_RELEASE_KEY_ALIAS` e
+   `HERMES_DRIVER_RELEASE_KEY_PASSWORD` (chave própria, distinta da do app da TV); mantenha-as fora do controle de versão.
+   O canal de distribuição (CI e Firebase App Distribution) ainda não está configurado.
 
 ## Implantação
 
@@ -97,15 +107,17 @@ descartá-lo em silêncio. Veja `business/src/commons/email_sender.rs` para o ra
 
 A partir de `backend/`:
 
-- `cargo test --workspace` — testes unitários nos quatro crates.
-- `cargo test -p business --features mock --test mock` — os testes de integração sem banco de dados
-  que provam que o isolamento entre tenants realmente chega à camada de gateway, e não só ao query builder.
+- `cargo test --workspace` — testes unitários nos quatro crates. **Não** roda os testes que dependem da feature `mock`.
+- `cargo test -p business --features mock` — os testes de integração sem banco de dados (casos de uso, gateways,
+  autenticação, isolamento entre tenants na camada de gateway). Rode também este: sem a feature, esses alvos nem são compilados.
 - `cargo clippy --workspace --all-targets -- -D warnings` — o CI falha com qualquer aviso.
 - Com o banco local migrado:
   `DATABASE_URL=mysql://hermes:brutal@localhost:3307/hermes cargo test -p business --test schema_matches_entities -- --ignored`
   — prova que toda coluna de entidade existe no esquema migrado.
 
-Os testes de aceitação (Gate 3) ficam em [`acceptance/`](acceptance/README.md).
+Os testes de aceitação (Gate 3) ficam em [`acceptance/`](acceptance/README.md); a stack descartável para executá-los está em [`infra/test/`](infra/test/README.md) (`docker compose -f infra/test/docker-compose.yml up --build --wait`).
+
+A partir de `client-apps/`: `./gradlew :driverApp:testDebugUnitTest :androidApp:testDebugUnitTest`.
 
 A partir de `backoffice/`, veja [`backoffice/README.md`](backoffice/README.md).
 
@@ -113,3 +125,6 @@ A partir de `backoffice/`, veja [`backoffice/README.md`](backoffice/README.md).
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — por que Rust, por que esta divisão de crates, por que um
   console implantado separadamente.
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) e [`docs/RUNBOOK-CUTOVER.md`](docs/RUNBOOK-CUTOVER.md) — operação em produção e
+  procedimento da virada.
+- [`docs/TRACKING.md`](docs/TRACKING.md) — integração de rastreamento de veículos.
