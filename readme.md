@@ -77,6 +77,18 @@ As migrações são uma etapa da implantação, nunca um efeito colateral de ini
 
 Nunca edite uma migração que já foi aplicada em qualquer lugar; corrija avançando, com uma nova (HRMS-026).
 
+### Em rede interna ou VPN (sem HTTPS)
+
+Para rodar o Hermes completo (MariaDB, API e console) num servidor de rede confiável, sem Traefik nem domínio:
+
+1. `cd infra/prod && cp .env.internal.example .env` e preencha (senhas, segredos de token, administrador, endereço
+   `HERMES_URL`, credenciais do PinME em `TRACKING_API_EMAIL`/`TRACKING_API_PASSWORD`).
+2. `./deploy-internal.sh` — constrói as imagens, faz o dump do banco, roda as migrações, sobe tudo e verifica.
+3. Abra `HERMES_URL` no navegador e entre com `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`.
+
+Sem HTTPS o login trafega em texto puro: não exponha a porta à internet. Para a internet, use `docker-compose.yml`
+(Traefik + Let's Encrypt) e `deploy.sh`.
+
 ## Configuração
 
 Toda configuração é uma variável de ambiente (um `backend/.env` local também é lido; um
