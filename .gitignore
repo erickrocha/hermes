@@ -11,6 +11,8 @@
 # production host and never in version control. `.env.example` next to it is
 # the committed contract and contains no secret.
 infra/prod/.env
+# O .env da stack de teste pode receber credenciais reais (PinME): nunca vai para o git.
+infra/test/.env
 infra/prod/.env.*
 !infra/prod/.env.example
 !infra/prod/.env.internal.example
