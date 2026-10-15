@@ -220,6 +220,7 @@ impl Modify for SecurityAddon {
         endpoints::garage_attendance_endpoint::call_list,
         endpoints::garage_attendance_endpoint::monitor_cards,
         endpoints::garage_attendance_endpoint::monitor_matrix,
+        endpoints::garage_attendance_endpoint::release_with_pendency,
         endpoints::garage_device_endpoint::list,
         endpoints::garage_device_endpoint::issue_pairing_code,
         endpoints::garage_device_endpoint::reissue_pairing_code,

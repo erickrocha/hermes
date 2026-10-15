@@ -138,6 +138,8 @@ fn new_user(email: &str, password: &str) -> User {
         enabled: true,
         tenant_id: Some(42),
         role: Role::TenantUser,
+        cpf: None,
+        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,

@@ -107,9 +107,9 @@ descartá-lo em silêncio. Veja `business/src/commons/email_sender.rs` para o ra
 
 A partir de `backend/`:
 
-- `cargo test --workspace` — testes unitários nos quatro crates. **Não** roda os testes que dependem da feature `mock`.
-- `cargo test -p business --features mock` — os testes de integração sem banco de dados (casos de uso, gateways,
-  autenticação, isolamento entre tenants na camada de gateway). Rode também este: sem a feature, esses alvos nem são compilados.
+- `cargo test --workspace --features business/mock` — todos os testes dos quatro crates, inclusive os sem banco de dados
+  (casos de uso, gateways, autenticação, isolamento entre tenants na camada de gateway). Sem a feature `mock`, esses alvos
+  nem são compilados, e problemas neles passam despercebidos.
 - `cargo clippy --workspace --all-targets -- -D warnings` — o CI falha com qualquer aviso.
 - Com o banco local migrado:
   `DATABASE_URL=mysql://hermes:brutal@localhost:3307/hermes cargo test -p business --test schema_matches_entities -- --ignored`

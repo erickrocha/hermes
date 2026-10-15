@@ -3772,10 +3772,9 @@ async fn linking_a_pendency_from_a_different_work_order_is_refused() {
 
 /// `TRM-647`: a synthetic placeholder only ever represented the purchase
 /// itself, so receiving it resolves the item outright. As the work order's
-/// sole item, `recompute_status`'s own "nothing left pending" fallback
-/// leaves the order's status untouched (`EPIC-MT-01-S03`'s existing rule:
-/// conclusion is a deliberate administrative act, never inferred) -- so
-/// `AwaitingParts` persists here until someone calls `conclude`.
+/// sole item, nothing awaits a part any more, so the order leaves
+/// `AwaitingParts` for `Open` (`TRM-649`, commit 9d10e3e); concluding stays a
+/// deliberate administrative act (`TRM-208`) and is not inferred.
 #[tokio::test]
 async fn resolving_a_placeholder_pendency_marks_it_resolved() {
     let db = mock()
@@ -3799,6 +3798,8 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]]) // all items -- only the placeholder, now resolved
+        .append_exec_results([inserted(96)]) // the work order leaves AwaitingParts (TRM-649)
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
         .into_connection();
 
     let updated = run_with_user(
@@ -3807,7 +3808,7 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
     )
     .await
     .expect("resolving a placeholder pendency succeeds");
-    assert_eq!(updated.status, WorkOrderStatus::AwaitingParts);
+    assert_eq!(updated.status, WorkOrderStatus::Open);
 }
 
 /// `TRM-648`/`649`: a real pendency returns to `Pending` -- receiving the
@@ -4696,6 +4697,9 @@ async fn a_pendency_named_without_its_own_work_order_is_refused_before_any_query
 async fn raising_a_purchase_order_against_an_existing_pendency_links_it() {
     let db = mock()
         .append_query_results([[part_row(800, 42)]]) // part exists
+        // -- check_pendency(96, 97): the pendency is checked before anything is written (9d10e3e) --
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]])
         .append_query_results([Vec::<entity::purchase_order_entity::Model>::new()]) // no duplicate
         .append_exec_results([inserted(950)]) // insert the purchase order
         .append_query_results([[entity::purchase_order_entity::Model {
@@ -4823,7 +4827,9 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
             preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
-        }]])
+        }]]) // all items -- only the placeholder, now resolved
+        .append_exec_results([inserted(96)]) // the work order leaves AwaitingParts (TRM-649)
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
         .into_connection();
 
     let saved = run_with_user(

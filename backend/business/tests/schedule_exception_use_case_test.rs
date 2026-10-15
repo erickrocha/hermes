@@ -151,6 +151,8 @@ fn driver(tenant_id: Option<i64>, role: Role, enabled: bool) -> User {
         enabled,
         tenant_id,
         role,
+        cpf: None,
+        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,

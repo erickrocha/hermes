@@ -420,7 +420,7 @@ pub async fn checkout(
     params(("uuid" = String, Path, description = "Triage UUID")),
     request_body = GarageReleaseRequestJson,
     responses(
-        (status = 201, description = "The triage is released with outstanding services recorded and linked to WorkOrder items (TRM-424).", body = GarageReleaseJson),
+        (status = 201, description = "The triage is released with outstanding services recorded and linked to WorkOrder items (TRM-424). **Roles:** SysAdmin (unbound), TenantOwner, Mechanic (own tenant only).", body = GarageReleaseJson),
         (status = 400, description = "Missing justification or odometer reading, or invalid service outcome.", body = BadRequestErrorJson),
         (status = 409, description = "The triage is already closed.", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
