@@ -22,3 +22,4 @@ infra/prod/.env.*
 # volume for inspection.
 *.sql.gz
 infra/prod/backups/
+infra/test/.env
