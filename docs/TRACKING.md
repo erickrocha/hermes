@@ -37,7 +37,7 @@ referência funcional. A narrativa está em
 `01-project_truth/operacao-trm/01-ai-native/rastreador-status-edge-doc.md`.
 
 **Por que pull importa além do formato de transmissão.** Um provedor push tornaria a ingestão um
-endpoint de entrada autenticado, colocando-a na superfície pública do crate `web` e sob a disciplina
+endpoint de entrada autenticado, colocando-a na superfície pública do crate `application` e sob a disciplina
 de whitelist do `EPIC-XF-03`. Com pull, ela vira código agendado, fora de requisição — o que a
 coloca diretamente na questão de escopo de tenant abaixo. Os dois formatos são componentes
 diferentes, e não um mesmo componente com uma constante diferente, e é por isso que o `HRMS-901`
