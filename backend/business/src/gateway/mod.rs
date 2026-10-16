@@ -1,4 +1,5 @@
 pub mod business_plan_gateway;
+pub mod billing_gateway;
 pub mod city_gateway;
 pub mod customer_gateway;
 pub mod customer_day_off_gateway;

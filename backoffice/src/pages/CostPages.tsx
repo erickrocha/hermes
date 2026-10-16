@@ -10,12 +10,7 @@ import { downloadCostReport, fetchCostVehicles, fetchSupplierClosing, fetchSuppl
 import type { SupplierClosing, VehicleCost, VehicleOption } from '../services/costService'
 import { Combobox } from '../components/Combobox'
 import { Loading, PageHeader } from '../components/UI'
-import type { Session } from '../types'
-
-// C-030 EPIC-SP-07/08 (HRMS-804…810): a vehicle's cost and result over a period, and the supplier closing report,
-// each with its CSV. Read-only; the office (owner and tenant user) reads them, the platform administrator has no tenant.
-export const canSeeCosts = (session: Session) =>
-  session.role !== 'SysAdmin' && (session.permissions ? session.permissions.includes('cost-report.vehicle.read') : session.role === 'TenantOwner' || session.role === 'TenantUser')
+export { canSeeCosts } from '../features/routeAccess'
 
 const isoDay = (date: Date) => date.toISOString().slice(0, 10)
 const monthStart = () => { const now = new Date(); return isoDay(new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1))) }

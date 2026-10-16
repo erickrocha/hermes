@@ -22,7 +22,7 @@ export function Breadcrumbs() {
     { pattern: '/non-executions/:uuid/justify', parent: '/non-executions', parentLabel: 'nonExecutions', label: 'justifyNonExecution' },
     { pattern: '/garage/devices', parent: '/garage', parentLabel: 'garage', label: 'garageDevices' },
   ].find((route) => matchPath(route.pattern, pathname))
-  const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings', '/costs': 'costs', '/maintenance-notifications': 'maintenanceNotifications', ...sectionLabels }
+  const lists: Record<string, string> = { '/tenants': 'tenants', '/plans': 'plans', '/users': 'users', '/settings': 'settings', '/costs': 'costs', '/billing': 'billing', '/maintenance-notifications': 'maintenanceNotifications', ...sectionLabels }
   const current = routes?.label || lists[pathname]
   // As telas de recurso seguem /<seção>[/<uuid>][/<ação>]: a raiz vem do mapa de seções e cada ação do restante do caminho.
   const [root, ...rest] = pathname.split('/').filter(Boolean)

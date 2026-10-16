@@ -139,6 +139,7 @@ pub const GRANTABLE: &[Permission] = &[
 ];
 
 pub const OWNER_ONLY: &[&str] = &[
+    "billing.read",
     "fuel-gauge-settings.read",
     "fuel-gauge-settings.update",
     "internal-tank.update",
@@ -159,6 +160,9 @@ pub const OWNER_ONLY: &[&str] = &[
 
 /// The platform administrator's alone; never in a profile.
 pub const PLATFORM: &[&str] = &[
+    "billing.confirm-payment",
+    "billing.configure",
+    "billing.suspend",
     "business-plan.create",
     "business-plan.delete",
     "business-plan.read",

@@ -83,6 +83,10 @@ pub enum ErrorKey {
     BusinessPlanNotFound,
     BusinessPlanInvalid,
     BusinessPlanInUse,
+    BillingTenantSuspended,
+    BillingForbidden,
+    BillingChargeNotFound,
+    BillingSettingsInvalid,
     CountryNotSupported,
     ReferenceDataUnavailable,
     /// DEF-RD-06: reference data is not a plan feature. Saying
@@ -339,6 +343,10 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "BusinessPlanNotFound",
             ErrorKey::BusinessPlanInvalid => "BusinessPlanInvalid",
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
+            ErrorKey::BillingTenantSuspended => "BillingTenantSuspended",
+            ErrorKey::BillingForbidden => "BillingForbidden",
+            ErrorKey::BillingChargeNotFound => "BillingChargeNotFound",
+            ErrorKey::BillingSettingsInvalid => "BillingSettingsInvalid",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
             ErrorKey::ReferenceDataForbidden => "ReferenceDataForbidden",
@@ -473,6 +481,10 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "business-plan-not-found",
             ErrorKey::BusinessPlanInvalid => "business-plan-invalid",
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
+            ErrorKey::BillingTenantSuspended => "billing-tenant-suspended",
+            ErrorKey::BillingForbidden => "billing-forbidden",
+            ErrorKey::BillingChargeNotFound => "billing-charge-not-found",
+            ErrorKey::BillingSettingsInvalid => "billing-settings-invalid",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
             ErrorKey::ReferenceDataForbidden => "reference-data-forbidden",
@@ -781,6 +793,10 @@ mod tests {
     #[test]
     fn every_vehicle_error_is_worded_in_every_bundle() {
         let keys = [
+            ErrorKey::BillingTenantSuspended,
+            ErrorKey::BillingForbidden,
+            ErrorKey::BillingChargeNotFound,
+            ErrorKey::BillingSettingsInvalid,
             ErrorKey::VehicleNotFound,
             ErrorKey::VehicleForbidden,
             ErrorKey::InvalidVehicleStatus,

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { Suspense, useEffect, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
@@ -7,17 +7,31 @@ import type { Session } from './types'
 import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { AcceptInvitePage, LoginPage } from './pages/AuthPages'
-import { DashboardPage } from './pages/DashboardPage'
-import { PlanEditorPage, PlansPage, SubscriptionPage, TenantEditorPage, TenantsPage, UserEditorPage, UsersPage, canCreateUsers, canSeeProfiles, canSeeTenants, canSeeUsers } from './pages/ManagementPages'
-import { ProfileEditorPage, ProfilesPage } from './pages/ProfilePages'
-import { SettingsPage } from './pages/SettingsPage'
-import { CostReportsPage, canSeeCosts } from './pages/CostPages'
-import { customRoutes } from './routes'
-import { NotFoundPage } from './pages/NotFoundPage'
+import { Loading } from './components/UI'
+import { canCreateUsers, canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from './features/routeAccess'
+import { customRoutes, lazyPage } from './routes'
 import { resourceConfigs } from './features/resources'
-import { ResourceEditRoute, ResourceListRoute, ResourceNewRoute } from './components/organisms/ResourceRoutes'
-import { SystemSettingsPage } from './pages/SystemSettingsPage'
+
+const AcceptInvitePage = lazyPage(() => import('./pages/AuthPages'), 'AcceptInvitePage')
+const LoginPage = lazyPage(() => import('./pages/AuthPages'), 'LoginPage')
+const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'DashboardPage')
+const PlanEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'PlanEditorPage')
+const PlansPage = lazyPage(() => import('./pages/ManagementPages'), 'PlansPage')
+const SubscriptionPage = lazyPage(() => import('./pages/ManagementPages'), 'SubscriptionPage')
+const TenantEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantEditorPage')
+const TenantsPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantsPage')
+const UserEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'UserEditorPage')
+const UsersPage = lazyPage(() => import('./pages/ManagementPages'), 'UsersPage')
+const ProfileEditorPage = lazyPage(() => import('./pages/ProfilePages'), 'ProfileEditorPage')
+const ProfilesPage = lazyPage(() => import('./pages/ProfilePages'), 'ProfilesPage')
+const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPage')
+const CostReportsPage = lazyPage(() => import('./pages/CostPages'), 'CostReportsPage')
+const BillingPage = lazyPage(() => import('./pages/BillingPage'), 'BillingPage')
+const NotFoundPage = lazyPage(() => import('./pages/NotFoundPage'), 'NotFoundPage')
+const ResourceEditRoute = lazyPage(() => import('./components/organisms/ResourceRoutes'), 'ResourceEditRoute')
+const ResourceListRoute = lazyPage(() => import('./components/organisms/ResourceRoutes'), 'ResourceListRoute')
+const ResourceNewRoute = lazyPage(() => import('./components/organisms/ResourceRoutes'), 'ResourceNewRoute')
+const SystemSettingsPage = lazyPage(() => import('./pages/SystemSettingsPage'), 'SystemSettingsPage')
 
 function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
@@ -30,7 +44,7 @@ function Protected({ children, sysAdmin = false, allow }: { children: ReactNode;
   if (allow && !allow(session)) return <Navigate to="/" replace />
   // U-1: keyed by route so navigating away from a page that threw clears the
   // failure instead of stranding the operator on the error card.
-  return <Shell><ErrorBoundary key={location.pathname}>{children}</ErrorBoundary></Shell>
+  return <Shell><ErrorBoundary key={location.pathname}><Suspense fallback={<Loading />}>{children}</Suspense></ErrorBoundary></Shell>
 }
 
 export function App() {
@@ -42,8 +56,8 @@ export function App() {
   // isn't mounted here to un-apply it itself.
   useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
-    <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
-    <Route path="/accept-invite" element={<AcceptInvitePage />} />
+    <Route path="/login" element={session ? <Navigate to="/" replace /> : <Suspense fallback={<Loading />}><LoginPage /></Suspense>} />
+    <Route path="/accept-invite" element={<Suspense fallback={<Loading />}><AcceptInvitePage /></Suspense>} />
     <Route path="/" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
     <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
@@ -57,6 +71,7 @@ export function App() {
     <Route path="/profiles/new" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
     <Route path="/profiles/:uuid/edit" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
     <Route path="/costs" element={<Protected allow={canSeeCosts}><CostReportsPage /></Protected>} />
+    <Route path="/billing" element={<Protected allow={canSeeBilling}><BillingPage /></Protected>} />
     <Route path="/users" element={<Protected allow={canSeeUsers}><UsersPage /></Protected>} />
     <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
     <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />

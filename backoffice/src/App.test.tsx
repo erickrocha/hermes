@@ -41,35 +41,36 @@ describe('App route guards (EPIC-BO-02, EPIC-BO-04)', () => {
     vi.spyOn(api, 'get').mockResolvedValue({ data: [] } as never)
   })
 
-  it('lets a SysAdmin reach plan administration', () => {
+  it('lets a SysAdmin reach plan administration', async () => {
     renderAt('/plans', sysAdminSession)
-    expect(screen.getByRole('link', { name: /new plan|novo plano/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /new plan|novo plano/i })).toBeInTheDocument()
   })
 
-  it('bounces a tenant owner away from plan administration back to the dashboard', () => {
+  it('bounces a tenant owner away from plan administration back to the dashboard', async () => {
     renderAt('/plans', tenantOwnerSession)
     expect(screen.queryByRole('button', { name: /new plan|novo plano/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
-  it('bounces a tenant user away from plan administration back to the dashboard', () => {
+  it('bounces a tenant user away from plan administration back to the dashboard', async () => {
     renderAt('/plans', tenantUserSession)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
-  it('bounces a tenant owner away from creating a tenant (SysAdmin-only)', () => {
+  it('bounces a tenant owner away from creating a tenant (SysAdmin-only)', async () => {
     renderAt('/tenants/new', tenantOwnerSession)
+    await screen.findByText(/control center|centro de controle/i)
     expect(screen.queryByText(/business name|razão social/i)).not.toBeInTheDocument()
   })
 
-  it('bounces a tenant owner away from a tenant subscription screen (SysAdmin-only)', () => {
+  it('bounces a tenant owner away from a tenant subscription screen (SysAdmin-only)', async () => {
     renderAt('/tenants/1/subscription', tenantOwnerSession)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
-  it('sends an unauthenticated visitor to the login screen', () => {
+  it('sends an unauthenticated visitor to the login screen', async () => {
     renderAt('/plans', null)
-    expect(screen.getByRole('button', { name: /sign in|entrar/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /sign in|entrar/i })).toBeInTheDocument()
   })
 
 })

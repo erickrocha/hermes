@@ -2,7 +2,6 @@ use business::domain::business_error::BusinessError;
 use business::domain::business_plan::BusinessPlan;
 use business::gateway::business_plan_gateway::BusinessPlanStore;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
-use chrono::NaiveDate;
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -79,9 +78,9 @@ fn valid_plan() -> BusinessPlan {
         uuid: None,
         name: " Professional ".into(),
         price_in_cents: 10_000,
+        price_per_extra_user_in_cents: 500,
         available_users: 10,
         period_days: 30,
-        payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap_or_default(),
         created_at: None,
         created_by: None,
         updated_at: None,

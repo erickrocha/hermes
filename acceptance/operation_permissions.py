@@ -44,6 +44,11 @@ GARAGE = [("POST", "/garage-attendance/uuid/{uuid}/release-with-pendency", "gara
 COST = [("GET", "/cost-report/vehicle/uuid/{uuid}", "cost-report.vehicle.read"), ("GET", "/cost-report/vehicle/uuid/{uuid}/export", "cost-report.vehicle.read"),
         ("GET", "/cost-report/work-order/uuid/{uuid}", "cost-report.work-order.read"), ("GET", "/cost-report/suppliers", "cost-report.supplier.read"),
         ("GET", "/cost-report/supplier-closing", "cost-report.supplier.read"), ("GET", "/cost-report/supplier-closing/export", "cost-report.supplier.read")]
+BILLING = [("GET", "/billing/charges", "billing.read"),
+       ("POST", "/billing/charges/uuid/{uuid}/confirm", "billing.confirm-payment"),
+       ("GET", "/billing/tenant/uuid/{uuid}/settings", "billing.read"),
+       ("PUT", "/billing/tenant/uuid/{uuid}/settings", "billing.configure"),
+       ("PUT", "/billing/tenant/uuid/{uuid}/suspension", "billing.suspend")]
 # C-031 (the tenant's default checklist template) and an owner-only trip edit that the scan missed.
 LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.create"),
          ("POST", "/extra-trip/uuid/{uuid}/preparation-skip", "extra-trip.update"),
@@ -58,7 +63,7 @@ LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.
          ("PUT", "/non-execution/occurrence/uuid/{uuid}/justify", "non-execution.justify"),
          ("POST", "/non-execution/manual", "non-execution.record-manual"),
          ("POST", "/non-execution/evaluate", "non-execution.evaluate")]
-table = list(PROFILE) + COST + GARAGE + LATER
+table = list(PROFILE) + COST + BILLING + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)
     if not m or m.group(1) in PUBLIC:

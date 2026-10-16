@@ -2,6 +2,7 @@ pub mod account_invite_use_case;
 pub mod authentication_use_case;
 pub mod garage_device_use_case;
 pub mod business_plan_use_case;
+pub mod billing_use_case;
 pub mod city_use_case;
 pub mod customer_use_case;
 pub mod customer_day_off_use_case;

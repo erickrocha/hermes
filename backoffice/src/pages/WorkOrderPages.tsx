@@ -15,12 +15,11 @@ import { ResourceFormPage } from '../components/organisms/ResourceFormPage'
 import { ChildList } from '../components/organisms/ChildList'
 import { ResourceListPage } from '../components/organisms/ResourceListPage'
 import { useMoney } from '../components/organisms/ResourceRoutes'
-import type { Session } from '../types'
+export { canSeeWorkOrders } from '../features/routeAccess'
 
 // C-026 EPIC-MT-01/02 (HRMS-700…705): ordens de serviço. Abrir, acrescentar item e retirar peça são do proprietário e do mecânico;
 // concluir e cancelar são só do proprietário. Cada botão segue a permissão que o servidor impõe.
 const READERS = ['TenantOwner', 'TenantUser', 'Mechanic'] as const
-export const canSeeWorkOrders = (session: Session) => can(session, 'work-order.read', [...READERS])
 
 const fields: FieldDef[] = [
   { name: 'vehicleUuid', labelKey: 'vehicle', type: 'lookup', lookup: 'vehicle', required: true },

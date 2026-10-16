@@ -12,13 +12,10 @@ import type { FieldDef } from '../features/fields'
 import { evaluateNow, fetchInbox, justifyOccurrence, recordManualOccurrence, resetForm } from '../features/nonExecutionSlice'
 import type { NonExecutionOccurrence } from '../services/nonExecutionService'
 import type { AppDispatch, RootState } from '../store'
-import type { Session } from '../types'
+export { canSeeNonExecutions } from '../features/routeAccess'
 
 const PAGE_SIZE = 25
-const READERS = ['TenantOwner', 'TenantUser', 'Mechanic'] as const
 const ACTORS = ['TenantOwner', 'Mechanic'] as const
-
-export const canSeeNonExecutions = (session: Session) => can(session, 'non-execution.read', [...READERS])
 
 const when = (value?: string | null) => (value ? new Date(value).toLocaleString() : '—')
 

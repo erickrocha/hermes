@@ -2,6 +2,8 @@ pub mod audit;
 pub mod user_entity;
 pub mod tenant_entity;
 pub mod business_plan_entity;
+pub mod tenant_billing_entity;
+pub mod billing_charge_entity;
 pub mod prelude;
 pub mod province_entity;
 pub mod city_entity;

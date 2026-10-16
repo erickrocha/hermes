@@ -2,6 +2,7 @@ pub mod access_token;
 pub mod authorization;
 pub mod business_error;
 pub mod business_plan;
+pub mod billing;
 pub mod city;
 pub mod customer;
 pub mod customer_day_off;

@@ -10,6 +10,7 @@ use crate::infrastructure::health::{
 };
 use crate::routes::authentication_routes::auth_routes;
 use crate::routes::business_plan_routes::business_plan_routes;
+use crate::routes::billing_routes::billing_routes;
 use crate::routes::customer_routes::customer_routes;
 use crate::routes::holiday_routes::holiday_routes;
 use crate::routes::checklist_template_routes::checklist_template_routes;
@@ -92,6 +93,11 @@ impl Modify for SecurityAddon {
         endpoints::business_plan_endpoint::get_by_uuid,
         endpoints::business_plan_endpoint::update,
         endpoints::business_plan_endpoint::delete,
+        endpoints::billing_endpoint::charges,
+        endpoints::billing_endpoint::confirm_charge,
+        endpoints::billing_endpoint::get_settings,
+        endpoints::billing_endpoint::set_grace_days,
+        endpoints::billing_endpoint::set_suspension,
         endpoints::user_endpoint::get_by_uuid,
         endpoints::user_endpoint::add,
         endpoints::user_endpoint::list_all,
@@ -289,6 +295,10 @@ impl Modify for SecurityAddon {
             endpoints::json::business_plan_json::CreateBusinessPlanJson,
             endpoints::json::business_plan_json::UpdateBusinessPlanJson,
             endpoints::json::business_plan_json::BusinessPlanJson,
+            endpoints::json::billing_json::BillingChargeJson,
+            endpoints::json::billing_json::BillingSettingsJson,
+            endpoints::json::billing_json::ConfigureBillingSettingsJson,
+            endpoints::json::billing_json::BillingSuspensionJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
             endpoints::json::customer_json::CustomerJson,
@@ -457,6 +467,7 @@ async fn start() -> anyhow::Result<()> {
     crate::infrastructure::garage_jobs::spawn_auto_departure(state.conn.as_ref().clone());
     crate::infrastructure::non_execution_job::spawn_evaluation(state.conn.as_ref().clone());
     crate::infrastructure::garage_presence_job::spawn_presence_poll(state.clone());
+    crate::infrastructure::billing_job::spawn(state.conn.as_ref().clone());
 
     log::info!("Starting server...");
 
@@ -502,6 +513,7 @@ async fn start() -> anyhow::Result<()> {
         .merge(resources_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/business-plan", business_plan_routes(state.clone()))
+        .nest("/billing", billing_routes(state.clone()))
         .nest("/customer", customer_routes(state.clone()))
         .nest("/holiday", holiday_routes(state.clone()))
         .nest("/checklist-template", checklist_template_routes(state.clone()))
@@ -681,6 +693,7 @@ mod openapi_contract_tests {
         {
             "tenant_routes" => "/tenant",
             "business_plan_routes" => "/business-plan",
+            "billing_routes" => "/billing",
             "user_routes" => "/user",
             "vehicle_routes" => "/vehicle",
             "customer_routes" => "/customer",

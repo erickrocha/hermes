@@ -1,5 +1,6 @@
 pub mod auth_endpoint;
 pub mod business_plan_endpoint;
+pub mod billing_endpoint;
 pub mod city_endpoint;
 pub mod customer_endpoint;
 pub mod customer_day_off_endpoint;
