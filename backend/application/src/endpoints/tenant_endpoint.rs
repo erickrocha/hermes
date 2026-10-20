@@ -19,9 +19,12 @@ use business::domain::authorization::{
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
+use business::gateway::billing_gateway::BillingGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
+use business::use_cases::billing_use_case::BillingUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
+use chrono::Utc;
 
 #[utoipa::path(
     post,
@@ -295,27 +298,25 @@ async fn set_tenant_plan(
     id: i64,
     payload: SetTenantPlanJson,
 ) -> HttpResponse<Json<BusinessPlanJson>> {
-    let plan_use_case =
-        BusinessPlanUseCase::new(BusinessPlanGateway::new(state.conn.as_ref().clone()));
-    let plan = plan_use_case
-        .find_by_id(payload.business_plan_id)
+    let billing_use_case = BillingUseCase::new(
+        BillingGateway::new(state.conn.as_ref().clone()),
+        TenantGateway::new(state.conn.as_ref().clone()),
+        BusinessPlanGateway::new(state.conn.as_ref().clone()),
+    );
+    let plan = billing_use_case
+        .assign_plan(id, payload.business_plan_id, Utc::now().naive_utc())
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::BusinessPlanNotFound))?;
-
-    let tenant_use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-    tenant_use_case
-        .set_plan(id, payload.business_plan_id)
-        .await
-        // DEF-TP-05: an unknown tenant is a 404, as the documented response
-        // says and as an unknown plan already answered — not a 400.
         .map_err(|err| {
             if err.is_not_found() {
-                ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound)
+                if err.message.contains("Business plan") {
+                    ExceptionResponse::NotFound(locale.clone(), ErrorKey::BusinessPlanNotFound)
+                } else {
+                    ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound)
+                }
             } else {
                 ExceptionResponse::BadRequest(locale.clone(), ErrorKey::TenantUpdateFailed)
             }
         })?;
-
     Ok(Json(business_plan_response(plan, &locale)?))
 }
 

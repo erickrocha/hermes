@@ -11,11 +11,15 @@
 # production host and never in version control. `.env.example` next to it is
 # the committed contract and contains no secret.
 infra/prod/.env
+# O .env da stack de teste pode receber credenciais reais (PinME): nunca vai para o git.
+infra/test/.env
 infra/prod/.env.*
 !infra/prod/.env.example
+!infra/prod/.env.internal.example
 
 # Database dumps taken by deploy.sh are the rollback position; they contain
 # live tenant data and must not be committed if one is ever copied out of the
 # volume for inspection.
 *.sql.gz
 infra/prod/backups/
+infra/test/.env

@@ -34,4 +34,10 @@ describe('form fields', () => {
     await expect(schema.isValid({ ...defaultsFor(fields), name: 'x', qty: '0' })).resolves.toBe(false)
     await expect(schema.isValid({ ...defaultsFor(fields), name: 'x', qty: '2' })).resolves.toBe(true)
   })
+
+  it('refuses a text longer than the field allows', async () => {
+    const limited = buildSchema([{ name: 'note', labelKey: 'note', type: 'textarea', required: true, maxLength: 5 }])
+    await expect(limited.isValid({ note: '12345' })).resolves.toBe(true)
+    await expect(limited.isValid({ note: '123456' })).resolves.toBe(false)
+  })
 })

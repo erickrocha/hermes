@@ -24,6 +24,10 @@ pub async fn name_missing_permission(method: Method, path: Option<MatchedPath>, 
     let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return Response::from_parts(parts, Body::from(bytes));
     };
+    // An endpoint that already named a finer permission than the route's (`ExceptionResponse::ForbiddenPermission`) keeps it.
+    if json.get("permission").is_some() {
+        return Response::from_parts(parts, Body::from(bytes));
+    }
     if let Some(object) = json.as_object_mut() {
         if let Some(message) = object.get("message").and_then(|m| m.as_str()) {
             let named = format!("{message} ({code})");

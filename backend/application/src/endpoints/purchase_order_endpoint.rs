@@ -6,6 +6,7 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
+use crate::endpoints::maintenance_notification_endpoint::notify_part_arrived;
 use crate::endpoints::json::purchase_order_json::{MarkOrderedJson, PurchaseOrderJson};
 use crate::endpoints::vehicle_endpoint::find_visible as find_visible_vehicle;
 use axum::Json;
@@ -425,7 +426,11 @@ pub async fn mark_purchased(
 ) -> HttpResponse<Json<PurchaseOrderJson>> {
     let id = administered_purchase_order(&state, &locale, &current_user, uuid).await?;
     match use_case(&state).mark_purchased(id).await {
-        Ok(saved) => Ok(Json(json(&state, saved).await)),
+        Ok(saved) => {
+            // TRM-616: tell maintenance the awaited part arrived; never fails the receipt.
+            notify_part_arrived(&state, &saved).await;
+            Ok(Json(json(&state, saved).await))
+        }
         Err(e) => Err(error(locale, &e.message)),
     }
 }

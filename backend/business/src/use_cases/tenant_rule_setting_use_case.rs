@@ -96,6 +96,8 @@ pub fn is_sensible(s: &RuleSettings) -> bool {
         && s.garage_cycle_fallback_distance_km > 0.0
         && s.garage_odometer_max_single_jump_km.is_finite()
         && s.garage_odometer_max_single_jump_km > 0.0
+        && s.non_execution_grace_minutes >= 0
+        && s.non_execution_min_dwell_minutes >= 1
         && match (s.garage_base_latitude, s.garage_base_longitude) {
             (None, None) => true,
             (Some(latitude), Some(longitude)) => {
@@ -136,5 +138,7 @@ mod tests {
         assert!(bad(|s| s.garage_base_radius_meters = f64::INFINITY));
         assert!(bad(|s| s.garage_cycle_fallback_distance_km = 0.0));
         assert!(bad(|s| s.garage_odometer_max_single_jump_km = f64::NAN));
+        assert!(bad(|s| s.non_execution_grace_minutes = -1));
+        assert!(bad(|s| s.non_execution_min_dwell_minutes = 0));
     }
 }

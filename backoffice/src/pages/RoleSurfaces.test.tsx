@@ -81,72 +81,76 @@ describe('role-appropriate surfaces (DEF-BO-09, HRMS-414)', () => {
     expect(tenantUser.queryByRole('link', { name: /profiles|perfis/i })).not.toBeInTheDocument()
   })
 
-  it('sends a person to the landing page when the route needs a permission they lack', () => {
+  it('sends a person to the landing page when the route needs a permission they lack', async () => {
     renderAt('/users', { ...member, permissions: ['vehicle.read'] })
+    await screen.findByText(/Everything looks good|Tudo parece bem/i)
     expect(screen.queryByRole('heading', { name: /^users$|^usuários$/i })).not.toBeInTheDocument()
   })
 
-  it('lets the owner enter the CPF and the principal function on the user form', () => {
+  it('lets the owner enter the CPF and the principal function on the user form', async () => {
     renderAt('/users/new', { ...owner, permissions: ['user.create'] })
-    expect(screen.getByLabelText('CPF')).toBeInTheDocument()
-    expect(screen.getByLabelText(/principal function|função principal/i)).toBeInTheDocument()
+    expect(await screen.findByLabelText('CPF')).toBeInTheDocument()
+    expect(await screen.findByLabelText(/principal function|função principal/i)).toBeInTheDocument()
   })
 
-  it('shows the plan count card only to a SysAdmin', () => {
+  it('shows the plan count card only to a SysAdmin', async () => {
     renderAt('/', sysAdmin)
-    expect(screen.getByText(/available plans|planos disponíveis/i)).toBeInTheDocument()
+    expect(await screen.findByText(/available plans|planos disponíveis/i)).toBeInTheDocument()
   })
 
-  it('hides the plan count card from a tenant user', () => {
+  it('hides the plan count card from a tenant user', async () => {
     renderAt('/', member)
+    await screen.findByText(/Everything looks good|Tudo parece bem/i)
     expect(screen.queryByText(/available plans|planos disponíveis/i)).not.toBeInTheDocument()
   })
 
-  it('offers tenant creation and subscription management on the tenants page only to a SysAdmin', () => {
+  it('offers tenant creation and subscription management on the tenants page only to a SysAdmin', async () => {
     renderAt('/tenants', sysAdmin)
-    expect(screen.getByRole('link', { name: /new tenant|novo tenant|nova empresa/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /subscription|assinatura/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /new tenant|novo tenant|nova empresa/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /subscription|assinatura/i })).toBeInTheDocument()
   })
 
-  it('hides tenant creation and subscription management from a tenant owner', () => {
+  it('hides tenant creation and subscription management from a tenant owner', async () => {
     renderAt('/tenants', owner)
+    await screen.findByRole('heading', { name: /tenants|empresas/i })
     expect(screen.queryByRole('link', { name: /new tenant|novo tenant|nova empresa/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /subscription|assinatura/i })).not.toBeInTheDocument()
   })
 
   // C-032 (D-27 4, 8): the tenant's information and configuration are the owner's alone.
-  it('keeps the tenant screens for the owner: a tenant user is bounced from them', () => {
+  it('keeps the tenant screens for the owner: a tenant user is bounced from them', async () => {
     renderAt('/tenants', member)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
   // C-032: profiles are the owner's; every other role is bounced, and the owner finds the screen.
-  it('offers access profiles to the tenant owner only', () => {
+  it('offers access profiles to the tenant owner only', async () => {
     const asOwner = renderAt('/profiles', owner)
-    expect(screen.getByRole('heading', { name: /^profiles$|^perfis$/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /^profiles$|^perfis$/i })).toBeInTheDocument()
     asOwner.unmount()
     renderAt('/profiles', member)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
-  it('bounces a tenant user away from reference-data administration', () => {
+  it('bounces a tenant user away from reference-data administration', async () => {
     renderAt('/system-settings', member)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 
   // DEF-BO-04: a TenantUser cannot create accounts, so the console must not
   // offer it -- neither as a button nor as a reachable URL.
-  it('offers user creation to a tenant owner but not to a tenant user', () => {
+  it('offers user creation to a tenant owner but not to a tenant user', async () => {
     const asOwner = renderAt('/users', owner)
-    expect(screen.getByRole('link', { name: /new user|novo usuário/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /new user|novo usuário/i })).toBeInTheDocument()
     asOwner.unmount()
     renderAt('/users', member)
+    await screen.findByRole('heading', { name: /^users$|^usuários$/i })
     expect(screen.queryByRole('link', { name: /new user|novo usuário/i })).not.toBeInTheDocument()
   })
 
-  it('bounces a tenant user away from the user creation form', () => {
+  it('bounces a tenant user away from the user creation form', async () => {
     renderAt('/users/new', member)
-    expect(screen.getByText(/control center|centro de controle/i)).toBeInTheDocument()
+    expect(await screen.findByText(/control center|centro de controle/i)).toBeInTheDocument()
   })
 })
 
@@ -158,7 +162,7 @@ describe('subscription screen reads the page envelope (DEF-BO-03)', () => {
   it('lists the available plans instead of crashing', async () => {
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
       if (url === '/tenant/uuid/tenant-42-uuid') return { data: tenant }
-      if (url === '/business-plan') return { data: { items: [{ id: 3, name: 'Fleet Pro', priceInCents: 149900, availableUsers: 25, periodDays: 30, paymentDate: '2025-01-10' }], totalItems: 1, totalPages: 1, page: 0, pageSize: 200 } }
+      if (url === '/business-plan') return { data: { items: [{ id: 3, name: 'Fleet Pro', priceInCents: 149900, pricePerExtraUserInCents: 2500, availableUsers: 25, periodDays: 30 }], totalItems: 1, totalPages: 1, page: 0, pageSize: 200 } }
       return { data: null }
     }) as never)
 

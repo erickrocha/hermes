@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Acceptance for the backend half of C-031 / KAN-34 (driver app screens): distinct checklist refusals,
-the odometer guard and the tenant's default checklist template. Scenarios DA-001...DA-004.
+the odometer guard the tenant's default checklist template and the driver's own-trips scope. Scenarios DA-001...DA-005.
 
 Reuses garage_monitor_acceptance.py's helpers and `qa-ga-` fixtures (API + dev DB), like driver_scope_acceptance.py.
 """
@@ -31,6 +31,19 @@ def template(owner, name, kind, n_items=2, active=True):
     assert st == 201, (name, st, t)
     t = http("GET", f"/checklist-template/uuid/{t['uuid']}", token=owner)[1]
     return t
+
+
+def second_tenant(admin):
+    """A second `qa-ga-` tenant with an owner and one checklist template, for the refusals that need another tenant."""
+    st, tenant = http("POST", "/tenant", {"businessName": "qa-ga-tenant-b", "taxId": f"QAGB{int(b.time.time()) % 100000000:08d}", "countryCode": "US"}, admin)
+    assert st == 201, (st, tenant)
+    email = "qa-ga-owner-b@hermes.test"
+    st, user = http("POST", "/user", {"email": email, "name": "qa-ga-owner-b", "role": "TenantOwner", "enabled": True, "tenantId": int(tenant["id"])}, admin)
+    assert st == 201, (st, user)
+    pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
+    assert http("POST", "/accept-invite", {"token": b.invite_token(email, pw, b.load_env()["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204
+    owner_b = b.login(email, b.PASSWORD)
+    return owner_b, template(owner_b, "qa-ga-dep-b", "Departure")
 
 
 def run_body(tmpl, driver, vehicle, kind, km, opening=None, answers=None):
@@ -80,6 +93,12 @@ def run():
             refuse("item of another template", 400, "AnswerNotATemplateItem", run_body(dep, da, v2, "Standalone", 1100.0, answers=[
                 {"checklistTemplateItemUuid": ret["items"][0]["uuid"], "status": "Conforming"}])),
         ]
+        # The two that need a non-driver or another tenant. `ChecklistNotATenantVehicle` cannot be reached through the API: the run's
+        # tenant is taken from its vehicle and a tenant-bound caller only sees their own vehicles, so it stays a defensive check.
+        tu, _ = d.make_user(owner, "qa-ga-da-tu@hermes.test", "TenantUser")
+        ok.append(refuse("non-driver named as the driver", 400, "NotADriver", run_body(dep, tu, v2, "Standalone", 1100.0), token=owner))
+        _, dep_b = second_tenant(admin)
+        ok.append(refuse("template of another tenant", 400, "ChecklistNotATenantTemplate", run_body(dep_b, da, v2, "Standalone", 1100.0), token=admin))
         s_close, close = http("POST", "/checklist-run", run_body(ret, da, v1, "Return", 1100.0, opening=dep1["uuid"]), da_t)
         ok.append(s_close == 201)
         ok.append(refuse("opening already closed", 400, "OpeningChecklistAlreadyClosed", run_body(ret, da, v1, "Return", 1200.0, opening=dep1["uuid"])))
@@ -112,13 +131,16 @@ def run():
         s_stand, k_stand = put(stand, owner)
         s_off, k_off = put(inactive, owner)
         s_drv, _ = put(dep2, da_t)
+        mech, mech_t = d.make_user(owner, "qa-ga-da-mech@hermes.test", "Mechanic")
+        s_mech, _ = put(dep2, mech_t)
+        s_tu = put(dep2, b.login("qa-ga-da-tu@hermes.test", b.PASSWORD))[0]
         s_other, _ = put({"uuid": NIL}, owner)
         record("DA-003", s1 == 200 and r1["isDefault"] and s2 == 200 and r2["isDefault"]
                and listing.get("qa-ga-dep2") is True and listing.get("qa-ga-dep") is False and s_again == 200
                and (s_stand, b.ek(k_stand)) == (400, "ChecklistTemplateCannotBeDefault") and (s_off, b.ek(k_off)) == (400, "ChecklistTemplateCannotBeDefault")
-               and s_drv == 403 and s_other == 404,
+               and s_drv == 403 and s_mech == 403 and s_tu == 403 and s_other == 404,
                f"owner marks dep {s1}, then dep2 {s2}; the driver's list shows dep2 default={listing.get('qa-ga-dep2')}, dep={listing.get('qa-ga-dep')}; again {s_again}; "
-               f"Standalone {s_stand}, inactive {s_off}; a driver {s_drv}; an unknown uuid {s_other}")
+               f"Standalone {s_stand}, inactive {s_off}; a driver {s_drv}, a mechanic {s_mech}, a tenant user {s_tu}; an unknown uuid {s_other}")
 
         # DA-004 -- localization: the same refusal in pt-BR, es and en reads differently and is not the generic text
         texts = {}
@@ -128,6 +150,25 @@ def run():
         record("DA-004", all(s == 400 for s, _ in texts.values()) and len({m for _, m in texts.values()}) == 3
                and "quilometragem" in texts["pt-BR"][1].lower() and "kilometraje" in texts["es"][1].lower(),
                f"pt-BR: {texts['pt-BR'][1]!r}; es: {texts['es'][1]!r}; en: {texts['en'][1]!r}")
+        # DA-005 -- a driver sees only the trips that name them (C-031, HRMS-860)
+        def trip(code, driver, second=None):
+            body = {"orderCode": code, "tripDate": "2026-11-20", "startTime": "08:00:00", "destination": f"qa-ga {code}", "driverUuid": driver["uuid"], "status": "Scheduled"}
+            if second:
+                body["secondDriverUuid"] = second["uuid"]
+            st, t = http("POST", "/extra-trip", body, owner)
+            assert st == 201, (code, st, t)
+            return t
+        t_a = trip("QA-DA-1", da); t_b = trip("QA-DA-2", db_); t_sec = trip("QA-DA-3", db_, second=da)
+        s_list, lst = http("GET", "/extra-trip?page=0&pageSize=50", token=da_t)
+        mine = sorted(x["orderCode"] for x in lst["items"]) if s_list == 200 else []
+        s_own = http("GET", f"/extra-trip/uuid/{t_a['uuid']}", token=da_t)[0]
+        s_second = http("GET", f"/extra-trip/uuid/{t_sec['uuid']}", token=da_t)[0]
+        s_other, b_other = http("GET", f"/extra-trip/uuid/{t_b['uuid']}", token=da_t)
+        s_unknown, b_unknown = http("GET", f"/extra-trip/uuid/{NIL}", token=da_t)
+        owner_sees = len(http("GET", "/extra-trip?page=0&pageSize=50", token=owner)[1]["items"])
+        record("DA-005", mine == ["QA-DA-1", "QA-DA-3"] and s_own == 200 and s_second == 200 and s_other == 404 and b_other == b_unknown
+               and s_unknown == 404 and owner_sees == 3,
+               f"driver A lists {mine}; own trip {s_own}; as second driver {s_second}; driver B's {s_other} (body equals an unknown uuid's: {b_other == b_unknown}); the owner lists {owner_sees}")
     finally:
         cleanup()
     bad = [k for k, v in b.RESULTS.items() if v["status"] != "PASS"]

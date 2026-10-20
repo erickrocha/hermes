@@ -49,9 +49,9 @@ pub(crate) fn response(plan: BusinessPlan, locale: &Locale) -> Result<BusinessPl
         uuid,
         name: plan.name,
         price_in_cents: plan.price_in_cents,
+        price_per_extra_user_in_cents: plan.price_per_extra_user_in_cents,
         available_users: plan.available_users,
         period_days: plan.period_days,
-        payment_date: plan.payment_date,
         created_at,
         created_by: plan.created_by,
         updated_at,
@@ -65,9 +65,9 @@ fn domain(payload: CreateBusinessPlanJson) -> BusinessPlan {
         uuid: None,
         name: payload.name,
         price_in_cents: payload.price_in_cents,
+        price_per_extra_user_in_cents: payload.price_per_extra_user_in_cents,
         available_users: payload.available_users,
         period_days: payload.period_days,
-        payment_date: payload.payment_date,
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -79,9 +79,9 @@ fn update_domain(payload: UpdateBusinessPlanJson) -> BusinessPlan {
     domain(CreateBusinessPlanJson {
         name: payload.name,
         price_in_cents: payload.price_in_cents,
+        price_per_extra_user_in_cents: payload.price_per_extra_user_in_cents,
         available_users: payload.available_users,
         period_days: payload.period_days,
-        payment_date: payload.payment_date,
     })
 }
 

@@ -10,6 +10,7 @@ use crate::infrastructure::health::{
 };
 use crate::routes::authentication_routes::auth_routes;
 use crate::routes::business_plan_routes::business_plan_routes;
+use crate::routes::billing_routes::billing_routes;
 use crate::routes::customer_routes::customer_routes;
 use crate::routes::holiday_routes::holiday_routes;
 use crate::routes::checklist_template_routes::checklist_template_routes;
@@ -20,6 +21,8 @@ use crate::routes::service_type_routes::service_type_routes;
 use crate::routes::priced_service_routes::priced_service_routes;
 use crate::routes::part_routes::part_routes;
 use crate::routes::purchase_order_routes::purchase_order_routes;
+use crate::routes::maintenance_notification_routes::maintenance_notification_routes;
+use crate::routes::non_execution_routes::non_execution_routes;
 use crate::routes::transport_demand_routes::transport_demand_routes;
 use crate::routes::extra_trip_routes::extra_trip_routes;
 use crate::routes::resource_routes::resources_routes;
@@ -90,6 +93,11 @@ impl Modify for SecurityAddon {
         endpoints::business_plan_endpoint::get_by_uuid,
         endpoints::business_plan_endpoint::update,
         endpoints::business_plan_endpoint::delete,
+        endpoints::billing_endpoint::charges,
+        endpoints::billing_endpoint::confirm_charge,
+        endpoints::billing_endpoint::get_settings,
+        endpoints::billing_endpoint::set_grace_days,
+        endpoints::billing_endpoint::set_suspension,
         endpoints::user_endpoint::get_by_uuid,
         endpoints::user_endpoint::add,
         endpoints::user_endpoint::list_all,
@@ -179,6 +187,15 @@ impl Modify for SecurityAddon {
         endpoints::purchase_order_endpoint::mark_ordered,
         endpoints::purchase_order_endpoint::mark_purchased,
         endpoints::purchase_order_endpoint::cancel,
+        endpoints::maintenance_notification_endpoint::list_all,
+        endpoints::maintenance_notification_endpoint::unread_count,
+        endpoints::maintenance_notification_endpoint::mark_read,
+        endpoints::maintenance_notification_endpoint::mark_all_read,
+        endpoints::non_execution_endpoint::list_all,
+        endpoints::non_execution_endpoint::history,
+        endpoints::non_execution_endpoint::justify,
+        endpoints::non_execution_endpoint::record_manual,
+        endpoints::non_execution_endpoint::evaluate,
         endpoints::vehicle_expense_endpoint::add,
         endpoints::vehicle_expense_endpoint::get_by_uuid,
         endpoints::vehicle_expense_endpoint::list_all,
@@ -220,6 +237,7 @@ impl Modify for SecurityAddon {
         endpoints::garage_attendance_endpoint::call_list,
         endpoints::garage_attendance_endpoint::monitor_cards,
         endpoints::garage_attendance_endpoint::monitor_matrix,
+        endpoints::garage_attendance_endpoint::release_with_pendency,
         endpoints::garage_device_endpoint::list,
         endpoints::garage_device_endpoint::issue_pairing_code,
         endpoints::garage_device_endpoint::reissue_pairing_code,
@@ -277,6 +295,10 @@ impl Modify for SecurityAddon {
             endpoints::json::business_plan_json::CreateBusinessPlanJson,
             endpoints::json::business_plan_json::UpdateBusinessPlanJson,
             endpoints::json::business_plan_json::BusinessPlanJson,
+            endpoints::json::billing_json::BillingChargeJson,
+            endpoints::json::billing_json::BillingSettingsJson,
+            endpoints::json::billing_json::ConfigureBillingSettingsJson,
+            endpoints::json::billing_json::BillingSuspensionJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
             endpoints::json::customer_json::CustomerJson,
@@ -306,6 +328,17 @@ impl Modify for SecurityAddon {
             endpoints::json::stock_movement_json::StockAdjustmentJson,
             endpoints::json::purchase_order_json::PurchaseOrderJson,
             endpoints::json::purchase_order_json::MarkOrderedJson,
+            endpoints::json::maintenance_notification_json::MaintenanceNotificationJson,
+            endpoints::json::maintenance_notification_json::UnreadCountJson,
+            endpoints::json::maintenance_notification_json::MarkedReadJson,
+            endpoints::json::non_execution_json::NonExecutionOccurrenceJson,
+            endpoints::json::non_execution_json::NonExecutionVehicleJson,
+            endpoints::json::non_execution_json::NonExecutionWorkOrderJson,
+            endpoints::json::non_execution_json::NonExecutionVehicleGroupJson,
+            endpoints::json::non_execution_json::NonExecutionHistoryJson,
+            endpoints::json::non_execution_json::JustifyJson,
+            endpoints::json::non_execution_json::ManualNonExecutionJson,
+            endpoints::json::non_execution_json::EvaluationJson,
             endpoints::json::vehicle_expense_json::VehicleExpenseJson,
             endpoints::json::fuel_entry_json::FuelEntryJson,
             endpoints::json::fuel_entry_json::FuelSyncOutcomeJson,
@@ -432,7 +465,9 @@ async fn start() -> anyhow::Result<()> {
     // EPIC-GA-06-S03: the garage's day boundary runs in the background.
     crate::infrastructure::garage_jobs::spawn_rollover(state.conn.as_ref().clone());
     crate::infrastructure::garage_jobs::spawn_auto_departure(state.conn.as_ref().clone());
+    crate::infrastructure::non_execution_job::spawn_evaluation(state.conn.as_ref().clone());
     crate::infrastructure::garage_presence_job::spawn_presence_poll(state.clone());
+    crate::infrastructure::billing_job::spawn(state.conn.as_ref().clone());
 
     log::info!("Starting server...");
 
@@ -468,7 +503,7 @@ async fn start() -> anyhow::Result<()> {
     let mut app = Router::new();
     if api_docs_enabled() {
         app = app
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", commons::openapi_permissions::with_permissions(ApiDoc::openapi())));
     }
     let app = app
         // Public routes (no authentication)
@@ -478,6 +513,7 @@ async fn start() -> anyhow::Result<()> {
         .merge(resources_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/business-plan", business_plan_routes(state.clone()))
+        .nest("/billing", billing_routes(state.clone()))
         .nest("/customer", customer_routes(state.clone()))
         .nest("/holiday", holiday_routes(state.clone()))
         .nest("/checklist-template", checklist_template_routes(state.clone()))
@@ -488,6 +524,8 @@ async fn start() -> anyhow::Result<()> {
         .nest("/priced-service", priced_service_routes(state.clone()))
         .nest("/part", part_routes(state.clone()))
         .nest("/purchase-order", purchase_order_routes(state.clone()))
+        .nest("/maintenance-notification", maintenance_notification_routes(state.clone()))
+        .nest("/non-execution", non_execution_routes(state.clone()))
         .nest("/transport-demand", transport_demand_routes(state.clone()))
         .nest("/extra-trip", extra_trip_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
@@ -559,6 +597,7 @@ pub fn main() {
     if env::args().nth(1).as_deref() == Some("migrate") {
         if let Err(err) = migrate() {
             log::error!("Migration failed: {err}");
+            eprintln!("Migration failed: {err}");
             std::process::exit(1);
         }
         return;
@@ -573,6 +612,9 @@ pub fn main() {
     // instance served traffic either way; what was missing was the signal.
     if let Err(err) = start() {
         log::error!("Startup failed: {err}");
+        // The logger may not be up yet (a configuration refused before it starts), and a container that dies
+        // with no output at all is the worst way to report it: say it on stderr as well.
+        eprintln!("Startup failed: {err}");
         std::process::exit(1);
     }
 }
@@ -651,6 +693,7 @@ mod openapi_contract_tests {
         {
             "tenant_routes" => "/tenant",
             "business_plan_routes" => "/business-plan",
+            "billing_routes" => "/billing",
             "user_routes" => "/user",
             "vehicle_routes" => "/vehicle",
             "customer_routes" => "/customer",
@@ -663,6 +706,8 @@ mod openapi_contract_tests {
             "priced_service_routes" => "/priced-service",
             "part_routes" => "/part",
             "purchase_order_routes" => "/purchase-order",
+            "maintenance_notification_routes" => "/maintenance-notification",
+            "non_execution_routes" => "/non-execution",
             "vehicle_expense_routes" => "/vehicle-expense",
             "fuel_entry_routes" => "/fuel-entry",
             "preventive_plan_routes" => "/preventive-plan",
@@ -738,5 +783,43 @@ mod openapi_contract_tests {
             missing.is_empty(),
             "these operations document no response with a **Roles:** statement (HRMS-132): {missing:?}"
         );
+    }
+
+    /// `EPIC-AC-02-S04` (`HRMS-856`): the published document names the permission each operation asks for, and
+    /// every operation that is not public has one in the table (so a new endpoint cannot ship without it).
+    #[test]
+    fn every_operation_names_its_permission() {
+        use crate::commons::openapi_permissions::with_permissions;
+        use business::domain::permission;
+        use utoipa::openapi::path::{Operation, PathItem};
+
+        fn operations(item: &PathItem) -> Vec<(&'static str, &Operation)> {
+            [("GET", &item.get), ("PUT", &item.put), ("POST", &item.post), ("DELETE", &item.delete)]
+                .into_iter()
+                .filter_map(|(method, op)| op.as_ref().map(|op| (method, op)))
+                .collect()
+        }
+
+        // Public, or reachable by every signed-in user, or owner/platform-only with no catalogue permission to
+        // grant (device credentials, `HRMS-418`): these state "none" instead of a code.
+        let ungrantable = [
+            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/garage-device", "/garage-device/pair",
+            "/garage-device/pairing-code", "/garage-device/uuid/{uuid}", "/garage-device/uuid/{uuid}/pairing-code",
+        ];
+        let openapi = with_permissions(ApiDoc::openapi());
+        let (mut unstated, mut unlisted) = (Vec::new(), Vec::new());
+        for (path, item) in &openapi.paths.paths {
+            for (method, operation) in operations(item) {
+                let described = operation.description.as_deref().unwrap_or_default();
+                if !described.contains("**Permission:**") {
+                    unstated.push(format!("{method} {path}"));
+                }
+                if permission::for_operation(method, path).is_none() && !ungrantable.contains(&path.as_str()) {
+                    unlisted.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(unstated.is_empty(), "these operations do not state a **Permission:** (HRMS-856): {unstated:?}");
+        assert!(unlisted.is_empty(), "these operations are not in the operation->permission table: {unlisted:?}");
     }
 }

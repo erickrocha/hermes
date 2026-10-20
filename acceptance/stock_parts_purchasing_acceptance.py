@@ -162,6 +162,7 @@ def cleanup():
     vehicles = f"SELECT id FROM vehicle WHERE plate LIKE 'QASP%' OR tenant_id IN ({tenants})"
     sql(f"UPDATE work_order_item SET purchase_order_id=NULL WHERE tenant_id IN ({tenants})")
     sql(f"UPDATE purchase_order SET work_order_item_id=NULL, work_order_id=NULL WHERE tenant_id IN ({tenants})")
+    sql(f"DELETE FROM maintenance_notification WHERE tenant_id IN ({tenants})")   # C-026 EPIC-MT-06: raised on receipt, FK to part and work order
     sql(f"DELETE FROM purchase_order WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM work_order_item WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM work_order WHERE tenant_id IN ({tenants})")

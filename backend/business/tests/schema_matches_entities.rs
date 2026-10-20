@@ -14,7 +14,8 @@
 //!     DATABASE_URL=mysql://... cargo test -p business --test schema_matches_entities -- --ignored
 
 use entity::{
-    business_plan_entity, city_entity, province_entity, tenant_entity, user_entity, vehicle_entity,
+    billing_charge_entity, business_plan_entity, city_entity, province_entity,
+    tenant_billing_entity, tenant_entity, user_entity, vehicle_entity,
 };
 use sea_orm::{Database, EntityTrait, QuerySelect};
 
@@ -42,6 +43,22 @@ async fn every_entity_can_be_read_from_the_migrated_schema() {
                 .await
                 .err(),
         ),
+            (
+                "tenant_billing",
+                tenant_billing_entity::Entity::find()
+                .limit(1)
+                .all(&db)
+                .await
+                .err(),
+            ),
+            (
+                "billing_charge",
+                billing_charge_entity::Entity::find()
+                .limit(1)
+                .all(&db)
+                .await
+                .err(),
+            ),
         (
             "province",
             province_entity::Entity::find()

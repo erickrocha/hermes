@@ -261,9 +261,9 @@ fn plan_model() -> business_plan_entity::Model {
         uuid: string_to_bytes(UUID),
         name: "Professional".into(),
         price_in_cents: 12_345,
+        price_per_extra_user_in_cents: 500,
         available_users: 10,
         period_days: 30,
-        payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap(),
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -275,10 +275,12 @@ fn plan_model() -> business_plan_entity::Model {
 fn business_plan_round_trips_through_the_mapper() {
     let plan: BusinessPlan = BusinessPlanEntityMapper::from_model(plan_model());
     assert_eq!(plan.price_in_cents, 12_345);
+    assert_eq!(plan.price_per_extra_user_in_cents, 500);
     assert_eq!(plan.uuid.as_deref(), Some(UUID));
 
     let active = BusinessPlanEntityMapper::build_active_model(plan.clone());
     assert_eq!(active.price_in_cents, ActiveValue::Set(12_345));
+    assert_eq!(active.price_per_extra_user_in_cents, ActiveValue::Set(500));
 
     assert_eq!(
         BusinessPlanEntityMapper::from_active_model(plan_model().into_active_model()),

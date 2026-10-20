@@ -2,6 +2,8 @@ node_modules
 dist
 .env.local
 *.tsbuildinfo
+playwright-report
+test-results
 
 # Local overrides of .env.example -- never committed.
 .env

@@ -1,0 +1,113 @@
+# Hermes em rede interna ou VPN: MariaDB + API + console, sem Traefik e sem TLS.
+#
+# Uma única porta HTTP é publicada (CONSOLE_PORT): o console serve a tela e repassa /api para o backend.
+# O banco e a API não são publicados no host. SEM HTTPS o login trafega em texto puro: use só em rede
+# confiável (LAN, VPN). Para expor na internet use docker-compose.yml (Traefik + Let's Encrypt).
+#
+# Configuração: copie .env.internal.example para .env (junto deste arquivo) e preencha. Nada aqui contém
+# segredo. As imagens são construídas a partir do código do repositório (não há registro de imagens).
+#
+# Subir/atualizar: ./deploy-internal.sh (a ordem backup -> migração -> início não deve ser improvisada).
+
+name: hermes
+
+services:
+  mariadb:
+    image: mariadb:11.8
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is required}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-hermes}
+      MARIADB_USER: ${MARIADB_USER:-hermes}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?MARIADB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      # Os dumps de antes de cada atualização ficam aqui: é a posição de rollback.
+      - mariadb-backups:/backups
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Migração é uma etapa da implantação (PD-033), não um efeito colateral de subir a API.
+  migrate:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: hermes-api:${IMAGE_TAG:-local}
+    profiles: ["deploy"]
+    restart: "no"
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    logging: *logging
+
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: hermes-api:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      HOST: 0.0.0.0
+      PORT: 8080
+      # Qualquer valor diferente de `development` desliga o Swagger e o documento OpenAPI e torna
+      # CORS_ALLOWED_ORIGINS obrigatória na subida.
+      APP_ENV: production
+      CORS_ALLOWED_ORIGINS: ${HERMES_URL:?HERMES_URL is required}
+      BACKOFFICE_BASE_URL: ${HERMES_URL}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:?ACCESS_TOKEN_SECRET is required}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:?REFRESH_TOKEN_SECRET is required}
+      ACCESS_TOKEN_HOURS: ${ACCESS_TOKEN_HOURS:-3}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-7}
+      SYSADMIN_EMAIL: ${SYSADMIN_EMAIL:?SYSADMIN_EMAIL is required}
+      SYSADMIN_PASSWORD: ${SYSADMIN_PASSWORD:?SYSADMIN_PASSWORD is required}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      # PinME (rastreamento, D-15). O backend lê TRACKING_API_EMAIL (não _USER). Com as três variáveis
+      # preenchidas a leitura de presença da garagem passa a consultar o provedor a cada
+      # GARAGE_PRESENCE_POLL_INTERVAL_SECONDS (padrão do backend: 60; 0 desliga).
+      TRACKING_API_BASE_URL: ${TRACKING_API_BASE_URL:-}
+      TRACKING_API_EMAIL: ${TRACKING_API_EMAIL:-}
+      TRACKING_API_PASSWORD: ${TRACKING_API_PASSWORD:-}
+      GARAGE_PRESENCE_POLL_INTERVAL_SECONDS: ${GARAGE_PRESENCE_POLL_INTERVAL_SECONDS:-60}
+      NON_EXECUTION_EVALUATION_INTERVAL_SECONDS: ${NON_EXECUTION_EVALUATION_INTERVAL_SECONDS:-300}
+      FUEL_API_BASE_URL: ${FUEL_API_BASE_URL:-}
+      FUEL_API_TOKEN: ${FUEL_API_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    logging: *logging
+
+  console:
+    build:
+      context: ../../backoffice
+      dockerfile: Dockerfile
+    image: hermes-console:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "${CONSOLE_PORT:-8080}:8080"
+    volumes:
+      - ./nginx.internal.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    logging: *logging
+
+volumes:
+  mariadb-data:
+  mariadb-backups:

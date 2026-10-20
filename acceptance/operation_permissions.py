@@ -44,7 +44,26 @@ GARAGE = [("POST", "/garage-attendance/uuid/{uuid}/release-with-pendency", "gara
 COST = [("GET", "/cost-report/vehicle/uuid/{uuid}", "cost-report.vehicle.read"), ("GET", "/cost-report/vehicle/uuid/{uuid}/export", "cost-report.vehicle.read"),
         ("GET", "/cost-report/work-order/uuid/{uuid}", "cost-report.work-order.read"), ("GET", "/cost-report/suppliers", "cost-report.supplier.read"),
         ("GET", "/cost-report/supplier-closing", "cost-report.supplier.read"), ("GET", "/cost-report/supplier-closing/export", "cost-report.supplier.read")]
-table = list(PROFILE) + COST + GARAGE
+BILLING = [("GET", "/billing/charges", "billing.read"),
+       ("POST", "/billing/charges/uuid/{uuid}/confirm", "billing.confirm-payment"),
+       ("GET", "/billing/tenant/uuid/{uuid}/settings", "billing.read"),
+       ("PUT", "/billing/tenant/uuid/{uuid}/settings", "billing.configure"),
+       ("PUT", "/billing/tenant/uuid/{uuid}/suspension", "billing.suspend")]
+# C-031 (the tenant's default checklist template) and an owner-only trip edit that the scan missed.
+LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.create"),
+         ("POST", "/extra-trip/uuid/{uuid}/preparation-skip", "extra-trip.update"),
+         # C-026 EPIC-MT-06: the in-app "awaited part arrived" notices.
+         ("GET", "/maintenance-notification", "maintenance-notification.read"),
+         ("GET", "/maintenance-notification/unread-count", "maintenance-notification.read"),
+         ("PUT", "/maintenance-notification/uuid/{uuid}/read", "maintenance-notification.update"),
+         ("PUT", "/maintenance-notification/read-all", "maintenance-notification.update"),
+         # C-026 EPIC-MT-04: planned maintenance that was not carried out.
+         ("GET", "/non-execution", "non-execution.read"),
+         ("GET", "/non-execution/work-order/uuid/{uuid}", "non-execution.read"),
+         ("PUT", "/non-execution/occurrence/uuid/{uuid}/justify", "non-execution.justify"),
+         ("POST", "/non-execution/manual", "non-execution.record-manual"),
+         ("POST", "/non-execution/evaluate", "non-execution.evaluate")]
+table = list(PROFILE) + COST + BILLING + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)
     if not m or m.group(1) in PUBLIC:

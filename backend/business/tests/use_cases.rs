@@ -87,9 +87,9 @@ fn plan_row(id: i64) -> business_plan_entity::Model {
         uuid: string_to_bytes(UUID),
         name: "Professional".into(),
         price_in_cents: 10_000,
+        price_per_extra_user_in_cents: 500,
         available_users: 10,
         period_days: 30,
-        payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap(),
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -431,9 +431,9 @@ fn plan(name: &str, price: i64) -> BusinessPlan {
         uuid: None,
         name: name.into(),
         price_in_cents: price,
+        price_per_extra_user_in_cents: 500,
         available_users: 10,
         period_days: 30,
-        payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap(),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -2576,6 +2576,7 @@ fn checklist_template_row(
         name: name.into(),
         checklist_type: "Departure".into(),
         active: true,
+        is_default: false,
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -3771,10 +3772,9 @@ async fn linking_a_pendency_from_a_different_work_order_is_refused() {
 
 /// `TRM-647`: a synthetic placeholder only ever represented the purchase
 /// itself, so receiving it resolves the item outright. As the work order's
-/// sole item, `recompute_status`'s own "nothing left pending" fallback
-/// leaves the order's status untouched (`EPIC-MT-01-S03`'s existing rule:
-/// conclusion is a deliberate administrative act, never inferred) -- so
-/// `AwaitingParts` persists here until someone calls `conclude`.
+/// sole item, nothing awaits a part any more, so the order leaves
+/// `AwaitingParts` for `Open` (`TRM-649`, commit 9d10e3e); concluding stays a
+/// deliberate administrative act (`TRM-208`) and is not inferred.
 #[tokio::test]
 async fn resolving_a_placeholder_pendency_marks_it_resolved() {
     let db = mock()
@@ -3798,6 +3798,8 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
         }]]) // all items -- only the placeholder, now resolved
+        .append_exec_results([inserted(96)]) // the work order leaves AwaitingParts (TRM-649)
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
         .into_connection();
 
     let updated = run_with_user(
@@ -3806,7 +3808,7 @@ async fn resolving_a_placeholder_pendency_marks_it_resolved() {
     )
     .await
     .expect("resolving a placeholder pendency succeeds");
-    assert_eq!(updated.status, WorkOrderStatus::AwaitingParts);
+    assert_eq!(updated.status, WorkOrderStatus::Open);
 }
 
 /// `TRM-648`/`649`: a real pendency returns to `Pending` -- receiving the
@@ -4695,6 +4697,9 @@ async fn a_pendency_named_without_its_own_work_order_is_refused_before_any_query
 async fn raising_a_purchase_order_against_an_existing_pendency_links_it() {
     let db = mock()
         .append_query_results([[part_row(800, 42)]]) // part exists
+        // -- check_pendency(96, 97): the pendency is checked before anything is written (9d10e3e) --
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]])
         .append_query_results([Vec::<entity::purchase_order_entity::Model>::new()]) // no duplicate
         .append_exec_results([inserted(950)]) // insert the purchase order
         .append_query_results([[entity::purchase_order_entity::Model {
@@ -4822,7 +4827,9 @@ async fn marking_a_purchase_order_purchased_resolves_its_linked_pendency() {
             preventive_plan_id: None,
             purchase_order_id: Some(950),
             ..work_order_item_row(98, 42, 96, "Resolved")
-        }]])
+        }]]) // all items -- only the placeholder, now resolved
+        .append_exec_results([inserted(96)]) // the work order leaves AwaitingParts (TRM-649)
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
         .into_connection();
 
     let saved = run_with_user(
@@ -7394,4 +7401,39 @@ async fn a_stated_kind_needs_the_field_that_makes_it_a_days_work_and_unreadable_
         KIND_NEEDS_ITS_DAYS,
         "a one-off trip without its date"
     );
+}
+
+/// `C-031` (`HRMS-860`): a driver's trip list is the tenant's trips that name them as the driver or the second driver.
+#[tokio::test]
+async fn a_drivers_trip_list_is_scoped_to_the_tenant_and_to_the_trips_that_name_them() {
+    let db = mock()
+        .append_query_results(count(1))
+        .append_query_results([[extra_trip_row(1, 42, "T-1")]])
+        .into_connection();
+    let driver = AuditUser { id: 7, email: "driver@example.com".into(), tenant_id: Some(42), enforce_tenant: true };
+    let (rows, _total) = run_with_user(
+        Some(driver),
+        business::gateway::extra_trip_gateway::ExtraTripGateway::new(db.clone()).find_page_for_driver(7, 0, 50),
+    )
+    .await
+    .expect("page");
+    assert_eq!(rows.len(), 1);
+    let sql = format!("{:?}", log(db)).to_lowercase();
+    assert!(sql.contains("tenant_id"), "{sql}");
+    assert!(sql.contains("driver_id") && sql.contains("second_driver_id"), "{sql}");
+}
+
+#[test]
+fn a_trip_names_only_its_driver_or_second_driver_and_never_a_missing_id() {
+    use business::commons::entity_mapper::EntityMapper;
+    let mut trip = business::domain::extra_trip::ExtraTripEntityMapper::from_model(extra_trip_row(1, 42, "T-1"));
+    trip.driver_id = Some(7);
+    trip.second_driver_id = Some(8);
+    assert!(trip.names_driver(Some(7)));
+    assert!(trip.names_driver(Some(8)));
+    assert!(!trip.names_driver(Some(9)));
+    // `None == None` must not read as "named": a user with no id is named by nothing.
+    trip.driver_id = None;
+    trip.second_driver_id = None;
+    assert!(!trip.names_driver(None));
 }

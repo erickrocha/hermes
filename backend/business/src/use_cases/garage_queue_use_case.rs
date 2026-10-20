@@ -505,8 +505,10 @@ mod tests {
 mod gateway_tests {
     use super::*;
     use crate::gateway::garage_attendance_gateway::GarageAttendanceGateway;
+    use crate::gateway::garage_cycle_gateway::GarageCycleGateway;
     use crate::gateway::garage_service_gateway::GarageServiceGateway;
     use crate::gateway::garage_service_model_gateway::GarageServiceModelGateway;
+    use crate::gateway::preventive_plan_gateway::PreventivePlanGateway;
     use crate::gateway::vehicle_gateway::VehicleGateway;
     use chrono::{NaiveDate, TimeZone, Utc};
     use entity::audit::{AuditUser, run_with_user};
@@ -566,7 +568,9 @@ mod gateway_tests {
             GarageAttendanceGateway::new(db.clone()),
             GarageServiceGateway::new(db.clone()),
             GarageServiceModelGateway::new(db.clone()),
-            VehicleGateway::new(db),
+            VehicleGateway::new(db.clone()),
+            PreventivePlanGateway::new(db.clone()),
+            GarageCycleGateway::new(db),
         );
         let user = AuditUser {
             id: 2,

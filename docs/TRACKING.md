@@ -1,133 +1,141 @@
-# Vehicle tracking integration
+# Integração de rastreamento de veículos
 
-How Hermes obtains vehicle position and ignition state, and — just as important — what it
-deliberately does **not** do with it yet.
+Como o Hermes obtém a posição e o estado da ignição dos veículos e — tão importante quanto — o que
+ele deliberadamente **não** faz com isso ainda.
 
-Decisions behind this document: `PD-025` (consume a provider, do not build a tracker), `D-15` (which
-provider, and its contract), `D-05`/`D-06` (tenant scope outside a request).
-Requirements: `HRMS-900`…`HRMS-905`.
+Decisões por trás deste documento: `PD-025` (consumir um provedor, não construir um rastreador),
+`D-15` (qual provedor, e seu contrato), `D-05`/`D-06` (escopo de tenant fora de uma requisição).
+Requisitos: `HRMS-900`…`HRMS-905`.
 
-## The shape: consumed, not rebuilt
+## O formato: consumido, não reconstruído
 
-Hermes **consumes an existing third-party GPS provider's API**. It does not implement a
-vehicle-polling tracker of its own (`HRMS-900`).
+O Hermes **consome a API de um provedor de GPS de terceiros já existente**. Ele não implementa um
+rastreador próprio que faz polling de veículos (`HRMS-900`).
 
-This is a deliberate reversal of how the system Hermes replaces works. `operacao-trm` runs its own
-`rastreador-cron`, which polls devices and writes production state. `PD-025` rules that out: the
-platform was created to retire that job, and reimplementing it here would inherit the maintenance
-along with the behaviour.
+Isso é uma reversão deliberada de como funciona o sistema que o Hermes substitui. O `operacao-trm`
+executa seu próprio `rastreador-cron`, que faz polling dos dispositivos e grava o estado de
+produção. A `PD-025` descarta isso: a plataforma foi criada para aposentar esse job, e
+reimplementá-lo aqui herdaria a manutenção junto com o comportamento.
 
-## The provider and its contract
+## O provedor e seu contrato
 
-`HRMS-901` requires the provider's contract to be recorded **before** the ingestion component is
-designed, so the component is designed once rather than rewritten when the shape turns out
-differently. It is recorded here.
+O `HRMS-901` exige que o contrato do provedor seja registrado **antes** de o componente de ingestão
+ser projetado, para que o componente seja projetado uma única vez em vez de reescrito quando o
+formato se mostrar diferente. Ele é registrado aqui.
 
-| Property | Value |
+| Propriedade | Valor |
 |---|---|
-| Provider | **Self-hosted Traccar** (`D-15` amendment 2026-10-09); trackers are VITANA VIT-4100-R. Originally PinME — `https://api.pinme.io/api`, a hosted Traccar-compatible service, which `operacao-trm` still uses |
-| Family | **Traccar** (REST API: `/devices`, `/positions`, `/reports/events`) |
-| Authentication | **HTTP Basic on every call** — `Authorization: Basic base64(email:password)`. There is no `/session`, no token exchange and no bearer token |
-| Direction | **Pull.** Hermes asks; the provider never calls Hermes |
-| Update frequency | Device-driven. Positions are read on demand; a fix older than **5 minutes** is not treated as current |
+| Provedor | **Traccar auto-hospedado** (aditivo da `D-15` de 2026-10-09); os rastreadores são VITANA VIT-4100-R. Originalmente PinME — `https://api.pinme.io/api`, um serviço hospedado compatível com Traccar, que o `operacao-trm` ainda usa |
+| Família | **Traccar** (API REST: `/devices`, `/positions`, `/reports/events`) |
+| Autenticação | **HTTP Basic em toda chamada** — `Authorization: Basic base64(email:password)`. Não há `/session`, nem troca de token, nem token bearer |
+| Direção | **Pull.** O Hermes pergunta; o provedor nunca chama o Hermes |
+| Frequência de atualização | Guiada pelo dispositivo. As posições são lidas sob demanda; um fix com mais de **5 minutos** não é tratado como atual |
 
-This contract did not have to be obtained speculatively. `operacao-trm` integrates this exact
-provider in production today, and its `rastreador-status` edge function is a working reference
-implementation. The narrative is in
+Este contrato não precisou ser obtido de forma especulativa. O `operacao-trm` integra exatamente
+este provedor em produção hoje, e sua edge function `rastreador-status` é uma implementação de
+referência funcional. A narrativa está em
 `01-project_truth/operacao-trm/01-ai-native/rastreador-status-edge-doc.md`.
 
-**Why pull matters beyond the wire format.** A push provider would have made ingestion an inbound
-authenticated endpoint, landing it in the `web` crate's public surface and under `EPIC-XF-03`'s
-whitelist discipline. Pull makes it scheduled, out-of-request code — which lands it squarely on the
-tenant-scope question below. The two shapes are different components, not one component with a
-different constant, which is why `HRMS-901` insisted on knowing first.
+**Por que pull importa além do formato de transmissão.** Um provedor push tornaria a ingestão um
+endpoint de entrada autenticado, colocando-a na superfície pública do crate `application` e sob a disciplina
+de whitelist do `EPIC-XF-03`. Com pull, ela vira código agendado, fora de requisição — o que a
+coloca diretamente na questão de escopo de tenant abaixo. Os dois formatos são componentes
+diferentes, e não um mesmo componente com uma constante diferente, e é por isso que o `HRMS-901`
+insistiu em saber isso primeiro.
 
-### Endpoints used
+### Endpoints usados
 
-| Endpoint | Method | Purpose |
+| Endpoint | Método | Finalidade |
 |---|---|---|
-| `/positions` | GET | Last known position for **every** device, in one call. Not per-device — the client indexes by `deviceId` |
-| `/reports/events` | GET | Fallback. `?deviceId=…&from=…&to=…&type=ignitionOn&type=ignitionOff`, with repeated `deviceId` and `type` parameters and an ISO-8601 window |
+| `/positions` | GET | Última posição conhecida de **todos** os dispositivos, em uma única chamada. Não é por dispositivo — o cliente indexa por `deviceId` |
+| `/reports/events` | GET | Alternativa (fallback). `?deviceId=…&from=…&to=…&type=ignitionOn&type=ignitionOff`, com parâmetros `deviceId` e `type` repetidos e uma janela em ISO-8601 |
 
-### Payload fields depended upon
+### Campos do payload dos quais se depende
 
-`latitude`, `longitude`, `valid`, `serverTime` / `fixTime` / `deviceTime` (first present wins),
-`attributes.ignition` (boolean), and `attributes.totalDistance` / `odometer` / `distance`
-(accumulated metres).
+`latitude`, `longitude`, `valid`, `serverTime` / `fixTime` / `deviceTime` (vale o primeiro
+presente), `attributes.ignition` (booleano) e `attributes.totalDistance` / `odometer` / `distance`
+(metros acumulados).
 
-## Freshness and degradation
+## Atualidade e degradação
 
-These rules are **inherited from a production integration, not invented here**, and two of them were
-paid for with real incidents recorded in `operacao-trm`'s own notes. They are written down with the
-reasoning attached so that a later reader does not "simplify" a rule whose cost has been forgotten.
+Estas regras são **herdadas de uma integração em produção, não inventadas aqui**, e duas delas
+foram pagas com incidentes reais registrados nas próprias notas do `operacao-trm`. Elas estão
+escritas com o raciocínio anexado para que um leitor futuro não "simplifique" uma regra cujo custo
+foi esquecido.
 
-- A position older than **5 minutes**, or flagged `valid: false`, or carrying no `ignition`
-  attribute, is not trusted as current. Ingestion falls back to the ignition-event report over a
-  **24-hour** window.
-- A timestamp in the *future* is clock skew, not freshness. A mis-set device may not claim to be
-  permanently current.
-- No event either ⇒ the status is **unknown**, explicitly flagged untrustworthy rather than guessed.
-- A failing events report **degrades only the devices that needed it**. It never fails the batch:
-  the vehicles that answered from `/positions` are still good readings. A failing `/positions` call
-  *does* fail the batch, because there is no partial answer to fall back to.
-- **A stale reading must never leave a vehicle tagged as being at base.** An ignition *event* is
-  reliable evidence about ignition — it is a recorded fact — so such a reading is trustworthy. What
-  it is not is evidence of current *position*. `VehicleTrackingStatus::supports_presence_claim`
-  holds that distinction in one place rather than at every call site that might forget it.
-- The last known coordinate is attached **even when stale**: a parked vehicle stops emitting but has
-  not moved, and a garage view still needs somewhere to draw it.
+- Uma posição com mais de **5 minutos**, ou marcada como `valid: false`, ou sem o atributo
+  `ignition`, não é considerada confiável como atual. A ingestão recorre ao relatório de eventos de
+  ignição em uma janela de **24 horas**.
+- Um timestamp no *futuro* é desvio de relógio, não atualidade. Um dispositivo com a hora errada não
+  pode alegar estar permanentemente atual.
+- Nenhum evento também ⇒ o status é **desconhecido**, explicitamente sinalizado como não confiável
+  em vez de presumido.
+- Um relatório de eventos com falha **degrada apenas os dispositivos que precisavam dele**. Nunca
+  faz o lote falhar: os veículos que responderam por `/positions` continuam sendo leituras boas. Uma
+  chamada a `/positions` com falha *faz* o lote falhar, porque não há resposta parcial a que
+  recorrer.
+- **Uma leitura desatualizada nunca pode deixar um veículo marcado como estando na base.** Um
+  *evento* de ignição é evidência confiável sobre a ignição — é um fato registrado — portanto tal
+  leitura é confiável. O que ela não é é evidência da *posição* atual.
+  `VehicleTrackingStatus::supports_presence_claim` concentra essa distinção em um só lugar, em vez
+  de em cada ponto de chamada que possa esquecê-la.
+- A última coordenada conhecida é anexada **mesmo quando desatualizada**: um veículo estacionado
+  para de emitir, mas não se moveu, e uma visão da garagem ainda precisa de um lugar onde
+  desenhá-lo.
 
-## Where the boundary is
+## Onde fica a fronteira
 
-`HRMS-902` requires the provider's contract to be confined to a single ingestion boundary, so that
-changing provider is a change to one module rather than to the domain.
+O `HRMS-902` exige que o contrato do provedor fique confinado a uma única fronteira de ingestão,
+para que trocar de provedor seja uma mudança em um módulo e não no domínio.
 
-| Layer | File | Knows about PinME? |
+| Camada | Arquivo | Conhece o PinME? |
 |---|---|---|
-| Boundary | `backend/business/src/gateway/tracking_provider.rs` | **Yes — and nothing else does** |
-| Vocabulary | `backend/business/src/domain/vehicle_tracking.rs` | No |
-| Rules | `backend/business/src/use_cases/vehicle_tracking_use_case.rs` | No |
+| Fronteira | `backend/business/src/gateway/tracking_provider.rs` | **Sim — e nenhuma outra conhece** |
+| Vocabulário | `backend/business/src/domain/vehicle_tracking.rs` | Não |
+| Regras | `backend/business/src/use_cases/vehicle_tracking_use_case.rs` | Não |
 
-The split is not cosmetic. The freshness rule, the fallback decision and the presence rule are
-*Hermes'* policy; the JSON field names are the provider's. If they lived together, swapping provider
-would mean re-deciding the policy, and the acceptance suite asserts the separation
-(`FT-003`) precisely because boundaries erode quietly.
+A separação não é cosmética. A regra de atualidade, a decisão de fallback e a regra de presença são
+política *do Hermes*; os nomes dos campos JSON são do provedor. Se vivessem juntos, trocar de
+provedor significaria redecidir a política, e a suíte de aceitação afirma a separação (`FT-003`)
+justamente porque fronteiras se erodem silenciosamente.
 
-Configuration is named for the role rather than the vendor — `TRACKING_API_BASE_URL`,
-`TRACKING_API_EMAIL`, `TRACKING_API_PASSWORD` — so a change of provider is not a change of
-deployment configuration. Credentials are Base64-encoded once in the constructor and never appear in
-an error message or a log line.
+A configuração é nomeada pelo papel e não pelo fornecedor — `TRACKING_API_BASE_URL`,
+`TRACKING_API_EMAIL`, `TRACKING_API_PASSWORD` — para que uma troca de provedor não seja uma mudança
+na configuração de implantação. As credenciais são codificadas em Base64 uma única vez no
+construtor e nunca aparecem em uma mensagem de erro nem em uma linha de log.
 
-## Tenant scope
+## Escopo de tenant
 
-Ingestion runs **outside any authenticated request**, which is exactly the hazard `HRMS-008` and
-`U-016` were written about.
+A ingestão roda **fora de qualquer requisição autenticada**, que é exatamente o risco sobre o qual
+o `HRMS-008` e a `U-016` foram escritos.
 
-`D-05` made the out-of-request default `Denied`. Before this integration, the only way out of that
-default was `run_as_platform`, which grants the entire platform — so anything acting for a single
-tenant had to take platform-wide reach it did not need. That is scope acquired by omission, the
-accident `U-016` names.
+A `D-05` tornou `Denied` o padrão fora de requisição. Antes desta integração, a única saída desse
+padrão era `run_as_platform`, que concede a plataforma inteira — de modo que qualquer coisa agindo
+em nome de um único tenant precisava assumir um alcance em toda a plataforma de que não necessitava.
+Isso é escopo adquirido por omissão, o acidente que a `U-016` nomeia.
 
-`entity::audit::run_for_tenant(tenant_id, actor, …)` was added for this: an **explicit, named**
-tenant scope (`HRMS-903`). Ingestion uses it and does not use `run_as_platform`; `FT-004` and
-`FT-005` assert both halves.
+`entity::audit::run_for_tenant(tenant_id, actor, …)` foi adicionada para isso: um escopo de tenant
+**explícito e nomeado** (`HRMS-903`). A ingestão usa essa função e não usa `run_as_platform`; o
+`FT-004` e o `FT-005` afirmam as duas metades.
 
-## What is deliberately not built
+## O que deliberadamente não é construído
 
-**Nothing is persisted.** There is no tracking table, no entity and no migration.
+**Nada é persistido.** Não há tabela de rastreamento, nem entidade, nem migração.
 
-`HRMS-905` requires the system to state what consumes ingested tracking data *before* that data is
-persisted. The candidate consumers — the garage-service queue and the fuel cycle — are
-`operacao-trm`'s decision **`D-01`**, which is open, and which is **not Hermes' decision to take**.
-Building a telemetry store now would be inventing a schema for a reader nobody has specified.
+O `HRMS-905` exige que o sistema declare o que consome os dados de rastreamento ingeridos *antes* de
+esses dados serem persistidos. Os consumidores candidatos — a fila de serviço da garagem e o ciclo
+de combustível — são a decisão **`D-01`** do `operacao-trm`, que está em aberto e que **não é uma
+decisão do Hermes tomar**. Construir um repositório de telemetria agora seria inventar um esquema
+para um leitor que ninguém especificou.
 
-This is the requirement being satisfied, not a gap in the work.
+Isso é o requisito sendo cumprido, e não uma lacuna no trabalho.
 
-What the slice *does* settle is the shape a store would hold, because `VehicleTrackingStatus`
-carries the four properties `PD-025`'s note argues `D-01` needs: a **value**, its **provenance**
-(which source answered), its **quality** (trustworthy or not), and an **as-of instant**. When `D-01`
-names a consumer, the input is already explicit and provenanced rather than something to retrofit.
+O que a fatia *efetivamente* define é o formato que um repositório guardaria, porque o
+`VehicleTrackingStatus` carrega as quatro propriedades que a nota da `PD-025` argumenta que a `D-01`
+precisa: um **valor**, sua **proveniência** (qual fonte respondeu), sua **qualidade** (confiável ou
+não) e um **instante de referência** (as-of). Quando a `D-01` nomear um consumidor, a entrada já
+será explícita e com proveniência, em vez de algo a ser adaptado depois.
 
-Hermes also holds no vehicle, garage, trip or fuel entity, and this slice introduces none. Tracking
-arrives as an *integration*, not as a domain model; the fleet-operations domain arrives from
-`01-project_truth/operacao-trm/`, not from here.
+O Hermes também não possui nenhuma entidade de veículo, garagem, viagem ou combustível, e esta
+fatia não introduz nenhuma. O rastreamento chega como uma *integração*, não como um modelo de
+domínio; o domínio de operações de frota chega de `01-project_truth/operacao-trm/`, não daqui.

@@ -39,9 +39,39 @@ export interface BusinessPlan {
   uuid?: string
   name: string
   priceInCents: number
+  pricePerExtraUserInCents: number
   availableUsers: number
   periodDays: number
-  paymentDate: string
+}
+
+export interface BillingCharge {
+  uuid: string
+  tenantUuid: string
+  tenantName: string
+  planName: string
+  currency: 'BRL'
+  periodStart: string
+  periodEnd: string
+  priceInCents: number
+  pricePerExtraUserInCents: number
+  includedUsers: number
+  activeUsers: number
+  extraUsers: number
+  graceDays: number
+  totalInCents: number
+  status: 'Pending' | 'Paid'
+  isOverdue: boolean
+  paidAt?: string | null
+  paidBy?: string | null
+}
+
+export interface BillingSettings {
+  tenantUuid: string
+  graceDays?: number | null
+  cycleStartedAt?: string | null
+  pendingPlan: boolean
+  suspendedAt?: string | null
+  suspendedBy?: string | null
 }
 export interface User {
   id?: number

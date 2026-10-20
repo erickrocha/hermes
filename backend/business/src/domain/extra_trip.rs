@@ -39,6 +39,14 @@ pub struct ExtraTrip {
     pub updated_by: Option<String>,
 }
 
+impl ExtraTrip {
+    /// `C-031` (`HRMS-860`): whether the trip names the user as its driver or second driver. A user with no id
+    /// is never named, so a missing id can never widen what a driver sees.
+    pub fn names_driver(&self, user_id: Option<i64>) -> bool {
+        user_id.is_some() && (self.driver_id == user_id || self.second_driver_id == user_id)
+    }
+}
+
 pub struct ExtraTripEntityMapper {}
 
 impl EntityMapper<ExtraTrip, Model, ActiveModel> for ExtraTripEntityMapper {

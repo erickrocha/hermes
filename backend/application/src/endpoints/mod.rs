@@ -1,5 +1,6 @@
 pub mod auth_endpoint;
 pub mod business_plan_endpoint;
+pub mod billing_endpoint;
 pub mod city_endpoint;
 pub mod customer_endpoint;
 pub mod customer_day_off_endpoint;
@@ -21,6 +22,8 @@ pub mod service_type_endpoint;
 pub mod priced_service_endpoint;
 pub mod part_endpoint;
 pub mod purchase_order_endpoint;
+pub mod maintenance_notification_endpoint;
+pub mod non_execution_endpoint;
 pub mod user_endpoint;
 pub mod vehicle_endpoint;
 pub mod vehicle_assignment_endpoint;

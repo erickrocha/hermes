@@ -12,6 +12,7 @@ use business::gateway::user_gateway::UserGateway;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 use business::gateway::garage_device_gateway::GarageDeviceGateway;
 use business::use_cases::garage_device_use_case::GarageDeviceUseCase;
+use business::gateway::billing_gateway::{BillingGateway, BillingStore};
 
 pub async fn authentication(
     state: State<AppState>,
@@ -55,6 +56,7 @@ pub async fn authentication(
                 .validate_credential(token.to_string())
                 .await
                 .map_err(|_| ExceptionResponse::Unauthorized(locale.clone(), ErrorKey::BadCredentials))?;
+            ensure_billing_active(&state, &locale, device.tenant_id).await?;
             let audit_user = entity::audit::AuditUser {
                 id: 0,
                 email: format!("device:{}", device.uuid),
@@ -79,6 +81,9 @@ pub async fn authentication(
             locale.clone(),
             ErrorKey::InvalidParameterValue,
         ));
+    }
+    if let Some(tenant_id) = current_user.tenant_id {
+        ensure_billing_active(&state, &locale, tenant_id).await?;
     }
 
     let audit_user = entity::audit::AuditUser {
@@ -110,6 +115,28 @@ pub async fn authentication(
 
     req.extensions_mut().insert(current_user);
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
+}
+
+async fn ensure_billing_active(
+    state: &AppState,
+    locale: &Locale,
+    tenant_id: i64,
+) -> Result<(), ExceptionResponse> {
+    let billing = BillingGateway::new(state.conn.as_ref().clone());
+    let settings = entity::audit::run_for_tenant(
+        tenant_id,
+        "billing-access-check",
+        billing.get_settings(tenant_id),
+    )
+    .await
+    .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?;
+    if settings.is_some_and(|settings| settings.suspended_at.is_some()) {
+        return Err(ExceptionResponse::Forbidden(
+            locale.clone(),
+            ErrorKey::BillingTenantSuspended,
+        ));
+    }
+    Ok(())
 }
 
 fn bearer_token(header: &str) -> Option<&str> {

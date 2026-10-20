@@ -264,6 +264,8 @@ fn driver() -> User {
         enabled: true,
         tenant_id: Some(42),
         role: Role::Driver,
+        cpf: None,
+        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,

@@ -95,6 +95,11 @@ fn validate(plan: &mut BusinessPlan) -> Result<(), BusinessError> {
             "Business plan prices cannot be negative".to_string(),
         ));
     }
+    if plan.price_per_extra_user_in_cents < 0 {
+        return Err(BusinessError::new(
+            "Extra user prices cannot be negative".to_string(),
+        ));
+    }
 
     Ok(())
 }
@@ -103,7 +108,6 @@ fn validate(plan: &mut BusinessPlan) -> Result<(), BusinessError> {
 mod tests {
     use super::validate;
     use crate::domain::business_plan::BusinessPlan;
-    use chrono::NaiveDate;
 
     fn valid_plan() -> BusinessPlan {
         BusinessPlan {
@@ -111,9 +115,9 @@ mod tests {
             uuid: None,
             name: " Professional ".to_string(),
             price_in_cents: 10_000,
+            price_per_extra_user_in_cents: 500,
             available_users: 10,
             period_days: 30,
-            payment_date: NaiveDate::from_ymd_opt(2026, 9, 30).unwrap(),
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -155,5 +159,13 @@ mod tests {
         let mut invalid = valid_plan();
         invalid.price_in_cents = -1;
         assert!(validate(&mut invalid).is_err());
+
+        let mut invalid_overage = valid_plan();
+        invalid_overage.price_per_extra_user_in_cents = -1;
+        assert!(validate(&mut invalid_overage).is_err());
+
+        let mut no_overage = valid_plan();
+        no_overage.price_per_extra_user_in_cents = 0;
+        validate(&mut no_overage).unwrap();
     }
 }

@@ -64,6 +64,8 @@ pub const GRANTABLE: &[Permission] = &[
     Permission { code: "garage.service-catalogue.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "garage.service-catalogue.update", module: "Garage", tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "garage.triage.check-out", module: "Garage", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "garage.service.external", module: "Garage", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "garage.service.internal", module: "Garage", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "garage.triage.mark-service", module: "Garage", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "garage.triage.open", module: "Garage", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "garage.triage.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
@@ -71,6 +73,11 @@ pub const GRANTABLE: &[Permission] = &[
     Permission { code: "inspection-model.read", module: "Inspections", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "technical-inspection.create", module: "Inspections", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "technical-inspection.read", module: "Inspections", tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "maintenance-notification.read", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "maintenance-notification.update", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "non-execution.justify", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "non-execution.read", module: "Maintenance", tenant_user: true, driver: false, mechanic: true, own: false },
+    Permission { code: "non-execution.record-manual", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "maintenance-plan.create", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "maintenance-plan.read", module: "Maintenance", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "preventive-plan.alert.discharge", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
@@ -132,9 +139,11 @@ pub const GRANTABLE: &[Permission] = &[
 ];
 
 pub const OWNER_ONLY: &[&str] = &[
+    "billing.read",
     "fuel-gauge-settings.read",
     "fuel-gauge-settings.update",
     "internal-tank.update",
+    "non-execution.evaluate",
     "profile.assign",
     "profile.create",
     "profile.read",
@@ -151,6 +160,9 @@ pub const OWNER_ONLY: &[&str] = &[
 
 /// The platform administrator's alone; never in a profile.
 pub const PLATFORM: &[&str] = &[
+    "billing.confirm-payment",
+    "billing.configure",
+    "billing.suspend",
     "business-plan.create",
     "business-plan.delete",
     "business-plan.read",

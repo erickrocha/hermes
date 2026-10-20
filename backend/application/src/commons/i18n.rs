@@ -83,6 +83,10 @@ pub enum ErrorKey {
     BusinessPlanNotFound,
     BusinessPlanInvalid,
     BusinessPlanInUse,
+    BillingTenantSuspended,
+    BillingForbidden,
+    BillingChargeNotFound,
+    BillingSettingsInvalid,
     CountryNotSupported,
     ReferenceDataUnavailable,
     /// DEF-RD-06: reference data is not a plan feature. Saying
@@ -204,6 +208,22 @@ pub enum ErrorKey {
     PurchaseOrderForbidden,
     /// `HRMS-802`: no such purchase order, or it belongs to another tenant.
     PurchaseOrderNotFound,
+    /// `EPIC-MT-06`: a role that may not read the maintenance notices.
+    MaintenanceNotificationForbidden,
+    /// `EPIC-MT-06`: no such maintenance notice, or it belongs to another tenant.
+    MaintenanceNotificationNotFound,
+    /// `EPIC-MT-04`: a role that may not see or act on non-executions.
+    NonExecutionForbidden,
+    /// `EPIC-MT-04`: no such occurrence or history, or it belongs to another tenant.
+    NonExecutionOccurrenceNotFound,
+    /// `EPIC-MT-04`: the occurrence already has a justification.
+    NonExecutionAlreadyJustified,
+    /// `EPIC-MT-04`: the same manual occurrence was already recorded.
+    NonExecutionAlreadyRecorded,
+    /// `EPIC-MT-04`: the tracker does not evidence the manual non-execution.
+    NonExecutionNotEvidenced,
+    /// `EPIC-MT-04`: the work order is already concluded or cancelled.
+    NonExecutionWorkOrderNotOpen,
     /// `HRMS-803`: a role that may not record vehicle expenses.
     VehicleExpenseForbidden,
     /// `HRMS-803`: no such vehicle expense, or it belongs to another tenant.
@@ -323,6 +343,10 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "BusinessPlanNotFound",
             ErrorKey::BusinessPlanInvalid => "BusinessPlanInvalid",
             ErrorKey::BusinessPlanInUse => "BusinessPlanInUse",
+            ErrorKey::BillingTenantSuspended => "BillingTenantSuspended",
+            ErrorKey::BillingForbidden => "BillingForbidden",
+            ErrorKey::BillingChargeNotFound => "BillingChargeNotFound",
+            ErrorKey::BillingSettingsInvalid => "BillingSettingsInvalid",
             ErrorKey::CountryNotSupported => "CountryNotSupported",
             ErrorKey::ReferenceDataUnavailable => "ReferenceDataUnavailable",
             ErrorKey::ReferenceDataForbidden => "ReferenceDataForbidden",
@@ -374,6 +398,14 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "PartNotFound",
             ErrorKey::PurchaseOrderForbidden => "PurchaseOrderForbidden",
             ErrorKey::PurchaseOrderNotFound => "PurchaseOrderNotFound",
+            ErrorKey::MaintenanceNotificationForbidden => "MaintenanceNotificationForbidden",
+            ErrorKey::MaintenanceNotificationNotFound => "MaintenanceNotificationNotFound",
+            ErrorKey::NonExecutionForbidden => "NonExecutionForbidden",
+            ErrorKey::NonExecutionOccurrenceNotFound => "NonExecutionOccurrenceNotFound",
+            ErrorKey::NonExecutionAlreadyJustified => "NonExecutionAlreadyJustified",
+            ErrorKey::NonExecutionAlreadyRecorded => "NonExecutionAlreadyRecorded",
+            ErrorKey::NonExecutionNotEvidenced => "NonExecutionNotEvidenced",
+            ErrorKey::NonExecutionWorkOrderNotOpen => "NonExecutionWorkOrderNotOpen",
             ErrorKey::VehicleExpenseForbidden => "VehicleExpenseForbidden",
             ErrorKey::VehicleExpenseNotFound => "VehicleExpenseNotFound",
             ErrorKey::DuplicateExpenseInvoice => "DuplicateExpenseInvoice",
@@ -449,6 +481,10 @@ impl ErrorKey {
             ErrorKey::BusinessPlanNotFound => "business-plan-not-found",
             ErrorKey::BusinessPlanInvalid => "business-plan-invalid",
             ErrorKey::BusinessPlanInUse => "business-plan-in-use",
+            ErrorKey::BillingTenantSuspended => "billing-tenant-suspended",
+            ErrorKey::BillingForbidden => "billing-forbidden",
+            ErrorKey::BillingChargeNotFound => "billing-charge-not-found",
+            ErrorKey::BillingSettingsInvalid => "billing-settings-invalid",
             ErrorKey::CountryNotSupported => "country-not-supported",
             ErrorKey::ReferenceDataUnavailable => "reference-data-unavailable",
             ErrorKey::ReferenceDataForbidden => "reference-data-forbidden",
@@ -500,6 +536,14 @@ impl ErrorKey {
             ErrorKey::PartNotFound => "part-not-found",
             ErrorKey::PurchaseOrderForbidden => "purchase-order-forbidden",
             ErrorKey::PurchaseOrderNotFound => "purchase-order-not-found",
+            ErrorKey::MaintenanceNotificationForbidden => "maintenance-notification-forbidden",
+            ErrorKey::MaintenanceNotificationNotFound => "maintenance-notification-not-found",
+            ErrorKey::NonExecutionForbidden => "non-execution-forbidden",
+            ErrorKey::NonExecutionOccurrenceNotFound => "non-execution-occurrence-not-found",
+            ErrorKey::NonExecutionAlreadyJustified => "non-execution-already-justified",
+            ErrorKey::NonExecutionAlreadyRecorded => "non-execution-already-recorded",
+            ErrorKey::NonExecutionNotEvidenced => "non-execution-not-evidenced",
+            ErrorKey::NonExecutionWorkOrderNotOpen => "non-execution-work-order-not-open",
             ErrorKey::VehicleExpenseForbidden => "vehicle-expense-forbidden",
             ErrorKey::VehicleExpenseNotFound => "vehicle-expense-not-found",
             ErrorKey::DuplicateExpenseInvoice => "duplicate-expense-invoice",
@@ -749,6 +793,10 @@ mod tests {
     #[test]
     fn every_vehicle_error_is_worded_in_every_bundle() {
         let keys = [
+            ErrorKey::BillingTenantSuspended,
+            ErrorKey::BillingForbidden,
+            ErrorKey::BillingChargeNotFound,
+            ErrorKey::BillingSettingsInvalid,
             ErrorKey::VehicleNotFound,
             ErrorKey::VehicleForbidden,
             ErrorKey::InvalidVehicleStatus,
@@ -799,6 +847,14 @@ mod tests {
             ErrorKey::PartNotFound,
             ErrorKey::PurchaseOrderForbidden,
             ErrorKey::PurchaseOrderNotFound,
+            ErrorKey::MaintenanceNotificationForbidden,
+            ErrorKey::MaintenanceNotificationNotFound,
+            ErrorKey::NonExecutionForbidden,
+            ErrorKey::NonExecutionOccurrenceNotFound,
+            ErrorKey::NonExecutionAlreadyJustified,
+            ErrorKey::NonExecutionAlreadyRecorded,
+            ErrorKey::NonExecutionNotEvidenced,
+            ErrorKey::NonExecutionWorkOrderNotOpen,
             ErrorKey::VehicleExpenseForbidden,
             ErrorKey::VehicleExpenseNotFound,
             ErrorKey::DuplicateExpenseInvoice,

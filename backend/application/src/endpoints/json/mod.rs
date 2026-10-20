@@ -1,5 +1,6 @@
 pub mod access_token_json;
 pub mod business_plan_json;
+pub mod billing_json;
 pub mod change_password_request;
 pub mod city_json;
 pub mod customer_json;
@@ -31,6 +32,8 @@ pub mod priced_service_json;
 pub mod part_json;
 pub mod stock_movement_json;
 pub mod purchase_order_json;
+pub mod maintenance_notification_json;
+pub mod non_execution_json;
 pub mod user_json;
 pub mod vehicle_json;
 pub mod vehicle_assignment_json;

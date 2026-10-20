@@ -1,0 +1,11 @@
+# Acesso ao MariaDB pelo DBeaver (ou outro cliente SQL), opt-in. NÃO faz parte da implantação normal.
+#
+#   docker compose --env-file .env -f docker-compose.internal.yml -f docker-compose.db-access.yml up -d mariadb
+#
+# Publica o banco só no próprio servidor (127.0.0.1:${DB_ACCESS_PORT:-3307}); nunca em 0.0.0.0, para o banco não
+# ficar aberto na rede. De outra máquina, use um túnel SSH (veja o readme). Para desligar, suba de novo sem este arquivo.
+
+services:
+  mariadb:
+    ports:
+      - "127.0.0.1:${DB_ACCESS_PORT:-3307}:3306"

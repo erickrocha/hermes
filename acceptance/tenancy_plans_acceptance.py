@@ -212,8 +212,9 @@ def create_plan(token, body):
     return s, p
 
 
-def plan_body(name, price=4900, users=5, days=30, date="2026-10-05"):
-    return {"name": name, "priceInCents": price, "availableUsers": users, "periodDays": days, "paymentDate": date}
+def plan_body(name, price=4900, users=5, days=30, overage=0):
+    return {"name": name, "priceInCents": price, "pricePerExtraUserInCents": overage,
+            "availableUsers": users, "periodDays": days}
 
 
 def activate(fx, email):
@@ -527,15 +528,18 @@ def epic_02(fx):
 # ---------------------------------------------------------------- EPIC-TP-03
 def epic_03(fx):
     adm = fx.adm
-    body = plan_body(f"  {TAG}-plan-basic  ", price=12990, users=12, days=30, date="2026-10-10")
+    body = plan_body(f"  {TAG}-plan-basic  ", price=12990, users=12, days=30, overage=750)
     s, p = create_plan(adm, body)
     fx.basic = p if s == 201 else None
-    want = {"name": f"{TAG}-plan-basic", "priceInCents": 12990, "availableUsers": 12, "periodDays": 30,
-            "paymentDate": "2026-10-10"}
+    want = {"name": f"{TAG}-plan-basic", "priceInCents": 12990, "pricePerExtraUserInCents": 750,
+            "availableUsers": 12, "periodDays": 30}
     echo = s == 201 and all(p.get(k) == v for k, v in want.items()) and p.get("uuid")
     s2, g = http("GET", f"/business-plan/uuid/{p.get('uuid')}", token=adm) if s == 201 else (0, {})
-    check("TP-040", echo and s2 == 200 and all(g.get(k) == v for k, v in want.items()),
-          f"plan 201, fields echoed (name trimmed), GET by uuid equal: {want}",
+    payment_date_columns = one("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='hermes' "
+                               "AND table_name='business_plan' AND column_name='payment_date'")
+    check("TP-040", echo and s2 == 200 and all(g.get(k) == v for k, v in want.items()) and
+          "paymentDate" not in p and payment_date_columns == "0",
+          f"plan 201, fields echoed (name trimmed), no paymentDate API/column, GET by uuid equal: {want}",
           f"create {s} {p}; GET {s2} {g}")
 
     s, p = create_plan(adm, plan_body(f"{TAG}-plan-cents", price=1999))
@@ -544,7 +548,9 @@ def epic_03(fx):
                   "AND table_name='business_plan' AND column_name='price_in_cents'")
     raw_dec = json.dumps(plan_body(f"{TAG}-plan-dec")).replace('"priceInCents": 4900', '"priceInCents": 19.99')
     s3, d = http("POST", "/business-plan", raw_body=raw_dec, token=adm)
-    s4, st = http("POST", "/business-plan", body=plan_body(f"{TAG}-plan-str", price="19.99"), token=adm)
+    string_body = plan_body(f"{TAG}-plan-str")
+    string_body["priceInCents"] = "19.99"
+    s4, st = http("POST", "/business-plan", body=string_body, token=adm)
     for r in (d, st):
         if isinstance(r, dict) and r.get("id"):
             CREATED_PLANS.add(r["id"])
@@ -558,7 +564,13 @@ def epic_03(fx):
     res = []
     for label, kw in (("name ''", {"name": ""}), ("name blank", {"name": "   "}), ("users 0", {"users": 0}),
                       ("users -1", {"users": -1}), ("days 0", {"days": 0}), ("days -5", {"days": -5})):
-        b = plan_body(kw.get("name", f"{TAG}-plan-bad"), users=kw.get("users", 5), days=kw.get("days", 30))
+        b = plan_body(f"{TAG}-plan-bad")
+        if "name" in kw:
+            b["name"] = kw["name"]
+        if "users" in kw:
+            b["availableUsers"] = kw["users"]
+        if "days" in kw:
+            b["periodDays"] = kw["days"]
         s, _ = create_plan(adm, b)
         pid = fx.basic["id"]
         s2, _ = http("PUT", f"/business-plan/uuid/{fx.basic['uuid']}", body=b, token=adm)
@@ -572,8 +584,13 @@ def epic_03(fx):
     s2, _ = create_plan(adm, plan_body(f"{TAG}-plan-neg", price=-1))
     s3, _ = http("PUT", f"/business-plan/uuid/{p.get('uuid')}", body=plan_body(f"{TAG}-plan-free", price=-1), token=adm) \
         if s == 201 else (0, None)
-    check("TP-043", s == 201 and p["priceInCents"] == 0 and s2 == 400 and s3 == 400,
-          f"price 0 -> 201; -1 create {s2}, -1 update {s3}", f"0 -> {s}; -1 create {s2}; -1 update {s3}")
+    s4, _ = create_plan(adm, plan_body(f"{TAG}-plan-overage-neg", overage=-1))
+    s5, _ = http("PUT", f"/business-plan/uuid/{p.get('uuid')}",
+                 body=plan_body(f"{TAG}-plan-free", overage=-1), token=adm) if s == 201 else (0, None)
+    check("TP-043", s == 201 and p["priceInCents"] == 0 and p["pricePerExtraUserInCents"] == 0 and
+          s2 == 400 and s3 == 400 and s4 == 400 and s5 == 400,
+          f"base/overage 0 -> 201; base -1 create/update {s2}/{s3}; overage -1 create/update {s4}/{s5}",
+          f"zero {s}; base -1 {s2}/{s3}; overage -1 {s4}/{s5}")
 
     b = plan_body(f"{TAG}-plan-tiers")
     b["tiers"] = [{"maxUsers": 10, "pricePerUserInCents": 500}, {"maxUsers": None, "pricePerUserInCents": 400}]
@@ -598,7 +615,7 @@ def epic_03(fx):
     found = s1 == 200 and [x["name"] for x in sr["items"]] == [f"{TAG}-plan-basic"]
     s2, bu = http("GET", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm)
     s3, up = http("PUT", f"/business-plan/uuid/{fx.basic['uuid']}", token=adm,
-                  body=plan_body(f"{TAG}-plan-basic", price=13990, users=15, days=30, date="2026-10-10"))
+                  body=plan_body(f"{TAG}-plan-basic", price=13990, users=15, days=30, overage=750))
     upd = s3 == 200 and up["priceInCents"] == 13990 and up["availableUsers"] == 15 and up["uuid"] == fx.basic["uuid"]
     s4, tmp = create_plan(adm, plan_body(f"{TAG}-plan-tmp"))
     s5, _ = http("DELETE", f"/business-plan/uuid/{tmp['uuid']}", token=adm)

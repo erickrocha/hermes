@@ -4,6 +4,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -12,6 +13,11 @@ import com.progressrail.hermes.client.shared.ANSWER_CONFORMING
 import com.progressrail.hermes.client.shared.ANSWER_NON_CONFORMING
 import com.progressrail.hermes.client.shared.CHECKLIST_DEPARTURE
 import com.progressrail.hermes.client.shared.CHECKLIST_RETURN
+import com.progressrail.hermes.client.shared.ExtraTrip
+import com.progressrail.hermes.client.shared.FuelEntry
+import com.progressrail.hermes.client.shared.VehicleTracking
+import com.progressrail.hermes.client.shared.buildFuelReceipt
+import com.progressrail.hermes.client.shared.canSubmitReceipt
 import com.progressrail.hermes.client.shared.ChecklistTemplate
 import com.progressrail.hermes.client.shared.Vehicle
 import com.progressrail.hermes.client.shared.VehicleAction
@@ -42,16 +48,36 @@ internal class FleetContent(private val host: FleetHost, private val container: 
         var message: String? = null,
     )
 
+    private class Receipt(
+        val vehicle: Vehicle,
+        var prefix: String = "",
+        var liters: String = "",
+        var value: String = "",
+        var odometer: String = "",
+        var station: String = "",
+        var fullTank: Boolean = false,
+        var submitting: Boolean = false,
+        /** Set after `OdometerOutsideWindow`: the driver may confirm the reading and send anyway. */
+        var canOverride: Boolean = false,
+        var message: String? = null,
+    )
+
     private var rows: List<VehicleRow>? = null
     private var form: Form? = null
+    private var receipt: Receipt? = null
     private var homeMessage: String? = null
 
-    fun start() = if (form != null) showForm() else loadHome()
+    fun start() = when {
+        form != null -> showForm()
+        receipt != null -> showReceipt()
+        else -> loadHome()
+    }
 
     // ---- Home: the assigned vehicle(s) ----
 
     private fun loadHome(message: String? = null) {
         form = null
+        receipt = null
         homeMessage = message
         showLoading()
         host.run({ api, token ->
@@ -91,7 +117,11 @@ internal class FleetContent(private val host: FleetHost, private val container: 
                 is VehicleAction.Return -> container.addView(button(R.string.register_return) { openForm(row) }, host.spacing())
                 VehicleAction.HeldByAnother -> container.addView(host.text(context.getString(R.string.held_by_another), R.style.TextAppearance_Hermes_Error), host.spacing())
             }
+            container.addView(button(R.string.view_position) { showPosition(v) }, host.spacing())
+            container.addView(button(R.string.register_fuel) { receipt = Receipt(v); showReceipt() }, host.spacing())
         }
+        container.addView(button(R.string.my_trips) { showTrips() }, host.spacing())
+        container.addView(button(R.string.my_fuel_entries) { showFuelEntries() }, host.spacing())
         container.addView(button(R.string.refresh_button) { loadHome() }, host.spacing())
     }
 
@@ -191,6 +221,163 @@ internal class FleetContent(private val host: FleetHost, private val container: 
                 if (form === current) showForm()
             }
         }
+    }
+
+    // ---- Position (SR-CA-03-12) ----
+
+    private fun showPosition(vehicle: Vehicle) {
+        showLoading()
+        host.run({ api, token -> api.tracking(token, vehicle.uuid) }) { result ->
+            result.onSuccess { renderPosition(vehicle, it) }.onFailure { failure ->
+                val message = when {
+                    failure is FleetRefused && failure.errorKey == "TrackerNotLinked" -> host.context.getString(R.string.tracker_not_linked)
+                    failure is FleetRefused && failure.status == 503 -> host.context.getString(R.string.tracking_unavailable)
+                    else -> describe(failure, R.string.load_failed)
+                }
+                showError(message) { loadHome() }
+            }
+        }
+    }
+
+    private fun renderPosition(vehicle: Vehicle, tracking: VehicleTracking) {
+        val context = host.context
+        container.removeAllViews()
+        container.addView(host.text(context.getString(R.string.position_title), R.style.TextAppearance_Hermes_Title), host.spacing())
+        container.addView(host.text(context.getString(R.string.vehicle_line, vehicle.plate, vehicle.model), R.style.TextAppearance_Hermes_Body))
+        val point = tracking.position
+        if (point == null) {
+            container.addView(host.text(context.getString(R.string.position_none), R.style.TextAppearance_Hermes_Body), host.spacing())
+        } else {
+            val label = if (tracking.positionLive) R.string.position_live else R.string.position_stale
+            // A reading that is not live is never passed off as live (HRMS-929).
+            container.addView(host.text(context.getString(label), if (tracking.positionLive) R.style.TextAppearance_Hermes_Title else R.style.TextAppearance_Hermes_Error), host.spacing())
+            container.addView(host.text(context.getString(R.string.position_coordinates, point.latitude.toString(), point.longitude.toString()), R.style.TextAppearance_Hermes_Body))
+            container.addView(host.text(context.getString(R.string.position_updated, Instants.toLocal(tracking.positionReportedAt ?: tracking.reportedAt)), R.style.TextAppearance_Hermes_Body))
+        }
+        container.addView(host.text(context.getString(R.string.ignition_line, ignitionLabel(tracking.ignition)), R.style.TextAppearance_Hermes_Body))
+        if (!tracking.trustworthy) container.addView(host.text(context.getString(R.string.ignition_untrusted), R.style.TextAppearance_Hermes_Error))
+        point?.let {
+            container.addView(button(R.string.open_map) {
+                if (!host.openMap(it.latitude, it.longitude)) container.addView(host.text(context.getString(R.string.no_map_app), R.style.TextAppearance_Hermes_Error), host.spacing())
+            }, host.spacing())
+        }
+        container.addView(button(R.string.refresh_position) { showPosition(vehicle) }, host.spacing())
+        container.addView(button(R.string.back_button) { loadHome() }, host.spacing())
+    }
+
+    private fun ignitionLabel(state: String): String = host.context.getString(
+        when (state) { "On" -> R.string.ignition_On; "Off" -> R.string.ignition_Off; else -> R.string.ignition_Unknown },
+    )
+
+    // ---- Fuel receipt (SR-CA-03-13/14) ----
+
+    private fun showReceipt() {
+        val current = receipt ?: return loadHome()
+        val context = host.context
+        container.removeAllViews()
+        container.addView(host.text(context.getString(R.string.fuel_form_title), R.style.TextAppearance_Hermes_Title), host.spacing())
+        container.addView(host.text(context.getString(R.string.vehicle_line, current.vehicle.plate, current.vehicle.model), R.style.TextAppearance_Hermes_Body))
+
+        val send = Button(context)
+        val sendAnyway = Button(context)
+        fun refreshSend() {
+            val ready = canSubmitReceipt(current.prefix, current.liters, current.value, current.odometer) && !current.submitting
+            send.isEnabled = ready
+            send.text = context.getString(if (current.submitting) R.string.submitting else R.string.submit_button)
+            sendAnyway.isEnabled = ready
+        }
+        container.addView(editText(R.string.prefix_hint, current.prefix) { current.prefix = it; refreshSend() }, host.spacing())
+        container.addView(editText(R.string.liters_hint, current.liters, decimal = true) { current.liters = it; refreshSend() }, host.spacing())
+        container.addView(editText(R.string.value_hint, current.value, decimal = true) { current.value = it; refreshSend() }, host.spacing())
+        container.addView(editText(R.string.fuel_odometer_hint, current.odometer, decimal = true) { current.odometer = it; refreshSend() }, host.spacing())
+        container.addView(editText(R.string.station_hint, current.station) { current.station = it }, host.spacing())
+        container.addView(CheckBox(context).apply {
+            text = context.getString(R.string.full_tank)
+            isChecked = current.fullTank
+            setOnClickListener { current.fullTank = isChecked }
+        }, host.spacing())
+        current.message?.let { container.addView(host.text(it, R.style.TextAppearance_Hermes_Error), host.spacing()) }
+        send.setOnClickListener { submitReceipt(current, override = false) }
+        container.addView(send, host.spacing())
+        if (current.canOverride) {
+            sendAnyway.text = context.getString(R.string.send_anyway)
+            sendAnyway.setOnClickListener { submitReceipt(current, override = true) }
+            container.addView(sendAnyway, host.spacing())
+        }
+        refreshSend()
+        container.addView(button(R.string.cancel_button) { loadHome() }, host.spacing())
+    }
+
+    private fun submitReceipt(current: Receipt, override: Boolean) {
+        val request = buildFuelReceipt(
+            current.vehicle.uuid, current.prefix, Instants.nowUtc(), current.liters, current.value, current.odometer, current.station, current.fullTank, override,
+        ) ?: return
+        current.submitting = true
+        current.message = null
+        showReceipt()
+        host.run({ api, token -> api.submitReceipt(token, request) }) { result ->
+            current.submitting = false
+            result.onSuccess {
+                loadHome(host.context.getString(if (it.alreadyRecorded) R.string.fuel_already_registered else R.string.fuel_registered))
+            }.onFailure { failure ->
+                current.canOverride = failure is FleetRefused && failure.errorKey == "OdometerOutsideWindow"
+                current.message = if (failure is FleetUnreachable) host.context.getString(R.string.fuel_unreachable) else describe(failure, R.string.fuel_refused)
+                if (receipt === current) showReceipt()
+            }
+        }
+    }
+
+    private fun showFuelEntries() {
+        showLoading()
+        host.run({ api, token -> api.fuelEntries(token) }) { result ->
+            result.onSuccess { renderFuelEntries(it) }.onFailure { showError(describe(it, R.string.load_failed)) { loadHome() } }
+        }
+    }
+
+    private fun renderFuelEntries(entries: List<FuelEntry>) {
+        val context = host.context
+        container.removeAllViews()
+        container.addView(host.text(context.getString(R.string.my_fuel_entries), R.style.TextAppearance_Hermes_Title), host.spacing())
+        if (entries.isEmpty()) container.addView(host.text(context.getString(R.string.no_fuel_entries), R.style.TextAppearance_Hermes_Body), host.spacing())
+        entries.forEach { entry ->
+            val liters = String.format(java.util.Locale("pt", "BR"), "%.1f", entry.volumeLiters)
+            container.addView(host.text(context.getString(R.string.fuel_line, Instants.toLocal(entry.recordedAt), liters, Instants.money(entry.valueCents)), R.style.TextAppearance_Hermes_Body), host.spacing())
+            entry.station?.let { container.addView(host.text(context.getString(R.string.fuel_station_line, it), R.style.TextAppearance_Hermes_Body)) }
+        }
+        container.addView(button(R.string.back_button) { loadHome() }, host.spacing())
+    }
+
+    // ---- Trips (SR-CA-03-11): the server returns only the ones that name the driver ----
+
+    private fun showTrips() {
+        showLoading()
+        host.run({ api, token -> api.trips(token) }) { result ->
+            result.onSuccess { renderTrips(it) }.onFailure { showError(describe(it, R.string.load_failed)) { loadHome() } }
+        }
+    }
+
+    private fun renderTrips(trips: List<ExtraTrip>) {
+        val context = host.context
+        container.removeAllViews()
+        container.addView(host.text(context.getString(R.string.trips_title), R.style.TextAppearance_Hermes_Title), host.spacing())
+        if (trips.isEmpty()) container.addView(host.text(context.getString(R.string.no_trips), R.style.TextAppearance_Hermes_Body), host.spacing())
+        trips.forEach { trip ->
+            container.addView(host.text(context.getString(R.string.trip_when, Instants.date(trip.tripDate), Instants.time(trip.startTime)).trim(), R.style.TextAppearance_Hermes_Title), host.spacing())
+            if (!trip.originCity.isNullOrBlank() || !trip.destination.isNullOrBlank()) {
+                container.addView(host.text(context.getString(R.string.trip_route, trip.originCity.orEmpty(), trip.destination.orEmpty()), R.style.TextAppearance_Hermes_Body))
+            }
+            trip.stops?.takeIf { it.isNotBlank() }?.let { container.addView(host.text(context.getString(R.string.trip_stops, it), R.style.TextAppearance_Hermes_Body)) }
+            container.addView(host.text(context.getString(R.string.trip_code, trip.orderCode, tripStatus(trip.status)), R.style.TextAppearance_Hermes_Body))
+        }
+        container.addView(button(R.string.back_button) { loadHome() }, host.spacing())
+    }
+
+    private fun tripStatus(status: String): String = when (status) {
+        "Scheduled" -> host.context.getString(R.string.trip_status_Scheduled)
+        "Conflict" -> host.context.getString(R.string.trip_status_Conflict)
+        "PendingSchedule" -> host.context.getString(R.string.trip_status_PendingSchedule)
+        "Cancelled" -> host.context.getString(R.string.trip_status_Cancelled)
+        else -> status
     }
 
     // ---- helpers ----

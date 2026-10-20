@@ -39,6 +39,12 @@ pub enum ExceptionResponse {
     /// figures are a fixed-format, language-neutral tail, so the translated
     /// part stays in the caller's language.
     ConflictDetail(Locale, ErrorKey, String),
+
+    /// 403 that names the catalogue permission the caller lacks, when the operation is gated by a permission the
+    /// route-level table cannot know (`C-032`, `EPIC-AC-03-S01`: marking a garage service asks for the internal or
+    /// the external permission, by the service's own group). The same `permission` field and message tail
+    /// `name_missing_permission` writes for a route-level refusal.
+    ForbiddenPermission(Locale, ErrorKey, &'static str),
 }
 
 impl IntoResponse for ExceptionResponse {
@@ -46,6 +52,12 @@ impl IntoResponse for ExceptionResponse {
         if let ExceptionResponse::BadRequestMessage(message) = self {
             let payload = ErrorResponseJson::new("ImportRejected".to_string(), message);
             return (axum::http::StatusCode::BAD_REQUEST, Json(payload)).into_response();
+        }
+
+        if let ExceptionResponse::ForbiddenPermission(locale, key, code) = self {
+            let message = format!("{} ({code})", translate(locale, key));
+            let payload = serde_json::json!({ "errorKey": key.as_str(), "message": message, "permission": code });
+            return (axum::http::StatusCode::FORBIDDEN, Json(payload)).into_response();
         }
 
         if let ExceptionResponse::ConflictDetail(locale, key, detail) = self {
@@ -76,7 +88,9 @@ impl IntoResponse for ExceptionResponse {
             ExceptionResponse::ServiceUnavailable(locale, key) => {
                 (axum::http::StatusCode::SERVICE_UNAVAILABLE, locale, key)
             }
-            ExceptionResponse::BadRequestMessage(..) | ExceptionResponse::ConflictDetail(..) => {
+            ExceptionResponse::BadRequestMessage(..)
+            | ExceptionResponse::ConflictDetail(..)
+            | ExceptionResponse::ForbiddenPermission(..) => {
                 unreachable!("handled above")
             }
         };

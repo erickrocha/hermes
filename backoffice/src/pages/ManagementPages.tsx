@@ -10,13 +10,16 @@ import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
 import { clearCities, loadCities, loadCountries, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
 import { fetchPlan, fetchSubscription, fetchTenant, fetchUser, removePlan, saveBusinessPlan, saveManagedUser, saveSubscription, saveTenant, sendUserInvite, toggleUser } from '../features/managementSlice'
-import type { BusinessPlan, Session, Tenant, User } from '../types'
+import type { BusinessPlan, Tenant, User } from '../types'
 import type { ColumnDef } from '@tanstack/react-table'
 import { DataTable, Pagination } from '../components/DataTable'
 import { usePagedList } from '../usePagedList'
 import { Combobox } from '../components/Combobox'
 import { Confirm, Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
+import { canCreateUsers, tenantOwnerCreatableRoles } from '../features/routeAccess'
 import { UserProfilePicker } from './ProfilePages'
+
+export { canCreateUsers, canManageProfiles, canManageTenant, canReachAdministration, canSeeProfiles, canSeeTenants, canSeeUsers, tenantOwnerCreatableRoles } from '../features/routeAccess'
 
 const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'BRL' }).format(cents / 100)
 // EPIC-BO-03-S02 (HRMS-412): the API's unit is integer cents, but a person
@@ -25,30 +28,9 @@ const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, {
 // cents, so a price can no longer be off by a factor of a hundred.
 export const centsToAmount = (cents: number) => (cents / 100).toFixed(2)
 export const amountToCents = (amount: string) => Math.round((Number.parseFloat(amount || '0') || 0) * 100)
-const today = () => new Date().toISOString().slice(0, 10)
 const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
 const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode })
-const blankPlan: BusinessPlan = { name: '', priceInCents: 0, availableUsers: 1, periodDays: 30, paymentDate: today() }
-// DEF-BO-04 (PD-019/EPIC-IA-04): only a SysAdmin and a TenantOwner may create
-// accounts. A TenantUser was still shown "New user", and the form only failed
-// on submit -- offering a control the API refuses is exactly what PD-015
-// warns against. Exported so the route guard and the page agree on one rule.
-export const canCreateUsers = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
-// EPIC-IA-09 (HRMS-131, D-22): a tenant owner staffs their own tenant with these roles.
-export const tenantOwnerCreatableRoles: User['role'][] = ['TenantUser', 'Driver', 'Mechanic']
-// EPIC-BO-07-S02 (HRMS-416, D-22): drivers and mechanics reach no tenant or user administration.
-export const canReachAdministration = (role: string) => role !== 'Driver' && role !== 'Mechanic'
-// C-032 (D-27 4, 8): the tenant's information and configuration belong to the tenant owner alone.
-export const canManageTenant = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
-// C-032: access profiles and who holds them are the tenant owner's.
-export const canManageProfiles = (role: string) => role === 'TenantOwner'
-// C-032 (HRMS-864, PD-015): a screen is offered to what the person's permissions allow. Until the permissions
-// have loaded (or on a session stored before they existed) the role's own rule above answers.
-const holds = (session: Session, code: string, byRole: boolean) => session.permissions ? session.permissions.includes(code) : byRole
-export const canSeeUsers = (session: Session) => holds(session, 'user.create', canReachAdministration(session.role))
-export const canSeeTenants = (session: Session) => holds(session, 'tenant.update', canManageTenant(session.role))
-export const canSeeProfiles = (session: Session) => session.role !== 'SysAdmin' && holds(session, 'profile.read', canManageProfiles(session.role))
-
+const blankPlan: BusinessPlan = { name: '', priceInCents: 0, pricePerExtraUserInCents: 0, availableUsers: 1, periodDays: 30 }
 export function TenantsPage() {
   const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
   const { search, setSearch, onPageChange, reload } = usePagedList(loadTenants)
@@ -236,6 +218,7 @@ export function PlansPage() {
   const columns = useMemo<ColumnDef<BusinessPlan, unknown>[]>(() => [
     { header: () => t('planName'), accessorKey: 'name', cell: ({ row }) => <b>{row.original.name}</b> },
     { header: () => t('basePrice'), accessorKey: 'priceInCents', cell: ({ row }) => money(row.original.priceInCents, i18n.language) },
+    { header: () => t('pricePerExtraUser'), accessorKey: 'pricePerExtraUserInCents', cell: ({ row }) => money(row.original.pricePerExtraUserInCents, i18n.language) },
     { header: () => t('includedUsers'), accessorKey: 'availableUsers' },
     { header: () => t('periodDays'), accessorKey: 'periodDays' },
     { id: 'actions', header: () => t('actions'), cell: ({ row }) => <div className="row-actions">{row.original.uuid && <Link to={`/plans/${row.original.uuid}/edit`}><Pencil size={16} /></Link>}<button className="danger-text" onClick={() => setRemoving(row.original)}><Trash2 size={16} /></button></div> },
@@ -245,12 +228,12 @@ export function PlansPage() {
 
 export function PlanEditorPage() {
   const { uuid } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const [loading, setLoading] = useState(Boolean(uuid)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  const schema = yup.object({ name: yup.string().required(t('genericError')), priceInCents: yup.number().min(0).required(t('genericError')), availableUsers: yup.number().min(1).required(t('genericError')), periodDays: yup.number().min(1).required(t('genericError')), paymentDate: yup.string().required(t('genericError')) })
+  const schema = yup.object({ name: yup.string().required(t('genericError')), priceInCents: yup.number().min(0).required(t('genericError')), pricePerExtraUserInCents: yup.number().min(0).required(t('genericError')), availableUsers: yup.number().min(1).required(t('genericError')), periodDays: yup.number().min(1).required(t('genericError')) })
   const { control, register, handleSubmit, reset, formState: { errors: validationErrors } } = useForm<BusinessPlan>({ resolver: yupResolver(schema), defaultValues: { ...blankPlan } })
   useEffect(() => { if (!uuid) return; dispatch(fetchPlan(uuid)).unwrap().then(reset).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [dispatch, reset, uuid, t])
   const save = handleSubmit(async (plan) => { setSaving(true); setError(''); try { await dispatch(saveBusinessPlan({ uuid, plan })).unwrap(); navigate('/plans') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
   if (loading) return <Loading />
-  return <><PageHeader title={uuid ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label><label>{t('basePrice')}<Controller control={control} name="priceInCents" render={({ field }) => <input type="number" min="0" step="0.01" value={centsToAmount(field.value)} onChange={(event) => field.onChange(amountToCents(event.target.value))} />} />{validationErrors.priceInCents?.message && <small className="form-error">{validationErrors.priceInCents.message}</small>}</label><label>{t('includedUsers')}<input type="number" min="1" {...register('availableUsers', { valueAsNumber: true })} />{validationErrors.availableUsers?.message && <small className="form-error">{validationErrors.availableUsers.message}</small>}</label><label>{t('periodDays')}<input type="number" min="1" {...register('periodDays', { valueAsNumber: true })} />{validationErrors.periodDays?.message && <small className="form-error">{validationErrors.periodDays.message}</small>}</label><label>{t('paymentDate')}<input type="date" {...register('paymentDate')} />{validationErrors.paymentDate?.message && <small className="form-error">{validationErrors.paymentDate.message}</small>}</label></Form></section></>
+  return <><PageHeader title={uuid ? t('editPlan') : t('newPlan')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/plans')}><label className="span-2">{t('planName')}<input required {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label><label>{t('basePrice')}<Controller control={control} name="priceInCents" render={({ field }) => <input type="number" min="0" step="0.01" value={centsToAmount(field.value)} onChange={(event) => field.onChange(amountToCents(event.target.value))} />} />{validationErrors.priceInCents?.message && <small className="form-error">{validationErrors.priceInCents.message}</small>}</label><label>{t('pricePerExtraUser')}<Controller control={control} name="pricePerExtraUserInCents" render={({ field }) => <input type="number" min="0" step="0.01" value={centsToAmount(field.value)} onChange={(event) => field.onChange(amountToCents(event.target.value))} />} />{validationErrors.pricePerExtraUserInCents?.message && <small className="form-error">{validationErrors.pricePerExtraUserInCents.message}</small>}</label><label>{t('includedUsers')}<input type="number" min="1" {...register('availableUsers', { valueAsNumber: true })} />{validationErrors.availableUsers?.message && <small className="form-error">{validationErrors.availableUsers.message}</small>}</label><label>{t('periodDays')}<input type="number" min="1" {...register('periodDays', { valueAsNumber: true })} />{validationErrors.periodDays?.message && <small className="form-error">{validationErrors.periodDays.message}</small>}</label></Form></section></>
 }
 
 export function UsersPage() {

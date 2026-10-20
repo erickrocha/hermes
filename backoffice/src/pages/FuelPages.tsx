@@ -63,6 +63,8 @@ export const ruleFields: FieldDef[] = [
   num('garageFuellingFreshnessHours', 'garageFuellingFreshnessHours', true, 0), num('garageUtcOffsetMinutes', 'garageUtcOffsetMinutes', true),
   num('garageBaseLatitude', 'garageBaseLatitude'), num('garageBaseLongitude', 'garageBaseLongitude'), num('garageBaseRadiusMeters', 'garageBaseRadiusMeters', true, 0.1),
   num('garageCycleFallbackDistanceKm', 'garageCycleFallbackDistanceKm', true, 0.1), num('garageOdometerMaxSingleJumpKm', 'garageOdometerMaxSingleJumpKm', true, 0.1),
+  // Manutenção não executada (C-026): a tolerância do "não apareceu" e a permanência mínima do registro manual.
+  num('nonExecutionGraceMinutes', 'nonExecutionGraceMinutes', true, 0), num('nonExecutionMinDwellMinutes', 'nonExecutionMinDwellMinutes', true, 1),
 ]
 
 export function FuelPage() {
