@@ -25,19 +25,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: backoffice/package-lock.json
+          node-version: "24"
+          cache: "yarn"
+          cache-dependency-path: backoffice/yarn.lock
 
       - name: Install
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       # `tsc --noEmit` at the root checks nothing: tsconfig.json is a
       # project-references stub (`"files": []`). `-b` builds the referenced
       # app/node projects, which is where the source actually is. The old step
       # had been passing without type-checking a single file.
       - name: Typecheck
-        run: npx tsc -b --noEmit
+        run: yarn tsc -b --noEmit
 
       - name: Test (role-conditional screens, session handling, price editing)
-        run: npm test
+        run: yarn test
