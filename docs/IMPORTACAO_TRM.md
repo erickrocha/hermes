@@ -11,10 +11,11 @@ Importar no banco **de desenvolvimento** os dados reais (defasados) da Transmega
 
 ## Estado atual (já feito)
 
-- MariaDB de dev subido com `docker compose -f infra/dev/docker-compose.yml up -d --wait` (projeto `dev`, container `dev-mariadb-1`, porta 3307, usuário/senha/banco `hermes`/`brutal`/`hermes`, volume `dev_mariadb-data`).
-- Migrations aplicadas (`cd backend && cargo run -p application -- migrate`): 90 migrations. Todas as tabelas vazias; **tenant ainda não criado**.
-- Nada importado. Nenhum arquivo do repositório alterado além deste documento.
-- O container foi derrubado ao fim da sessão; o volume foi mantido. Na nova máquina, repetir os dois comandos acima (o `compose` pode avisar de containers órfãos de outro projeto — ignorar, não usar `--remove-orphans`).
+- MariaDB de dev ativo e saudável (projeto `dev`, container `dev-mariadb-1`, porta 3307, volume `dev_mariadb-data`).
+- Migrations aplicadas (`cd backend && cargo run -p application -- migrate`): 90 migrations. Todas as tabelas de importação continuam vazias; **tenant ainda não criado**.
+- Fase 1 importada em 2026-10-20 para o tenant DEV `id=1`: 33 veículos, 16 clientes, 5 tipos de serviço, 8 modelos de garagem, 123 peças e 123 ajustes de estoque. O device `393333` ficou apenas no veículo ativo `FJZ1D61`.
+- Mapeamentos aplicados: `clientes.ativo=null` → `Unknown`; `tiposServico.ativo=null` → inativo; `DIESEL` → `External`; `LIMP INTERNA` → `Internal`; `obrigatorio_saida` ausente → `false`. Fase 2 continua pendente.
+- `tools/import_trm_snapshot.py` usa UUIDs determinísticos e aceita reexecução. Não usar `--remove-orphans` ao iniciar o compose.
 
 ## Passo 0 — Tenant Transmega
 
@@ -30,7 +31,7 @@ Criar via API de SysAdmin (`POST /tenant`, `SYSADMIN_EMAIL` do `backend/.env`) o
 | `clientes` (16) | `customer` | `name`, `notes`←`observacao`, `status`←`ativo` (conferir o vocabulário aceito em `business/src/use_cases/customer_use_case.rs`; o status é obrigatório e não vazio). |
 | `tiposServico` (5) | `service_type` | `code` não existe no TRM: gerar a partir do nome (único por tenant, `uq_service_type_tenant_code`); `category`, `active`. |
 | `servicosGaragemModelos` (8) | `garage_service_model` | `name_key` = `normalize_name(name)` (ver `garage_service_model_use_case.rs`), único por tenant. `service_group` é `Internal` ou `External`; `required_for_departure`, `display_order`←`ordem`, `applicability` padrão `{"scope":"all"}`. Verificar se o tenant novo já recebe modelos padrão antes de inserir, para não duplicar. |
-| `pecas` (123) | `part` + `stock_movement` | `name`, `category` (43 vazias), `application`←`aplicacao`, `minimum_stock`←`estoque_minimo`, `unit` obrigatório (TRM não tem: usar `UN`), `unit_value_cents`←`valor_unitario`×100, `default_supplier`←`fornecedor_padrao`, `location`←`localizacao`. O estoque atual (`estoque_atual`) entra como **uma** movimentação `Adjustment` (`cost_source` `RegisteredUnitValue`), sem copiar as 281 movimentações do TRM; o saldo do Hermes é calculado pela soma das movimentações (`current_stock`). |
+| `pecas` (123) | `part` + `stock_movement` | `name`, `category` (43 vazias), `application`←`aplicacao`, `minimum_stock`←`estoque_minimo`, `unit` obrigatório (TRM não tem: usar `UN`), `unit_value_cents`←`valor_unitario`×100, `default_supplier`←`fornecedor_padrao`, `location`←`localizacao`. O estoque atual (`estoque_atual`) entra como **uma** movimentação `Adjustment` (`cost_source` `None`, sem custo unitário/total), sem copiar as 281 movimentações do TRM; `RegisteredUnitValue` fica no custo cadastrado da peça. O saldo do Hermes é calculado pela soma das movimentações (`current_stock`). |
 | `fornecedores` (21) | (a definir) | Não há tabela `supplier`; fornecedor é texto livre (`default_supplier`, `supplier` em OS/movimentação). Não importar agora. |
 | `modelosPreventiva` (15) | `preventive_plan` (fase 2) | Os nomes embutem prefixos de veículos ("… 1647 2501 …"); reestruturar na fase 2. |
 
@@ -60,11 +61,13 @@ Qualidade a lembrar: `km_atual` (painel) e `odo_base_m` (rastreador) divergem em
 Script único em `tools/` na raiz do repositório SDD (fora do código do Hermes, sem crates novas, conforme `project-patterns.md`):
 
 1. Lê o JSON (caminho por argumento), sem alterá-lo.
-2. Gera/executa `INSERT` com `uuid` binário (16 bytes) e `created_by='import-trm'`, `tenant_id` do Transmega.
+2. Gera/executa `INSERT` com `uuid` binário (16 bytes), `created_by='import-trm'`, `tenant_id` do Transmega e `created_at`/`updated_at` preenchidos. Se `created_at` não existir na fonte, usar `updated_at`; se ambos estiverem ausentes, usar o instante da importação. Embora as colunas aceitem `NULL` no banco, os modelos ORM exigem timestamps presentes para ler as entidades.
 3. `--dry-run` primeiro: imprime contagens, rejeições e duplicidades.
-4. Idempotente: chave natural por tabela (placa; nome do cliente; `provider_transaction_id`; código do serviço; nome da peça).
+4. Idempotente: UUID determinístico por tabela + ID original do TRM; chaves naturais também são validadas quando o domínio já as define. Não usar `name` como identidade de peça: há dois pares de peças com nomes repetidos.
 5. Uma transação por fase; falha aborta tudo.
 6. Validação ao final: contagens por tabela, nenhum `vehicle` sem tenant, e `cargo test -p business --test schema_matches_entities -- --ignored` com `DATABASE_URL=mysql://hermes:brutal@localhost:3307/hermes`.
+
+Fase 1: `python3 tools/import_trm_snapshot.py` executa somente a prévia. Para aplicar, usar `--apply --tenant-id ID` depois de criar/confirmar o tenant e resolver todos os bloqueios da prévia. Valores nulos de `clientes.ativo`, `tiposServico.ativo` e `servicosGaragemModelos.grupo` exigem opções explícitas; nenhuma linha é gravada enquanto houver bloqueios. Fase 2 ainda não está implementada no script.
 
 Cuidado ao escrever fora de requisição: o escopo de tenant é negado por padrão (`entity/src/audit.rs`); escrever por SQL direto ignora isso, então o script deve ser explícito com `tenant_id`.
 

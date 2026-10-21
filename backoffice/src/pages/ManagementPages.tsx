@@ -8,7 +8,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
-import { clearCities, loadCities, loadCountries, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
+import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
 import { fetchPlan, fetchSubscription, fetchTenant, fetchUser, removePlan, saveBusinessPlan, saveManagedUser, saveSubscription, saveTenant, sendUserInvite, toggleUser } from '../features/managementSlice'
 import type { BusinessPlan, Tenant, User } from '../types'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -29,7 +29,7 @@ const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, {
 export const centsToAmount = (cents: number) => (cents / 100).toFixed(2)
 export const amountToCents = (amount: string) => Math.round((Number.parseFloat(amount || '0') || 0) * 100)
 const tenantName = (tenant: Tenant) => tenant.companyName || tenant.businessName
-const blankTenant = (countryCode: string): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode })
+const blankTenant = (): Tenant => ({ businessName: '', companyName: '', taxId: '', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode: 'BR' })
 const blankPlan: BusinessPlan = { name: '', priceInCents: 0, pricePerExtraUserInCents: 0, availableUsers: 1, periodDays: 30 }
 export function TenantsPage() {
   const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
@@ -46,31 +46,26 @@ export function TenantEditorPage() {
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
   const { t, i18n } = useTranslation()
-  const { provinces, cities, countries } = useSelector((s: RootState) => s.data)
+  const { provinces, cities } = useSelector((s: RootState) => s.data)
   const localeCountry = localeCountryCode(i18n.resolvedLanguage || i18n.language)
-  // DEF-RD-08: ISO codes alone ("BR", "AR") are not what an operator reads, so
-  // the browser names them in the console's language. `Intl.DisplayNames` is
-  // the platform's own table -- translating country names by hand in our
-  // bundles would rot the moment a new country is imported.
-  const countryOptions = useMemo(() => {
-    const language = i18n.resolvedLanguage || i18n.language || 'pt-BR'
-    let names: Intl.DisplayNames | null = null
-    try { names = new Intl.DisplayNames([language], { type: 'region' }) } catch { names = null }
-    return countries
-      .map((code) => ({ code, label: (names?.of(code) ?? code) || code }))
-      .sort((a, b) => a.label.localeCompare(b.label, language))
-  }, [countries, i18n.resolvedLanguage, i18n.language])
   const [loading, setLoading] = useState(Boolean(id))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const schema = yup.object({ businessName: yup.string().required(t('genericError')), companyName: yup.string().required(t('genericError')), taxId: yup.string().required(t('genericError')), email: yup.string().email(t('genericError')).optional(), website: yup.string().url(t('genericError')).optional(), countryCode: yup.string().required(t('genericError')) })
-  const { control, register, handleSubmit, reset, setValue, watch } = useForm<Tenant>({ resolver: yupResolver(schema) as never, defaultValues: blankTenant(localeCountry) })
+  const schema = yup.object({
+    businessName: yup.string().required(t('genericError')),
+    companyName: yup.string().required(t('genericError')),
+    taxId: yup.string().required(t('genericError')).test(
+      'valid-cnpj',
+      t('invalidCnpj'),
+      (value, context) => context.parent.countryCode !== 'BR' || isValidCnpj(value || '')
+    ),
+    email: yup.string().email(t('genericError')).optional(),
+    website: yup.string().url(t('genericError')).optional(),
+    countryCode: yup.string().oneOf(['BR', 'US']).required(t('genericError')),
+  })
+  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<Tenant>({ resolver: yupResolver(schema) as never, defaultValues: blankTenant() })
   const countryCode = watch('countryCode') || ''
   const administrativeArea = watch('administrativeArea') || ''
-
-  useEffect(() => {
-    dispatch(loadCountries())
-  }, [dispatch])
 
   useEffect(() => {
     if (!id) {
@@ -128,75 +123,96 @@ export function TenantEditorPage() {
       <PageHeader title={id ? t('editTenant') : t('newTenant')} />
       <section className="page-form-card">
         <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
-          <div className="span-2">
-            <label htmlFor="tenant-country">{t('country')}</label>
-            {/* DEF-RD-08 (PD-027): the country list is the set that actually
-                has reference data, so importing a country's provinces is all
-                it takes to make it selectable. The hardcoded BR/US radios
-                meant PD-027's import could never reach this form. */}
-            <select
-              id="tenant-country"
-              required
-              {...register('countryCode', { onChange: (event) => handleCountryChange(event.target.value) })}
-            >
-              {!countryOptions.some((option) => option.code === countryCode) && (
-                <option value={countryCode}>{countryCode || t('select')}</option>
-              )}
-              {countryOptions.map(({ code, label }) => (
-                <option key={code} value={code}>{code} · {label}</option>
-              ))}
-            </select>
+          <div className="tenant-form-row tenant-business-row">
+            <label>{t('businessName')}<input required {...register('businessName')} /></label>
           </div>
-          <label>
-            {t('businessName')}
-            <input required {...register('businessName')} />
-          </label>
-          <label>
-            {t('companyName')}
-            <input required {...register('companyName')} />
-          </label>
-          <label>
-            {t('taxId')}
-            <input required {...register('taxId')} />
-          </label>
-          <label>
-            {t('email')}
-            <input type="email" {...register('email')} />
-          </label>
-          <label>
-            {t('phone')}
-            <input {...register('phone')} />
-          </label>
-          <label>
-            {t('website')}
-            <input type="url" {...register('website')} />
-          </label>
-          <label className="span-2">
-            {t('address')}
-            <input {...register('addressLine1')} />
-          </label>
-          <label>
-            {t('address2')}
-            <input {...register('addressLine2')} />
-          </label>
-          <label>
-            {t('province')}
-            <Controller control={control} name="administrativeArea" render={({ field }) => <Combobox filterable value={field.value || null} options={provinces.map((province) => ({ value: province.acronym, label: `${province.name} (${province.acronym})` }))} onChange={(value) => { field.onChange(value || ''); setValue('locality', ''); if (!value) dispatch(clearCities()) }} />} />
-          </label>
-          <label>
-            {t('city')}
-            <Controller control={control} name="locality" render={({ field }) => <Combobox filterable disabled={!administrativeArea || !cities.length} value={field.value || null} options={cities.map((city) => ({ value: city.name, label: city.name }))} onChange={(value) => field.onChange(value || '')} />} />
-          </label>
-          <label>
-            {t('postalCode')}
-            <input {...register('postalCode')} />
-          </label>
+          <div className="tenant-form-row tenant-tax-row">
+            <label>
+              {countryCode === 'US' ? t('taxIdEin') : t('taxIdCnpj')}
+              <Controller control={control} name="taxId" render={({ field }) => <input id="tenant-tax-id" required inputMode="numeric" autoComplete="off" maxLength={countryCode === 'BR' ? 18 : 10} value={maskTaxId(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskTaxId(event.target.value, countryCode))} ref={field.ref} />} />
+              {validationErrors.taxId?.message && <small className="field-error" role="alert">{validationErrors.taxId.message}</small>}
+            </label>
+            <label>{t('companyName')}<input required {...register('companyName')} /></label>
+          </div>
+          <div className="tenant-form-row tenant-contact-row">
+            <label>{t('phone')}<Controller control={control} name="phone" render={({ field }) => <input type="tel" autoComplete="tel" value={maskPhone(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskPhone(event.target.value, countryCode))} ref={field.ref} />} /></label>
+            <label>{t('email')}<input type="email" autoComplete="email" {...register('email')} /></label>
+            <label>{t('website')}<input type="url" {...register('website')} /></label>
+          </div>
+          <div className="tenant-form-row tenant-address-row">
+            <label>{t('address')}<input autoComplete="address-line1" {...register('addressLine1')} /></label>
+          </div>
+          <div className="tenant-form-row tenant-complement-row">
+            <label>{t('address2')}<input autoComplete="address-line2" {...register('addressLine2')} /></label>
+            <label>{t('postalCode')}<Controller control={control} name="postalCode" render={({ field }) => <input autoComplete="postal-code" inputMode="numeric" maxLength={countryCode === 'BR' ? 9 : 10} value={maskPostalCode(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskPostalCode(event.target.value, countryCode))} ref={field.ref} />} /></label>
+          </div>
+          <div className="tenant-form-row tenant-location-row">
+            <div className="tenant-country-field">
+              <span className="tenant-field-label">{t('country')}</span>
+              <div className="radio-group" role="radiogroup" aria-label={t('country')}>
+                <label className="radio-option"><input type="radio" value="BR" aria-label={t('countryBrazil')} {...register('countryCode', { onChange: (event) => handleCountryChange(event.target.value) })} /><span aria-hidden="true">🇧🇷</span><span>{t('countryBrazil')}</span></label>
+                <label className="radio-option"><input type="radio" value="US" aria-label={t('countryUnitedStates')} {...register('countryCode', { onChange: (event) => handleCountryChange(event.target.value) })} /><span aria-hidden="true">🇺🇸</span><span>{t('countryUnitedStates')}</span></label>
+              </div>
+            </div>
+            <label>{t('province')}<Controller control={control} name="administrativeArea" render={({ field }) => <Combobox filterable disabled={!countryCode || !provinces.length} ariaLabel={t('province')} value={field.value || null} options={provinces.map((province) => ({ value: province.acronym, label: `${province.name} (${province.acronym})` }))} onChange={(value) => { field.onChange(value || ''); setValue('locality', ''); if (!value) dispatch(clearCities()) }} />} /></label>
+            <label>{t('city')}<Controller control={control} name="locality" render={({ field }) => <Combobox filterable disabled={!administrativeArea || !cities.length} ariaLabel={t('city')} value={field.value || null} options={cities.map((city) => ({ value: city.name, label: city.name }))} onChange={(value) => field.onChange(value || '')} />} /></label>
+          </div>
         </Form>
       </section>
     </>
   )
 }
 
+const digitsOnly = (value: string) => value.replace(/\D/g, '')
+
+export const maskCnpj = (value: string) => {
+  const digits = digitsOnly(value).slice(0, 14)
+  return digits
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2')
+}
+
+export const isValidCnpj = (value: string) => {
+  const digits = digitsOnly(value)
+  if (digits.length !== 14 || /^([0-9])\1+$/.test(digits)) return false
+  const checkDigit = (base: string, weights: number[]) => {
+    const sum = [...base].reduce((total, digit, index) => total + Number(digit) * weights[index], 0)
+    const remainder = sum % 11
+    return remainder < 2 ? 0 : 11 - remainder
+  }
+  const first = checkDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+  const second = checkDigit(digits.slice(0, 12) + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+  return digits.endsWith(`${first}${second}`)
+}
+
+export const maskTaxId = (value: string, countryCode: string) => {
+  const digits = digitsOnly(value).slice(0, countryCode === 'BR' ? 14 : 9)
+  return countryCode === 'BR' ? maskCnpj(digits) : digits.replace(/^(\d{2})(\d)/, '$1-$2')
+}
+
+export const maskPhone = (value: string, countryCode: string) => {
+  let digits = digitsOnly(value)
+  if (countryCode === 'US') {
+    if (digits.length > 10 && digits.startsWith('1')) digits = digits.slice(1)
+    digits = digits.slice(0, 10)
+    if (digits.length <= 3) return digits ? `(${digits}` : ''
+    if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  digits = digits.slice(0, 11)
+  if (digits.length <= 2) return digits ? `(${digits}` : ''
+  const subscriber = digits.slice(2)
+  if (subscriber.length <= 4) return `(${digits.slice(0, 2)}) ${subscriber}`
+  const split = subscriber.length > 8 ? 5 : 4
+  return `(${digits.slice(0, 2)}) ${subscriber.slice(0, split)}-${subscriber.slice(split)}`
+}
+
+export const maskPostalCode = (value: string, countryCode: string) => {
+  const digits = digitsOnly(value).slice(0, countryCode === 'BR' ? 8 : 9)
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
+}
 export function SubscriptionPage() {
   // DEF-BO-03: `/business-plan` returns PD-028's page envelope, not a bare
   // array. Reading it as an array made `plans.flatMap` throw and -- with no

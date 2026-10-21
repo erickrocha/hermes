@@ -17,6 +17,7 @@ const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCh
 export function Shell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false)
   const [userMenu, setUserMenu] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const { t } = useTranslation()
   const session = useSelector((s: RootState) => s.auth.session)!
   const tenant = useSelector((s: RootState) => s.data.currentTenant)
@@ -51,7 +52,21 @@ export function Shell({ children }: { children: ReactNode }) {
     {mobile && <button className="sidebar-backdrop" aria-label={t('close')} onClick={() => setMobile(false)} />}
     <aside className={`sidebar ${mobile ? 'open' : ''}`}>
       <div className="sidebar-brand"><Logo /><button className="mobile-close" onClick={() => setMobile(false)}><X /></button></div>
-      <nav>{links.map(({ to, label, icon: Icon, group }, index) => <Fragment key={to}>{group && group !== links[index - 1]?.group && <span className="nav-group">{t(group)}</span>}<NavLink end={to === '/'} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink></Fragment>)}</nav>
+      <nav>{links.map(({ to, label, icon: Icon, group }, index) => {
+        const startsGroup = Boolean(group && group !== links[index - 1]?.group)
+        const collapsed = group ? collapsedGroups[group] ?? false : false
+        return <Fragment key={to}>
+          {startsGroup && group && <button
+            type="button"
+            className="nav-group"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsedGroups((current) => ({ ...current, [group]: !current[group] }))}
+          >
+            <span>{t(group)}</span><ChevronDown size={15} aria-hidden="true" />
+          </button>}
+          {(!group || !collapsed) && <NavLink end={to === '/'} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink>}
+        </Fragment>
+      })}</nav>
       <div className="sidebar-foot"><span>Hermes</span><small>v0.1</small></div>
     </aside>
     <div className="app-main">
