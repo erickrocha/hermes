@@ -4,21 +4,20 @@ use business::domain::inspection_model_item::InspectionModelItem;
 use business::gateway::inspection_model_gateway::InspectionModelStore;
 use business::gateway::inspection_model_item_gateway::InspectionModelItemStore;
 use business::use_cases::inspection_model_use_case::{
-    DUPLICATE_NAME, ITEMS_REQUIRED, InspectionModelUseCase, NAME_REQUIRED,
+    DUPLICATE_NAME, ITEMS_REQUIRED, InspectionModelUseCase, MODEL_NOT_FOUND, NAME_REQUIRED,
+    PERIODICITY_INVALID,
 };
 use sea_orm::prelude::async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
-struct MemoryInspectionModelStore {
-    models: Mutex<Vec<InspectionModel>>,
-}
+#[derive(Clone, Default)]
+struct MemoryInspectionModelStore(Arc<Mutex<Vec<InspectionModel>>>);
 
 #[async_trait]
 impl InspectionModelStore for MemoryInspectionModelStore {
     async fn save(&self, mut model: InspectionModel) -> Result<InspectionModel, BusinessError> {
         let mut models = self
-            .models
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let id = model.id.unwrap_or(models.len() as i64 + 1);
@@ -30,7 +29,7 @@ impl InspectionModelStore for MemoryInspectionModelStore {
 
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<InspectionModel>, BusinessError> {
         let models = self
-            .models
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(models
@@ -45,7 +44,7 @@ impl InspectionModelStore for MemoryInspectionModelStore {
         tenant_id: Option<i64>,
     ) -> Result<Option<InspectionModel>, BusinessError> {
         let models = self
-            .models
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(models
@@ -60,7 +59,7 @@ impl InspectionModelStore for MemoryInspectionModelStore {
         page_size: u64,
     ) -> Result<(Vec<InspectionModel>, u64), BusinessError> {
         let models = self
-            .models
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let total = models.len() as u64;
@@ -77,10 +76,8 @@ impl InspectionModelStore for MemoryInspectionModelStore {
     }
 }
 
-#[derive(Default)]
-struct MemoryInspectionModelItemStore {
-    items: Mutex<Vec<InspectionModelItem>>,
-}
+#[derive(Clone, Default)]
+struct MemoryInspectionModelItemStore(Arc<Mutex<Vec<InspectionModelItem>>>);
 
 #[async_trait]
 impl InspectionModelItemStore for MemoryInspectionModelItemStore {
@@ -89,7 +86,7 @@ impl InspectionModelItemStore for MemoryInspectionModelItemStore {
         mut item: InspectionModelItem,
     ) -> Result<InspectionModelItem, BusinessError> {
         let mut items = self
-            .items
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         item.id = Some(items.len() as i64 + 1);
@@ -103,7 +100,7 @@ impl InspectionModelItemStore for MemoryInspectionModelItemStore {
         model_id: i64,
     ) -> Result<Vec<InspectionModelItem>, BusinessError> {
         let items = self
-            .items
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(items
@@ -132,10 +129,17 @@ fn model(name: &str) -> InspectionModel {
 }
 
 fn use_case() -> InspectionModelUseCase {
-    InspectionModelUseCase::new(
+    use_case_with_stores(
         MemoryInspectionModelStore::default(),
         MemoryInspectionModelItemStore::default(),
     )
+}
+
+fn use_case_with_stores(
+    models: MemoryInspectionModelStore,
+    items: MemoryInspectionModelItemStore,
+) -> InspectionModelUseCase {
+    InspectionModelUseCase::new(models, items)
 }
 
 #[tokio::test]
@@ -192,5 +196,47 @@ async fn inspection_model_validation_and_duplicate_checks_run_before_item_writes
             .expect_err("duplicate model name is rejected")
             .message,
         DUPLICATE_NAME
+    );
+}
+
+#[tokio::test]
+async fn inspection_models_can_be_loaded_with_items_and_missing_models_are_reported() {
+    let models = MemoryInspectionModelStore::default();
+    let items = MemoryInspectionModelItemStore::default();
+    let use_case = use_case_with_stores(models, items);
+    let (created, created_items) = use_case
+        .create(model("Annual inspection"), vec!["Brakes".into()])
+        .await
+        .unwrap();
+
+    let (found, found_items) = use_case
+        .find_by_uuid(created.uuid.clone().unwrap())
+        .await
+        .expect("model and its items can be loaded together");
+    assert_eq!(found, created);
+    assert_eq!(found_items, created_items);
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown model is not found")
+            .message,
+        MODEL_NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn inspection_models_reject_non_positive_periodicity() {
+    let use_case = use_case();
+    let mut invalid = model("Annual inspection");
+    invalid.periodicity_days = Some(0);
+
+    assert_eq!(
+        use_case
+            .create(invalid, vec!["Brakes".into()])
+            .await
+            .expect_err("periodicity must be positive")
+            .message,
+        PERIODICITY_INVALID
     );
 }

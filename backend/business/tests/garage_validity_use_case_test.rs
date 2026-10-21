@@ -14,8 +14,9 @@ use business::gateway::garage_service_model_gateway::GarageServiceModelStore;
 use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingStore;
 use business::gateway::vehicle_presence_event_gateway::GarageValidityPresenceStore;
 use business::use_cases::fuel_gauge_use_case::{FuelGaugeReader, GaugeUnavailable, TankGauge};
+use business::use_cases::garage_validity::{TankFact, ValidityReason};
 use business::use_cases::garage_validity_use_case::GarageValidityUseCase;
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Duration, NaiveDate, NaiveDateTime};
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
@@ -148,6 +149,7 @@ impl TenantRuleSettingStore for MemoryRuleStore {
 #[derive(Clone)]
 struct FakeGaugeReader {
     calls: Arc<Mutex<usize>>,
+    percent: Option<f64>,
 }
 
 #[async_trait]
@@ -157,7 +159,18 @@ impl FuelGaugeReader for FakeGaugeReader {
             .calls
             .lock()
             .map_err(|_| BusinessError::new("gauge counter poisoned".into()))? += 1;
-        Ok(TankGauge::Unavailable(GaugeUnavailable::NoTankRegistered))
+        Ok(match self.percent {
+            Some(percent) => TankGauge::Reading {
+                percent,
+                remaining_liters: 18.5,
+                range_km: 120.0,
+                consumption_km_per_liter: 6.5,
+                anchored_at: chrono::Utc::now().naive_utc(),
+                estimated: false,
+                set_aside_at: Vec::new(),
+            },
+            None => TankGauge::Unavailable(GaugeUnavailable::NoTankRegistered),
+        })
     }
 }
 
@@ -204,6 +217,25 @@ fn service(state: GarageServiceState) -> GarageService {
     }
 }
 
+fn presence_event(
+    id: i64,
+    kind: PresenceEventKind,
+    occurred_at: NaiveDateTime,
+) -> VehiclePresenceEvent {
+    VehiclePresenceEvent {
+        id: Some(id),
+        uuid: Some(format!("presence-{id}")),
+        tenant_id: Some(42),
+        vehicle_id: 10,
+        kind,
+        occurred_at,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
 fn model(governed_by_tank: bool, required_for_departure: bool) -> GarageServiceModel {
     GarageServiceModel {
         id: Some(7),
@@ -225,14 +257,30 @@ fn model(governed_by_tank: bool, required_for_departure: bool) -> GarageServiceM
 }
 
 fn use_case(models: Vec<GarageServiceModel>) -> (GarageValidityUseCase, Arc<Mutex<usize>>) {
+    use_case_with_gauge(models, None)
+}
+
+fn use_case_with_gauge(
+    models: Vec<GarageServiceModel>,
+    percent: Option<f64>,
+) -> (GarageValidityUseCase, Arc<Mutex<usize>>) {
+    use_case_with_events(models, percent, Vec::new())
+}
+
+fn use_case_with_events(
+    models: Vec<GarageServiceModel>,
+    percent: Option<f64>,
+    events: Vec<VehiclePresenceEvent>,
+) -> (GarageValidityUseCase, Arc<Mutex<usize>>) {
     let gauge_calls = Arc::new(Mutex::new(0));
     let use_case = GarageValidityUseCase::new(
-        MemoryPresenceStore::default(),
+        MemoryPresenceStore { events },
         MemoryTripStore,
         MemoryServiceModelStore { models },
         MemoryRuleStore,
         FakeGaugeReader {
             calls: gauge_calls.clone(),
+            percent,
         },
     );
     (use_case, gauge_calls)
@@ -251,10 +299,7 @@ async fn closed_attendance_preserves_stored_states_without_reading_other_ports()
 
     assert_eq!(
         result.services,
-        vec![(
-            GarageServiceState::Performed,
-            business::use_cases::garage_validity::ValidityReason::Valid
-        )]
+        vec![(GarageServiceState::Performed, ValidityReason::Valid)]
     );
     assert_eq!(*gauge_calls.lock().expect("gauge counter lock"), 0);
 }
@@ -274,4 +319,102 @@ async fn open_attendance_reads_service_metadata_without_gauge_when_not_tank_gove
     assert_eq!(result.names, vec!["Brake inspection"]);
     assert_eq!(result.services[0].0, GarageServiceState::Pending);
     assert_eq!(*gauge_calls.lock().expect("gauge counter lock"), 0);
+}
+
+#[tokio::test]
+async fn tank_governed_services_read_the_gauge_and_expose_the_tank_fact() {
+    let (use_case, gauge_calls) = use_case_with_gauge(vec![model(true, true)], Some(37.0));
+    let result = use_case
+        .evaluate_full(
+            &attendance(GarageAttendanceStatus::Open),
+            &[service(GarageServiceState::Pending)],
+        )
+        .await
+        .expect("tank-governed service is evaluated");
+
+    assert_eq!(result.required, vec![true]);
+    assert_eq!(result.tank, TankFact::Percent(37.0));
+    assert_eq!(*gauge_calls.lock().unwrap(), 1);
+
+    assert_eq!(
+        use_case.rules_for(Some(42)).await.unwrap(),
+        Default::default()
+    );
+    assert_eq!(
+        use_case.tank_fact(10).await,
+        TankFact::Percent(37.0),
+        "the monitor can request tank data independently of services"
+    );
+    assert_eq!(*gauge_calls.lock().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn presence_events_consume_marks_and_trip_returns_reset_performed_services() {
+    let marked_at = attendance(GarageAttendanceStatus::Open).checked_in_at;
+    let after_mark = marked_at + Duration::hours(1);
+    let (departure_case, _) = use_case_with_events(
+        vec![model(false, true)],
+        None,
+        vec![presence_event(1, PresenceEventKind::Departure, after_mark)],
+    );
+    let mut marked_service = service(GarageServiceState::NotDone);
+    marked_service.marked_at = Some(marked_at);
+    let departure_result = departure_case
+        .evaluate_full(
+            &attendance(GarageAttendanceStatus::Open),
+            &[marked_service.clone()],
+        )
+        .await
+        .expect("departure consumes the mark");
+    assert_eq!(
+        departure_result.services[0],
+        (
+            GarageServiceState::Pending,
+            ValidityReason::ConsumedByDeparture
+        )
+    );
+
+    let arrival_case = use_case_with_events(
+        vec![model(false, true)],
+        None,
+        vec![presence_event(
+            2,
+            PresenceEventKind::Arrival,
+            after_mark + Duration::hours(1),
+        )],
+    )
+    .0;
+    let arrival_result = arrival_case
+        .evaluate_full(&attendance(GarageAttendanceStatus::Open), &[marked_service])
+        .await
+        .expect("arrival after the mark invalidates it");
+    assert_eq!(
+        arrival_result.services[0],
+        (GarageServiceState::Pending, ValidityReason::ReturnedToBase)
+    );
+
+    let trip_departure = after_mark + Duration::hours(1);
+    let trip_arrival = trip_departure + Duration::days(1);
+    let trip_case = use_case_with_events(
+        vec![model(false, true)],
+        None,
+        vec![
+            presence_event(3, PresenceEventKind::Departure, trip_departure),
+            presence_event(4, PresenceEventKind::Arrival, trip_arrival),
+        ],
+    )
+    .0;
+    let mut performed_service = service(GarageServiceState::Performed);
+    performed_service.performed_at = Some(marked_at);
+    let trip_result = trip_case
+        .evaluate_full(
+            &attendance(GarageAttendanceStatus::Open),
+            &[performed_service],
+        )
+        .await
+        .expect("a completed trip resets the service");
+    assert_eq!(
+        trip_result.services[0],
+        (GarageServiceState::Pending, ValidityReason::TripReturn)
+    );
 }

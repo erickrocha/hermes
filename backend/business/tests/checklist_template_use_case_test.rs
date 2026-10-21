@@ -5,7 +5,7 @@ use business::domain::enums::ChecklistType;
 use business::gateway::checklist_template_gateway::ChecklistTemplateStore;
 use business::use_cases::checklist_template_use_case::{
     AT_LEAST_ONE_ITEM_REQUIRED, ChecklistTemplateUseCase, ITEM_DESCRIPTION_REQUIRED, NAME_REQUIRED,
-    TEMPLATE_CANNOT_BE_DEFAULT,
+    TEMPLATE_CANNOT_BE_DEFAULT, TEMPLATE_NOT_FOUND,
 };
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,6 +122,7 @@ async fn only_an_active_departure_or_return_template_can_become_the_default() {
         (ChecklistType::Departure, false, false, false),
         (ChecklistType::Departure, true, false, true),
         (ChecklistType::Return, true, false, true),
+        (ChecklistType::Departure, true, true, true),
     ];
     for (checklist_type, active, is_default, accepted) in cases {
         let known = ChecklistTemplate {
@@ -138,7 +139,33 @@ async fn only_an_active_departure_or_return_template_can_become_the_default() {
         if accepted {
             assert!(result.expect("accepted").0.is_default);
         } else {
-            assert_eq!(result.expect_err("refused").message, TEMPLATE_CANNOT_BE_DEFAULT);
+            assert_eq!(
+                result.expect_err("refused").message,
+                TEMPLATE_CANNOT_BE_DEFAULT
+            );
         }
     }
+}
+
+#[tokio::test]
+async fn template_queries_return_pages_and_report_missing_templates() {
+    let use_case = ChecklistTemplateUseCase::new(MemoryChecklistTemplateStore {
+        creates: AtomicUsize::new(0),
+        known: None,
+    });
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .unwrap_err()
+            .message,
+        TEMPLATE_NOT_FOUND
+    );
+    assert_eq!(use_case.find_page(0, 10).await.unwrap(), (Vec::new(), 0));
+    let (created, items) = use_case
+        .create(template("Departure"), vec![item("Inspect brakes")])
+        .await
+        .unwrap();
+    assert_eq!(created.name, "Departure");
+    assert_eq!(items[0].description, "Inspect brakes");
 }

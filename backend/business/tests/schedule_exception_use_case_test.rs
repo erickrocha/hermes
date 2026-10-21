@@ -11,11 +11,11 @@ use business::use_cases::schedule_exception_use_case::{
 };
 use chrono::NaiveDate;
 use sea_orm::prelude::async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct MemoryScheduleExceptionStore {
-    exceptions: Mutex<Vec<ScheduleException>>,
+    exceptions: Arc<Mutex<Vec<ScheduleException>>>,
 }
 
 #[async_trait]
@@ -188,8 +188,16 @@ fn vehicle(tenant_id: Option<i64>) -> Vehicle {
 }
 
 fn use_case(user: Option<User>, vehicle: Option<Vehicle>) -> ScheduleExceptionUseCase {
+    use_case_with_store(MemoryScheduleExceptionStore::default(), user, vehicle)
+}
+
+fn use_case_with_store(
+    store: MemoryScheduleExceptionStore,
+    user: Option<User>,
+    vehicle: Option<Vehicle>,
+) -> ScheduleExceptionUseCase {
     ScheduleExceptionUseCase::new(
-        MemoryScheduleExceptionStore::default(),
+        store,
         MemoryUserStore { user },
         MemoryVehicleStore { vehicle },
     )
@@ -240,4 +248,96 @@ async fn schedule_exception_rejects_a_vehicle_from_another_tenant() {
     .expect_err("cross-tenant vehicle is refused");
 
     assert_eq!(error.message, NOT_A_TENANT_VEHICLE);
+}
+
+#[tokio::test]
+async fn cancellation_can_be_found_listed_and_removed_only_for_its_demand() {
+    let store = MemoryScheduleExceptionStore::default();
+    let use_case = use_case_with_store(store.clone(), None, None);
+    let created = use_case
+        .create(exception())
+        .await
+        .expect("cancellation without replacement is accepted");
+    let uuid = created.uuid.clone().unwrap();
+
+    assert_eq!(use_case.find_by_uuid(uuid.clone()).await.unwrap(), created);
+    assert_eq!(
+        use_case.history(5, 0, 10).await.unwrap(),
+        (vec![created], 1)
+    );
+    assert_eq!(
+        use_case
+            .remove(6, uuid.clone())
+            .await
+            .expect_err("an exception cannot be removed under another demand")
+            .message,
+        "Exception not found"
+    );
+    use_case.remove(5, uuid).await.unwrap();
+    assert!(store.exceptions.lock().unwrap().is_empty());
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("missing exceptions are not found")
+            .message,
+        "Exception not found"
+    );
+}
+
+#[tokio::test]
+async fn schedule_exception_requires_active_driver_role_and_tenant_vehicle() {
+    let mut replacement = exception();
+    replacement.new_driver_id = Some(7);
+    assert_eq!(
+        use_case(
+            Some(driver(Some(42), Role::Mechanic, true)),
+            Some(vehicle(Some(42))),
+        )
+        .create(replacement.clone())
+        .await
+        .expect_err("a non-driver cannot replace the driver")
+        .message,
+        NOT_A_DRIVER
+    );
+
+    let mut disabled = driver(Some(42), Role::Driver, true);
+    disabled.enabled = false;
+    assert_eq!(
+        use_case(Some(disabled), Some(vehicle(Some(42))))
+            .create(replacement)
+            .await
+            .expect_err("a disabled driver cannot replace the driver")
+            .message,
+        NOT_A_DRIVER
+    );
+
+    let mut replacement_vehicle = exception();
+    replacement_vehicle.new_vehicle_id = Some(10);
+    assert_eq!(
+        use_case(None, None)
+            .create(replacement_vehicle)
+            .await
+            .expect_err("a missing replacement vehicle is rejected")
+            .message,
+        NOT_A_TENANT_VEHICLE
+    );
+}
+
+#[tokio::test]
+async fn schedule_exception_removal_requires_a_persisted_identity() {
+    let store = MemoryScheduleExceptionStore::default();
+    let mut incomplete = exception();
+    incomplete.uuid = Some("incomplete".into());
+    store.exceptions.lock().unwrap().push(incomplete);
+    let use_case = use_case_with_store(store, None, None);
+
+    assert_eq!(
+        use_case
+            .remove(5, "incomplete".into())
+            .await
+            .expect_err("identity-less exception cannot be removed")
+            .message,
+        "Schedule exception identity is incomplete"
+    );
 }

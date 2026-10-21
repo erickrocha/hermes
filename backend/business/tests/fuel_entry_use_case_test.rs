@@ -287,6 +287,61 @@ async fn fuel_entry_use_case_refuses_invalid_values_and_other_tenant_vehicles() 
 }
 
 #[tokio::test]
+async fn fuel_entries_can_be_soft_deleted_restored_listed_and_averaged() {
+    let use_case = use_case();
+    let created = use_case
+        .create(entry(1, 20.0, 3_000))
+        .await
+        .expect("entry is saved");
+    let uuid = created.uuid.clone().expect("store assigned uuid");
+
+    use_case
+        .soft_delete(uuid.clone())
+        .await
+        .expect("entry is soft deleted");
+    assert_eq!(
+        use_case
+            .find_by_uuid(uuid)
+            .await
+            .expect_err("deleted entry is hidden")
+            .message,
+        "Fuel entry not found"
+    );
+    assert!(
+        use_case
+            .find_page(0, 10)
+            .await
+            .expect("page is listed")
+            .0
+            .is_empty()
+    );
+
+    let restored = use_case
+        .restore_last(10)
+        .await
+        .expect("deleted entry is restored");
+    assert_eq!(restored.deleted_at, None);
+    let (page, total) = use_case
+        .find_page(0, 10)
+        .await
+        .expect("restored entry is listed");
+    assert_eq!(total, 1);
+    assert_eq!(page[0].id, created.id);
+
+    let average = use_case.average(10).await.expect("average is calculated");
+    assert_eq!(average.segments, 0);
+    assert!(!average.mature);
+    assert_eq!(
+        use_case
+            .restore_last(10)
+            .await
+            .expect_err("there is no second deleted entry")
+            .message,
+        "This vehicle has no deleted fuelling to restore"
+    );
+}
+
+#[tokio::test]
 async fn unification_combines_entries_and_soft_deletes_the_source() {
     let use_case = use_case();
     let target = use_case

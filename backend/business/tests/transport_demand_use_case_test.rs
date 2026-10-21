@@ -1,12 +1,15 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{Role, VehicleStatus};
+use business::domain::enums::{DemandKind, Role, VehicleStatus};
 use business::domain::transport_demand::TransportDemand;
 use business::domain::user::User;
 use business::domain::vehicle::Vehicle;
 use business::gateway::transport_demand_gateway::TransportDemandStore;
 use business::gateway::user_gateway::UserLookupStore;
 use business::gateway::vehicle_gateway::VehicleLookupStore;
-use business::use_cases::transport_demand_use_case::{NOT_A_DRIVER, TransportDemandUseCase};
+use business::use_cases::transport_demand_use_case::{
+    DAYS_OF_WEEK_UNREADABLE, KIND_NEEDS_ITS_DAYS, NOT_A_DRIVER, NOT_A_TENANT_VEHICLE,
+    TransportDemandUseCase,
+};
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -225,4 +228,120 @@ async fn demand_use_case_validates_named_driver_and_vehicle_through_ports() {
         .await
         .expect_err("cross-tenant driver is refused");
     assert_eq!(error.message, NOT_A_DRIVER);
+}
+
+#[tokio::test]
+async fn demand_use_case_requires_a_type_and_valid_days_for_recurring_demand() {
+    let mut blank = new_demand();
+    blank.demand_type = "  ".into();
+    let error = use_case(None, None)
+        .create(blank)
+        .await
+        .expect_err("demand type is required");
+    assert_eq!(error.message, "Demand type is required");
+
+    let mut unreadable = new_demand();
+    unreadable.days_of_week = Some("not-a-weekday".into());
+    let error = use_case(None, None)
+        .create(unreadable)
+        .await
+        .expect_err("weekday syntax is validated");
+    assert_eq!(error.message, DAYS_OF_WEEK_UNREADABLE);
+
+    let mut line_without_days = new_demand();
+    line_without_days.demand_kind = Some(DemandKind::Line);
+    let error = use_case(None, None)
+        .create(line_without_days)
+        .await
+        .expect_err("recurring lines need a weekday");
+    assert_eq!(error.message, KIND_NEEDS_ITS_DAYS);
+
+    let mut trip_without_date = new_demand();
+    trip_without_date.demand_kind = Some(DemandKind::OneOffTrip);
+    let error = use_case(None, None)
+        .create(trip_without_date)
+        .await
+        .expect_err("one-off trips need a date");
+    assert_eq!(error.message, KIND_NEEDS_ITS_DAYS);
+}
+
+#[tokio::test]
+async fn demand_use_case_accepts_valid_recurring_days_and_one_off_date() {
+    let mut line = new_demand();
+    line.demand_kind = Some(DemandKind::Line);
+    line.days_of_week = Some("Mon, Wed, Fri".into());
+    assert!(
+        use_case(None, None)
+            .create(line)
+            .await
+            .is_ok_and(|saved| saved.days_of_week.is_some())
+    );
+
+    let mut trip = new_demand();
+    trip.demand_kind = Some(DemandKind::OneOffTrip);
+    trip.specific_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 10, 21).unwrap());
+    assert!(use_case(None, None).create(trip).await.is_ok());
+}
+
+#[tokio::test]
+async fn demand_use_case_rejects_disabled_drivers_and_cross_tenant_vehicles() {
+    let mut disabled = driver(Some(42), Role::Driver);
+    disabled.enabled = false;
+    let mut demand = new_demand();
+    demand.specific_driver_id = Some(7);
+    let error = use_case(Some(disabled), None)
+        .create(demand)
+        .await
+        .expect_err("disabled driver cannot be a preference");
+    assert_eq!(error.message, NOT_A_DRIVER);
+
+    let mut demand = new_demand();
+    demand.specific_vehicle_id = Some(10);
+    let error = use_case(None, Some(vehicle(99)))
+        .create(demand)
+        .await
+        .expect_err("vehicle from another tenant cannot be a preference");
+    assert_eq!(error.message, NOT_A_TENANT_VEHICLE);
+}
+
+#[tokio::test]
+async fn updating_a_demand_keeps_its_identity_and_lookup_reports_unknown_ids() {
+    let mut existing = new_demand();
+    existing.id = Some(9);
+    existing.uuid = Some("demand-9".into());
+    let use_case = TransportDemandUseCase::new(
+        MemoryDemandStore {
+            demands: Mutex::new(vec![existing]),
+        },
+        MemoryUserStore { user: None },
+        MemoryVehicleStore { vehicle: None },
+    );
+
+    let mut changes = new_demand();
+    changes.demand_type = " Updated ".into();
+    let updated = use_case
+        .update(9, changes)
+        .await
+        .expect("existing demand can be updated");
+    assert_eq!(updated.id, Some(9));
+    assert_eq!(updated.uuid.as_deref(), Some("demand-9"));
+    assert_eq!(updated.demand_type, "Updated");
+
+    assert_eq!(
+        use_case
+            .find_by_id(404)
+            .await
+            .expect_err("unknown id is reported")
+            .message,
+        "Transport demand not found"
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown UUID is reported")
+            .message,
+        "Transport demand not found"
+    );
+    assert!(use_case.find_page(0, 10, None).await.is_ok());
 }

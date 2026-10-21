@@ -32,6 +32,139 @@ use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase, MockExecResult,
 
 const UUID: &str = "684db325-63cb-470a-aa09-45811dd1904a";
 
+#[tokio::test]
+async fn template_creation_rolls_back_if_either_the_template_or_its_item_cannot_be_saved() {
+    for fail_item in [false, true] {
+        let mut database = mock();
+        if fail_item {
+            database = database
+                .append_exec_results([inserted(12)])
+                .append_query_results([[checklist_template_row(12, 42, "Departure")]]);
+        }
+        let db = database
+            .append_exec_errors([sea_orm::DbErr::Custom("write unavailable".into())])
+            .into_connection();
+        let error = run_with_user(
+            Some(owner(42)),
+            checklist_template_use_case(&db).create(
+                new_checklist_template(Some(42), "Departure"),
+                vec![new_checklist_template_item("Brakes")],
+            ),
+        )
+        .await
+        .expect_err("partial templates must never be committed");
+        assert!(error.message.contains("write unavailable"), "{error}");
+        let sql = format!("{:?}", log(db));
+        assert!(sql.contains("ROLLBACK"), "{sql}");
+        assert!(!sql.contains("COMMIT"), "{sql}");
+        assert_eq!(sql.matches("INSERT").count(), if fail_item { 2 } else { 1 });
+    }
+}
+
+#[tokio::test]
+async fn default_selection_rolls_back_if_the_target_disappears_during_the_transaction() {
+    let db = mock()
+        .append_query_results([[checklist_template_row(12, 42, "Departure")]])
+        .append_query_results([Vec::<entity::checklist_template_item_entity::Model>::new()])
+        .append_query_results([Vec::<entity::checklist_template_entity::Model>::new()])
+        .append_query_results([Vec::<entity::checklist_template_entity::Model>::new()])
+        .into_connection();
+    let error = run_with_user(
+        Some(owner(42)),
+        checklist_template_use_case(&db).set_default(UUID.into()),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.message.contains("checklist_template 12"), "{error}");
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("ROLLBACK"), "{sql}");
+    assert!(!sql.contains("COMMIT"), "{sql}");
+    assert!(!sql.contains("UPDATE"), "{sql}");
+}
+
+#[tokio::test]
+async fn work_order_queries_return_items_pages_and_missing_errors() {
+    let db = mock()
+        .append_query_results([[work_order_row(12, 42, 10)]])
+        .append_query_results([[work_order_item_row(13, 42, 12, "Pending")]])
+        .append_query_results([Vec::<entity::work_order_entity::Model>::new()])
+        .append_query_results(count(1))
+        .append_query_results([[work_order_row(12, 42, 10)]])
+        .into_connection();
+    let use_case = work_order_use_case(&db);
+    run_with_user(Some(owner(42)), async {
+        let (order, items) = use_case.find_by_uuid(UUID.into()).await.unwrap();
+        assert_eq!(order.id, Some(12));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].work_order_id, 12);
+        assert_eq!(
+            use_case
+                .find_by_uuid("missing".into())
+                .await
+                .unwrap_err()
+                .message,
+            business::use_cases::work_order_use_case::WORK_ORDER_NOT_FOUND
+        );
+        let (orders, total) = use_case.find_page(0, 10).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(orders, vec![order]);
+    })
+    .await;
+    let sql = format!("{:?}", log(db));
+    assert!(!sql.contains("INSERT"), "{sql}");
+    assert!(!sql.contains("UPDATE"), "{sql}");
+}
+
+#[tokio::test]
+async fn selecting_a_new_default_template_replaces_the_previous_one_transactionally() {
+    let target = checklist_template_row(12, 42, "New departure");
+    let mut previous = checklist_template_row(11, 42, "Old departure");
+    previous.is_default = true;
+    let mut previous_cleared = previous.clone();
+    previous_cleared.is_default = false;
+    let mut selected = target.clone();
+    selected.is_default = true;
+    let db = mock()
+        .append_query_results([[target.clone()]])
+        .append_query_results([[checklist_template_item_row(13, 42, 12, "Brakes")]])
+        .append_query_results([[previous]])
+        .append_query_results([[previous_cleared]])
+        .append_query_results([[target]])
+        .append_query_results([[selected]])
+        .append_exec_results([inserted(0), inserted(0)])
+        .into_connection();
+    let (template, items) = run_with_user(
+        Some(owner(42)),
+        checklist_template_use_case(&db).set_default(UUID.into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(template.id, Some(12));
+    assert!(template.is_default);
+    assert_eq!(items[0].checklist_template_id, 12);
+    let sql = format!("{:?}", log(db));
+    assert!(sql.contains("BEGIN"), "{sql}");
+    assert!(sql.contains("COMMIT"), "{sql}");
+    assert_eq!(sql.matches("UPDATE").count(), 2, "{sql}");
+}
+
+#[tokio::test]
+async fn template_pages_expose_the_total_and_persisted_items() {
+    let db = mock()
+        .append_query_results(count(1))
+        .append_query_results([[checklist_template_row(12, 42, "Departure")]])
+        .into_connection();
+    let (templates, total) = run_with_user(
+        Some(owner(42)),
+        checklist_template_use_case(&db).find_page(0, 10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].id, Some(12));
+}
+
 fn at() -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap()
 }
@@ -2103,7 +2236,7 @@ use business::gateway::customer_gateway::CustomerGateway;
 use business::gateway::extra_trip_gateway::ExtraTripGateway;
 use business::use_cases::extra_trip_use_case::{
     DUPLICATE_TRIP, ExtraTripUseCase, NOT_A_DRIVER as TRIP_NOT_A_DRIVER, NOT_A_TENANT_CUSTOMER,
-    NOT_A_TENANT_VEHICLE as TRIP_NOT_A_TENANT_VEHICLE,
+    NOT_A_TENANT_VEHICLE as TRIP_NOT_A_TENANT_VEHICLE, PREPARATION_SKIP_JUSTIFICATION_REQUIRED,
 };
 
 fn trip_use_case(db: &DatabaseConnection) -> ExtraTripUseCase {
@@ -2167,6 +2300,138 @@ async fn a_trip_with_the_same_order_code_and_date_in_the_same_tenant_is_refused_
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
 
+#[tokio::test]
+async fn creating_a_valid_trip_trims_its_order_code_and_persists_it() {
+    let db = mock()
+        .append_query_results([Vec::<entity::extra_trip_entity::Model>::new()])
+        .append_exec_results([inserted(80)])
+        .append_query_results([[extra_trip_row(80, 42, "ORD-100")]])
+        .into_connection();
+    let mut trip = new_trip(Some(42));
+    trip.order_code = "  ORD-100  ".into();
+
+    let saved = run_with_user(Some(owner(42)), trip_use_case(&db).create(trip))
+        .await
+        .expect("valid trip is persisted");
+
+    assert_eq!(saved.id, Some(80));
+    assert_eq!(saved.order_code, "ORD-100");
+    assert!(format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn updating_a_trip_keeps_its_identity_and_checks_duplicates_excluding_itself() {
+    let existing = extra_trip_row(1, 42, "ORD-100");
+    let updated_model = extra_trip_row(1, 42, "ORD-UPDATED");
+    let db = mock()
+        .append_query_results([
+            vec![existing.clone()],
+            vec![existing.clone()],
+            vec![existing.clone()],
+            vec![updated_model],
+        ])
+        .append_exec_results([inserted(1)])
+        .into_connection();
+    let mut changed = new_trip(Some(99));
+    changed.order_code = " ORD-UPDATED ".into();
+
+    let updated = run_with_user(Some(owner(42)), trip_use_case(&db).update(1, changed))
+        .await
+        .expect("existing trip can be edited without treating itself as duplicate");
+
+    assert_eq!(updated.id, Some(1));
+    assert_eq!(updated.tenant_id, Some(42));
+    assert_eq!(updated.uuid.as_deref(), Some(UUID));
+    assert_eq!(updated.order_code, "ORD-UPDATED");
+    assert!(format!("{:?}", log(db)).contains("UPDATE"));
+}
+
+#[tokio::test]
+async fn a_preparation_skip_needs_a_nonblank_justification() {
+    let db = mock()
+        .append_query_results([[extra_trip_row(1, 42, "ORD-100")]])
+        .into_connection();
+    let error = run_with_user(
+        Some(owner(42)),
+        trip_use_case(&db).authorize_preparation_skip(
+            1,
+            "  ".into(),
+            "manager@example.com".into(),
+            at().naive_utc(),
+        ),
+    )
+    .await
+    .expect_err("blank justification cannot authorize a skip");
+
+    assert_eq!(error.message, PREPARATION_SKIP_JUSTIFICATION_REQUIRED);
+    assert!(!format!("{:?}", log(db)).contains("UPDATE"));
+}
+
+#[tokio::test]
+async fn a_preparation_skip_with_a_justification_is_authorized() {
+    let trip = extra_trip_row(1, 42, "ORD-100");
+    let db = mock()
+        .append_query_results([[trip.clone()], [trip.clone()], [trip]])
+        .append_exec_results([inserted(1)])
+        .into_connection();
+
+    run_with_user(
+        Some(owner(42)),
+        trip_use_case(&db).authorize_preparation_skip(
+            1,
+            "  manager approved  ".into(),
+            "manager@example.com".into(),
+            at().naive_utc(),
+        ),
+    )
+    .await
+    .expect("a nonblank justification can authorize the skip");
+
+    assert!(format!("{:?}", log(db)).contains("UPDATE"));
+}
+
+#[tokio::test]
+async fn trip_lookup_returns_records_by_id_or_uuid_and_reports_missing_records() {
+    let db = mock()
+        .append_query_results([
+            vec![extra_trip_row(1, 42, "ORD-100")],
+            vec![extra_trip_row(1, 42, "ORD-100")],
+            Vec::<entity::extra_trip_entity::Model>::new(),
+            Vec::<entity::extra_trip_entity::Model>::new(),
+        ])
+        .into_connection();
+    let use_case = trip_use_case(&db);
+
+    assert_eq!(
+        use_case.find_by_id(1).await.expect("trip by id").id,
+        Some(1)
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid(UUID.into())
+            .await
+            .expect("trip by UUID")
+            .id,
+        Some(1)
+    );
+    assert_eq!(
+        use_case
+            .find_by_id(404)
+            .await
+            .expect_err("unknown trip id")
+            .message,
+        "Trip not found"
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown trip UUID")
+            .message,
+        "Trip not found"
+    );
+}
+
 /// `HRMS-608`: the preview says, row by row, what the import would do -- an
 /// existing order code *and* date updates, anything else creates -- and
 /// writes nothing.
@@ -2187,7 +2452,11 @@ async fn a_trip_import_preview_names_creates_and_updates_and_writes_nothing() {
     .await
     .expect("a valid batch previews");
     assert_eq!(plan.len(), 2);
-    assert_eq!((plan[0].row, plan[0].update), (0, true), "ORD-100 on that date exists");
+    assert_eq!(
+        (plan[0].row, plan[0].update),
+        (0, true),
+        "ORD-100 on that date exists"
+    );
     assert_eq!((plan[1].row, plan[1].update), (1, false), "ORD-200 is new");
     let statements = format!("{:?}", log(db));
     assert!(!statements.contains("INSERT") && !statements.contains("UPDATE"));
@@ -2206,7 +2475,10 @@ async fn an_unresolved_row_is_named_with_its_original_position_alongside_other_b
     blank.order_code = "  ".into();
     let batch = TripImportBatch {
         rows: vec![(0, new_trip(Some(42))), (3, blank)],
-        rejections: vec![TripImportRejection::new(1, TripRejectionReason::NotATenantVehicle)],
+        rejections: vec![TripImportRejection::new(
+            1,
+            TripRejectionReason::NotATenantVehicle,
+        )],
     };
     let refused = run_with_user(Some(owner(42)), trip_use_case(&db).import_batch(batch))
         .await
@@ -2215,12 +2487,55 @@ async fn an_unresolved_row_is_named_with_its_original_position_alongside_other_b
         panic!("expected itemised rejections");
     };
     assert_eq!(
-        rejections.iter().map(|r| (r.row, r.reason)).collect::<Vec<_>>(),
+        rejections
+            .iter()
+            .map(|r| (r.row, r.reason))
+            .collect::<Vec<_>>(),
         vec![
             (1, TripRejectionReason::NotATenantVehicle),
             (3, TripRejectionReason::OrderCodeRequired)
         ],
         "rows 2 and 4 of the file, in file order"
+    );
+    assert!(!format!("{:?}", log(db)).contains("INSERT"));
+}
+
+#[tokio::test]
+async fn importing_rows_collects_driver_vehicle_and_customer_reference_rejections() {
+    use business::use_cases::extra_trip_import::{ExtraTripImportError, TripRejectionReason};
+    let mut invalid_driver = new_trip(Some(42));
+    invalid_driver.driver_id = Some(5);
+    let mut invalid_vehicle = new_trip(Some(42));
+    invalid_vehicle.order_code = "ORD-VEHICLE".into();
+    invalid_vehicle.vehicle_id = Some(10);
+    let mut invalid_customer = new_trip(Some(42));
+    invalid_customer.order_code = "ORD-CUSTOMER".into();
+    invalid_customer.customer_id = Some(20);
+    let db = mock()
+        .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "x")]])
+        .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
+        .append_query_results([[customer_row(20, 99)]])
+        .into_connection();
+
+    let error = run_with_user(
+        Some(owner(42)),
+        trip_use_case(&db).import(vec![invalid_driver, invalid_vehicle, invalid_customer]),
+    )
+    .await
+    .expect_err("all out-of-tenant references are rejected before writing");
+    let ExtraTripImportError::Rejected(rejections) = error else {
+        panic!("expected row-level import rejections");
+    };
+    assert_eq!(
+        rejections
+            .iter()
+            .map(|rejection| (rejection.row, rejection.reason))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, TripRejectionReason::NotADriver),
+            (1, TripRejectionReason::NotATenantVehicle),
+            (2, TripRejectionReason::NotATenantCustomer),
+        ]
     );
     assert!(!format!("{:?}", log(db)).contains("INSERT"));
 }
@@ -2527,10 +2842,12 @@ use business::use_cases::checklist_template_use_case::{
 };
 
 fn checklist_template_use_case(db: &DatabaseConnection) -> ChecklistTemplateUseCase {
-    ChecklistTemplateUseCase::new(business::gateway::checklist_template_gateway::ChecklistTemplateDatabaseGateway::new(
-        ChecklistTemplateGateway::new(db.clone()),
-        ChecklistTemplateItemGateway::new(db.clone()),
-    ))
+    ChecklistTemplateUseCase::new(
+        business::gateway::checklist_template_gateway::ChecklistTemplateDatabaseGateway::new(
+            ChecklistTemplateGateway::new(db.clone()),
+            ChecklistTemplateItemGateway::new(db.clone()),
+        ),
+    )
 }
 
 fn new_checklist_template(tenant_id: Option<i64>, name: &str) -> ChecklistTemplate {
@@ -2693,25 +3010,28 @@ use business::use_cases::checklist_run_use_case::{
     ANSWER_NOT_A_TEMPLATE_ITEM, AT_LEAST_ONE_ANSWER_REQUIRED, ChecklistRunUseCase,
     DRIVER_ALREADY_HOLDS_A_VEHICLE, DUPLICATE_ANSWER_FOR_ITEM, MAY_NOT_NAME_AN_OPENING_CHECKLIST,
     NOT_A_DRIVER as RUN_NOT_A_DRIVER, NOT_A_TENANT_TEMPLATE,
-    NOT_A_TENANT_VEHICLE as RUN_NOT_A_TENANT_VEHICLE, OPENING_CHECKLIST_ALREADY_CLOSED,
-    OPENING_CHECKLIST_WRONG_VEHICLE, ODOMETER_BELOW_OFFICIAL, ODOMETER_NEGATIVE,
+    NOT_A_TENANT_VEHICLE as RUN_NOT_A_TENANT_VEHICLE, ODOMETER_BELOW_OFFICIAL, ODOMETER_NEGATIVE,
+    OPENING_CHECKLIST_ALREADY_CLOSED, OPENING_CHECKLIST_WRONG_VEHICLE,
     RETURN_REQUIRES_OPENING_CHECKLIST,
 };
 
 fn checklist_run_use_case(db: &DatabaseConnection) -> ChecklistRunUseCase {
-    ChecklistRunUseCase::new(business::gateway::checklist_run_gateway::ChecklistRunDatabaseGateway::new(
-        ChecklistRunGateway::new(db.clone()),
-        ChecklistTemplateGateway::new(db.clone()),
-        ChecklistTemplateItemGateway::new(db.clone()),
-        ChecklistAnswerGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
-        UserGateway::new(db.clone()),
-        WorkOrderGateway::new(db.clone()),
-        WorkOrderItemGateway::new(db.clone()),
-    ), business::use_cases::km_evolution_use_case::KmEvolutionUseCase::new(
-        business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
-    ))
+    ChecklistRunUseCase::new(
+        business::gateway::checklist_run_gateway::ChecklistRunDatabaseGateway::new(
+            ChecklistRunGateway::new(db.clone()),
+            ChecklistTemplateGateway::new(db.clone()),
+            ChecklistTemplateItemGateway::new(db.clone()),
+            ChecklistAnswerGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+            UserGateway::new(db.clone()),
+            WorkOrderGateway::new(db.clone()),
+            WorkOrderItemGateway::new(db.clone()),
+        ),
+        business::use_cases::km_evolution_use_case::KmEvolutionUseCase::new(
+            business::gateway::km_evolution_gateway::KmEvolutionGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+        ),
+    )
 }
 
 fn new_checklist_answer(checklist_template_item_id: i64) -> ChecklistAnswer {
@@ -4469,7 +4789,9 @@ async fn an_adjustment_records_the_difference_from_current_stock() {
 
 // ------------------------------------------------------------- EPIC-SP-03-S01 purchase orders
 use business::domain::purchase_order::PurchaseOrder;
-use business::gateway::purchase_order_gateway::{PurchaseOrderDatabaseGateway, PurchaseOrderGateway};
+use business::gateway::purchase_order_gateway::{
+    PurchaseOrderDatabaseGateway, PurchaseOrderGateway,
+};
 use business::use_cases::purchase_order_use_case::{
     DUPLICATE_ACTIVE_PURCHASE_ORDER, PART_NOT_FOUND as PO_PART_NOT_FOUND,
     PENDENCY_REQUIRES_WORK_ORDER, PURCHASE_ORDER_NOT_FOUND, PurchaseOrderUseCase,
@@ -5645,7 +5967,9 @@ async fn a_resent_transaction_with_no_actual_change_writes_nothing() {
 }
 
 // ------------------------------------------------------- EPIC-MT-07-S02 preventive work order
-use business::gateway::preventive_plan_gateway::{PreventivePlanDatabaseGateway, PreventivePlanGateway};
+use business::gateway::preventive_plan_gateway::{
+    PreventivePlanDatabaseGateway, PreventivePlanGateway,
+};
 use business::use_cases::preventive_plan_use_case::{PLAN_NOT_DUE, PreventivePlanUseCase};
 
 fn preventive_plan_use_case(db: &DatabaseConnection) -> PreventivePlanUseCase {
@@ -6939,13 +7263,15 @@ use business::use_cases::garage_attendance_use_case::{
 
 fn garage_attendance_use_case(db: &DatabaseConnection) -> GarageAttendanceUseCase {
     use business::gateway::*;
-    GarageAttendanceUseCase::new(business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway::new(
-        garage_attendance_gateway::GarageAttendanceGateway::new(db.clone()),
-        garage_service_gateway::GarageServiceGateway::new(db.clone()),
-        garage_service_log_gateway::GarageServiceLogGateway::new(db.clone()),
-        garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
-        VehicleGateway::new(db.clone()),
-    ))
+    GarageAttendanceUseCase::new(
+        business::gateway::garage_attendance_workflow_gateway::GarageAttendanceDatabaseGateway::new(
+            garage_attendance_gateway::GarageAttendanceGateway::new(db.clone()),
+            garage_service_gateway::GarageServiceGateway::new(db.clone()),
+            garage_service_log_gateway::GarageServiceLogGateway::new(db.clone()),
+            garage_service_model_gateway::GarageServiceModelGateway::new(db.clone()),
+            VehicleGateway::new(db.clone()),
+        ),
+    )
 }
 
 fn attendance_row(
@@ -7410,23 +7736,34 @@ async fn a_drivers_trip_list_is_scoped_to_the_tenant_and_to_the_trips_that_name_
         .append_query_results(count(1))
         .append_query_results([[extra_trip_row(1, 42, "T-1")]])
         .into_connection();
-    let driver = AuditUser { id: 7, email: "driver@example.com".into(), tenant_id: Some(42), enforce_tenant: true };
+    let driver = AuditUser {
+        id: 7,
+        email: "driver@example.com".into(),
+        tenant_id: Some(42),
+        enforce_tenant: true,
+    };
     let (rows, _total) = run_with_user(
         Some(driver),
-        business::gateway::extra_trip_gateway::ExtraTripGateway::new(db.clone()).find_page_for_driver(7, 0, 50),
+        business::gateway::extra_trip_gateway::ExtraTripGateway::new(db.clone())
+            .find_page_for_driver(7, 0, 50),
     )
     .await
     .expect("page");
     assert_eq!(rows.len(), 1);
     let sql = format!("{:?}", log(db)).to_lowercase();
     assert!(sql.contains("tenant_id"), "{sql}");
-    assert!(sql.contains("driver_id") && sql.contains("second_driver_id"), "{sql}");
+    assert!(
+        sql.contains("driver_id") && sql.contains("second_driver_id"),
+        "{sql}"
+    );
 }
 
 #[test]
 fn a_trip_names_only_its_driver_or_second_driver_and_never_a_missing_id() {
     use business::commons::entity_mapper::EntityMapper;
-    let mut trip = business::domain::extra_trip::ExtraTripEntityMapper::from_model(extra_trip_row(1, 42, "T-1"));
+    let mut trip = business::domain::extra_trip::ExtraTripEntityMapper::from_model(extra_trip_row(
+        1, 42, "T-1",
+    ));
     trip.driver_id = Some(7);
     trip.second_driver_id = Some(8);
     assert!(trip.names_driver(Some(7)));
