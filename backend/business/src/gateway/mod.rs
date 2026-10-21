@@ -29,6 +29,7 @@ pub mod maintenance_notification_gateway;
 pub mod non_execution_gateway;
 pub mod province_gateway;
 pub mod tenant_gateway;
+pub mod tenant_dashboard_gateway;
 pub mod tracking_provider;
 pub mod fuel_provider;
 pub mod user_gateway;

@@ -12,6 +12,7 @@ use crate::routes::authentication_routes::auth_routes;
 use crate::infrastructure::public_plans::public_plans_route;
 use crate::routes::business_plan_routes::business_plan_routes;
 use crate::routes::billing_routes::billing_routes;
+use crate::routes::tenant_dashboard_routes::tenant_dashboard_routes;
 use crate::routes::customer_routes::customer_routes;
 use crate::routes::holiday_routes::holiday_routes;
 use crate::routes::checklist_template_routes::checklist_template_routes;
@@ -99,6 +100,7 @@ impl Modify for SecurityAddon {
         endpoints::billing_endpoint::get_settings,
         endpoints::billing_endpoint::set_grace_days,
         endpoints::billing_endpoint::set_suspension,
+        endpoints::tenant_dashboard_endpoint::snapshot,
         endpoints::user_endpoint::get_by_uuid,
         endpoints::user_endpoint::add,
         endpoints::user_endpoint::list_all,
@@ -331,6 +333,7 @@ impl Modify for SecurityAddon {
             endpoints::json::purchase_order_json::MarkOrderedJson,
             endpoints::json::maintenance_notification_json::MaintenanceNotificationJson,
             endpoints::json::maintenance_notification_json::UnreadCountJson,
+            endpoints::json::tenant_dashboard_json::TenantDashboardJson,
             endpoints::json::maintenance_notification_json::MarkedReadJson,
             endpoints::json::non_execution_json::NonExecutionOccurrenceJson,
             endpoints::json::non_execution_json::NonExecutionVehicleJson,
@@ -516,6 +519,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/business-plan", business_plan_routes(state.clone()))
         .nest("/billing", billing_routes(state.clone()))
+        .nest("/dashboard", tenant_dashboard_routes(state.clone()))
         .nest("/customer", customer_routes(state.clone()))
         .nest("/holiday", holiday_routes(state.clone()))
         .nest("/checklist-template", checklist_template_routes(state.clone()))
@@ -696,6 +700,7 @@ mod openapi_contract_tests {
             "tenant_routes" => "/tenant",
             "business_plan_routes" => "/business-plan",
             "billing_routes" => "/billing",
+            "tenant_dashboard_routes" => "/dashboard",
             "user_routes" => "/user",
             "vehicle_routes" => "/vehicle",
             "customer_routes" => "/customer",
@@ -805,7 +810,7 @@ mod openapi_contract_tests {
         // Public, or reachable by every signed-in user, or owner/platform-only with no catalogue permission to
         // grant (device credentials, `HRMS-418`): these state "none" instead of a code.
         let ungrantable = [
-            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/garage-device", "/garage-device/pair",
+            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/dashboard", "/garage-device", "/garage-device/pair",
             "/garage-device/pairing-code", "/garage-device/uuid/{uuid}", "/garage-device/uuid/{uuid}/pairing-code",
         ];
         let openapi = with_permissions(ApiDoc::openapi());

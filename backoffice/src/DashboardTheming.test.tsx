@@ -50,20 +50,22 @@ describe('dashboard and tenant theming against the live store', () => {
   // DEF-BO-07: the count cards asked for `{page:0,pageSize:1}` and wrote the
   // answer into the same slot the Tenants screen reads, so opening the
   // dashboard left the list showing "1-1 of 29 - Page 1 of 29".
-  it('counts records without overwriting the page the list screens read', async () => {
-    const totals: Record<string, number> = { '/tenant': 29, '/user': 7 }
+  it('loads the tenant overview without overwriting the page the list screens read', async () => {
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
       if (url === '/tenant/uuid/tenant-42-uuid') return { data: transmega }
-      return { data: { ...emptyPage(), totalItems: totals[url] ?? 0, pageSize: 1 } }
+      if (url === '/dashboard') return { data: { activeVehicles: 12, vehiclesInMaintenance: 2, openWorkOrders: 4, workOrdersAwaitingParts: 1, yardQueue: 3, unreadMaintenanceNotices: 0, unjustifiedNonExecutions: 1, enabledUsers: 8, overdueCharges: 2 } }
+      return { data: { ...emptyPage(), totalItems: 29, pageSize: 1 } }
     }) as never)
 
     renderDashboard()
 
-    expect(await screen.findByText('29')).toBeInTheDocument()
-    expect(await screen.findByText('7')).toBeInTheDocument()
+    expect(await screen.findByText('12')).toBeInTheDocument()
+    expect(await screen.findByText(/overdue charges|cobranças em atraso/i)).toBeInTheDocument()
+    expect(screen.queryByText(/registered tenants|tenants cadastrados/i)).not.toBeInTheDocument()
     const listPage = store.getState().data.tenants
     expect(listPage.items).toHaveLength(0)
     expect(listPage.totalItems).toBe(0)
-    expect(store.getState().data.counts.tenants).toBe(29)
+    expect(store.getState().data.counts.tenants).toBe(0)
+    expect(store.getState().data.tenantDashboard.activeVehicles).toBe(12)
   })
 })

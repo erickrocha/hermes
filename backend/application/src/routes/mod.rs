@@ -15,6 +15,7 @@ pub mod maintenance_notification_routes;
 pub mod non_execution_routes;
 pub mod resource_routes;
 pub mod tenant_routes;
+pub mod tenant_dashboard_routes;
 pub mod transport_demand_routes;
 pub mod extra_trip_routes;
 pub mod user_routes;

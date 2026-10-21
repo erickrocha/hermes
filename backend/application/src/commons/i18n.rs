@@ -324,6 +324,9 @@ pub enum ErrorKey {
     OdometerNegative,
     OdometerBelowOfficial,
     ChecklistTemplateCannotBeDefault,
+    /// The operational overview is the caller's tenant. An unbound platform
+    /// administrator must not receive fleet counts across every tenant.
+    DashboardForbidden,
 }
 
 impl ErrorKey {
@@ -462,6 +465,7 @@ impl ErrorKey {
             ErrorKey::OdometerNegative => "OdometerNegative",
             ErrorKey::OdometerBelowOfficial => "OdometerBelowOfficial",
             ErrorKey::ChecklistTemplateCannotBeDefault => "ChecklistTemplateCannotBeDefault",
+            ErrorKey::DashboardForbidden => "DashboardForbidden",
         }
     }
 
@@ -600,6 +604,7 @@ impl ErrorKey {
             ErrorKey::OdometerNegative => "odometer-negative",
             ErrorKey::OdometerBelowOfficial => "odometer-below-official",
             ErrorKey::ChecklistTemplateCannotBeDefault => "checklist-template-cannot-be-default",
+            ErrorKey::DashboardForbidden => "dashboard-forbidden",
         }
     }
 }
@@ -903,6 +908,7 @@ mod tests {
             ErrorKey::OdometerNegative,
             ErrorKey::OdometerBelowOfficial,
             ErrorKey::ChecklistTemplateCannotBeDefault,
+            ErrorKey::DashboardForbidden,
         ];
         let generic = "An unexpected error occurred";
         for tag in ["en", "pt-BR", "es"] {

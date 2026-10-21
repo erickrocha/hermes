@@ -149,3 +149,4 @@ answer-not-a-template-item = An answered item does not belong to this checklist'
 odometer-negative = The odometer reading cannot be negative
 odometer-below-official = The odometer reading is lower than the vehicle's official reading. Correct the official reading first if it is wrong
 checklist-template-cannot-be-default = Only an active Departure or Return template can be the default
+dashboard-forbidden = This overview is only available inside a tenant

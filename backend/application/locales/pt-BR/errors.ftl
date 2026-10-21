@@ -149,3 +149,4 @@ answer-not-a-template-item = Um item respondido não pertence ao modelo deste ch
 odometer-negative = A quilometragem não pode ser negativa
 odometer-below-official = A quilometragem é menor que a leitura oficial do veículo. Corrija antes a leitura oficial, se ela estiver errada
 checklist-template-cannot-be-default = Somente um modelo ativo de saída ou chegada pode ser o padrão
+dashboard-forbidden = Esta visão geral só está disponível dentro de um tenant
