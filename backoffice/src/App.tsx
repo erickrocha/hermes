@@ -4,19 +4,21 @@ import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from './store'
 import { logout } from './store'
 import type { Session } from './types'
-import { applyTheme } from './theme'
 import { Shell } from './components/Shell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Loading } from './components/UI'
 import { canCreateUsers, canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from './features/routeAccess'
+import { can, OWNER } from './features/access'
 import { customRoutes, lazyPage } from './routes'
 import { resourceConfigs } from './features/resources'
 
 const AcceptInvitePage = lazyPage(() => import('./pages/AuthPages'), 'AcceptInvitePage')
 const LoginPage = lazyPage(() => import('./pages/AuthPages'), 'LoginPage')
+const LandingPage = lazyPage(() => import('./pages/LandingPage'), 'LandingPage')
 const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'DashboardPage')
 const PlanEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'PlanEditorPage')
 const PlansPage = lazyPage(() => import('./pages/ManagementPages'), 'PlansPage')
+const RuleSettingsPage = lazyPage(() => import('./pages/FuelPages'), 'RuleSettingsPage')
 const SubscriptionPage = lazyPage(() => import('./pages/ManagementPages'), 'SubscriptionPage')
 const TenantEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantEditorPage')
 const TenantsPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantsPage')
@@ -37,11 +39,11 @@ function Protected({ children, sysAdmin = false, allow }: { children: ReactNode;
   const session = useSelector((state: RootState) => state.auth.session)
   const location = useLocation()
   if (!session) return <Navigate to="/login" replace />
-  if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/" replace />
+  if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/home" replace />
   // DEF-BO-04: a role check that only lives in the page's action bar is a
   // suggestion -- the URL is still reachable by hand. The guard and the
   // button share one predicate so they cannot disagree.
-  if (allow && !allow(session)) return <Navigate to="/" replace />
+  if (allow && !allow(session)) return <Navigate to="/home" replace />
   // U-1: keyed by route so navigating away from a page that threw clears the
   // failure instead of stranding the operator on the error card.
   return <Shell><ErrorBoundary key={location.pathname}><Suspense fallback={<Loading />}>{children}</Suspense></ErrorBoundary></Shell>
@@ -54,15 +56,16 @@ export function App() {
   // EPIC-BO-01-S02: a signed-out session (or one still on /login) never
   // keeps a previous tenant's theme -- Shell is what applies one, and it
   // isn't mounted here to un-apply it itself.
-  useEffect(() => { if (!session) applyTheme(null) }, [session])
   return <Routes>
-    <Route path="/login" element={session ? <Navigate to="/" replace /> : <Suspense fallback={<Loading />}><LoginPage /></Suspense>} />
+    <Route path="/" element={session ? <Navigate to="/home" replace /> : <Suspense fallback={<Loading />}><LandingPage /></Suspense>} />
+    <Route path="/login" element={session ? <Navigate to="/home" replace /> : <Suspense fallback={<Loading />}><LoginPage /></Suspense>} />
     <Route path="/accept-invite" element={<Suspense fallback={<Loading />}><AcceptInvitePage /></Suspense>} />
-    <Route path="/" element={<Protected><DashboardPage /></Protected>} />
+    <Route path="/home" element={<Protected><DashboardPage /></Protected>} />
     <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
     <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:uuid/edit" element={<Protected allow={canSeeTenants}><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/manage" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update', OWNER)}><RuleSettingsPage /></Protected>} />
     <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
     <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />

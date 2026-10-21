@@ -46,7 +46,6 @@ const FuelSettingsPage = lazyPage(() => import('./pages/FuelPages'), 'FuelSettin
 const FuelUnifyPage = lazyPage(() => import('./pages/FuelPages'), 'FuelUnifyPage')
 const InternalTankConfigPage = lazyPage(() => import('./pages/FuelPages'), 'InternalTankConfigPage')
 const InternalTankPage = lazyPage(() => import('./pages/FuelPages'), 'InternalTankPage')
-const RuleSettingsPage = lazyPage(() => import('./pages/FuelPages'), 'RuleSettingsPage')
 const NonExecutionJustifyPage = lazyPage(() => import('./pages/NonExecutionPages'), 'NonExecutionJustifyPage')
 const NonExecutionManualPage = lazyPage(() => import('./pages/NonExecutionPages'), 'NonExecutionManualPage')
 const NonExecutionsPage = lazyPage(() => import('./pages/NonExecutionPages'), 'NonExecutionsPage')
@@ -94,7 +93,6 @@ export const customRoutes: AppRoute[] = [
   { path: '/fuel/tank', element: <InternalTankPage />, allow: (s) => can(s, 'internal-tank.read', OFFICE) },
   { path: '/fuel/tank/edit', element: <InternalTankConfigPage />, allow: (s) => can(s, 'internal-tank.update', OWNER) },
   { path: '/fuel/settings', element: <FuelSettingsPage />, allow: (s) => can(s, 'fuel-gauge-settings.update', OWNER) },
-  { path: '/fuel/rules', element: <RuleSettingsPage />, allow: (s) => can(s, 'tenant-rule-settings.update', OWNER) },
   { path: '/checklist-templates/:uuid', element: <ChecklistTemplateDetailPage />, allow: (s) => can(s, 'checklist-template.read', OFFICE) },
   { path: '/checklist-templates/:uuid/run', element: <ChecklistRunNewPage />, allow: (s) => can(s, 'checklist-run.create', [...OWNER, 'Driver']) },
   { path: '/inspections/new', element: <TechnicalInspectionNewPage />, allow: (s) => can(s, 'technical-inspection.create', OWNER_MECHANIC) },

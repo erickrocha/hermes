@@ -15,7 +15,7 @@ const transmega: Tenant = { id: 42, uuid: 'tenant-42-uuid', businessName: 'Trans
 
 const renderDashboard = () => render(
   <Provider store={store}>
-    <MemoryRouter initialEntries={['/']}><App /></MemoryRouter>
+    <MemoryRouter initialEntries={['/home']}><App /></MemoryRouter>
   </Provider>
 )
 
@@ -34,7 +34,7 @@ describe('dashboard and tenant theming against the live store', () => {
   // be sitting in an already-loaded tenant *list*, so a tenant owner saw their
   // own identity only by accident -- and never once the dashboard stopped
   // loading that list (DEF-BO-07).
-  it('themes the console from the session tenant, without needing a tenant list', async () => {
+  it('does not theme the console from the tenant name; the stored choice rules', async () => {
     vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
       if (url === '/tenant/uuid/tenant-42-uuid') return { data: transmega }
       return { data: { ...emptyPage(), totalItems: 29 } }
@@ -42,7 +42,8 @@ describe('dashboard and tenant theming against the live store', () => {
 
     renderDashboard()
 
-    await waitFor(() => expect(document.documentElement.style.getPropertyValue('--accent-primary').trim()).toBe('#ff5b00'))
+    await waitFor(() => expect(store.getState().data.currentTenant?.uuid).toBe('tenant-42-uuid'))
+    expect(document.documentElement.style.getPropertyValue('--accent-primary')).toBe('')
     expect(store.getState().data.tenants.items).toHaveLength(0)
   })
 

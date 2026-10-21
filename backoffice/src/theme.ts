@@ -122,13 +122,22 @@ export const hexToRgbTriple = (hex: string) => {
   return `${r},${g},${b}`
 }
 
-// There is exactly one tenant with a signed-off identity today (Transmega),
-// so matching by name is honest about the current state. A `theme` field on
-// the tenant record is the right shape once a *second* tenant needs its own
-// identity -- adding it before one exists would be speculative (AD-011 only
-// promises the mechanism, not a theme picker UI nobody can use yet).
-export function themeForTenant(tenantName: string | null | undefined): Theme | null {
-  return tenantName && /transmega/i.test(tenantName) ? transmegaTheme : null
+export type ThemeName = 'default' | 'transmega'
+export const THEME_NAMES: ThemeName[] = ['default', 'transmega']
+export const THEME_STORAGE_KEY = 'hermes.theme'
+
+export const getStoredTheme = (): ThemeName => {
+  const value = localStorage.getItem(THEME_STORAGE_KEY)
+  return THEME_NAMES.includes(value as ThemeName) ? (value as ThemeName) : 'default'
+}
+
+export function applyThemeByName(name: ThemeName) {
+  applyTheme(name === 'transmega' ? transmegaTheme : null)
+}
+
+export function setTheme(name: ThemeName) {
+  localStorage.setItem(THEME_STORAGE_KEY, name)
+  applyThemeByName(name)
 }
 
 // Applies `theme`'s variables to `:root`, clearing every variable any known

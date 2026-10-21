@@ -5,9 +5,10 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
 import { loadCurrentTenant, loadPermissions, logout } from '../store'
-import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
+import { ThemePicker } from './ThemePicker'
+import { applyThemeByName, getStoredTheme } from '../theme'
 import { NotificationBell } from './molecules/NotificationBell'
 import { operationNav } from '../features/navigation'
 import { canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from '../features/routeAccess'
@@ -31,11 +32,11 @@ export function Shell({ children }: { children: ReactNode }) {
   // once the dashboard stopped listing tenants (DEF-BO-07). A SysAdmin has no
   // tenant of their own, so they keep the vendor's default identity.
   useEffect(() => { if (session.tenantUuid) dispatch(loadCurrentTenant(session.tenantUuid)) }, [dispatch, session.tenantUuid])
+  useEffect(() => { applyThemeByName(getStoredTheme()) }, [])
   useEffect(() => { dispatch(loadPermissions()) }, [dispatch, session.userId])
-  useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
   const links: { to: string; label: string; icon: LucideIcon; group?: string }[] = [
-    { to: '/', label: t('dashboard'), icon: Gauge },
+    { to: '/home', label: t('dashboard'), icon: Gauge },
     ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
@@ -75,6 +76,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{t(`role${session.role}`)}</small></div>
         <div className="topbar-actions">
           <NotificationBell session={session} />
+          <ThemePicker />
           <LanguagePicker />
           <div className="user-menu-wrap">
             <button className="user-trigger" onClick={() => setUserMenu(!userMenu)}><span className="avatar">{userLabel.slice(0, 1).toUpperCase()}</span><span className="user-copy"><b>{userLabel}</b><small>{session.email || ''}</small></span><ChevronDown size={16} /></button>

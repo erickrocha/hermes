@@ -177,10 +177,7 @@ export function InternalTankPage() {
 
 export function InternalTankConfigPage() { return <ResourceFormPage titleKey="configureTank" fields={tankFields} backTo="/fuel/tank" controller={useSingletonForm(internalTank, '/internal-tank')} /> }
 export function FuelSettingsPage() {
-  const { t } = useTranslation()
-  return <>
-    <ResourceFormPage titleKey="fuelSettings" subtitleKey="fuelSettingsText" fields={gaugeSettingFields} backTo="/fuel" controller={useSingletonForm(fuelGaugeSettings, '/fuel-gauge-settings')} />
-    <p className="form-hint"><Link to="/fuel/rules">{t('ruleSettings')}</Link></p></>
+  return <ResourceFormPage titleKey="fuelSettings" subtitleKey="fuelSettingsText" fields={gaugeSettingFields} backTo="/fuel" controller={useSingletonForm(fuelGaugeSettings, '/fuel-gauge-settings')} />
 }
-export function RuleSettingsPage() { return <ResourceFormPage titleKey="ruleSettings" subtitleKey="ruleSettingsText" fields={ruleFields} backTo="/fuel/settings" controller={useSingletonForm(ruleSettings, '/tenant-rule-settings')} /> }
+export function RuleSettingsPage() { return <ResourceFormPage titleKey="ruleSettings" subtitleKey="ruleSettingsText" fields={ruleFields} columns={4} backTo="/tenants" controller={useSingletonForm(ruleSettings, '/tenant-rule-settings')} /> }
 
