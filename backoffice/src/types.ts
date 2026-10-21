@@ -44,6 +44,14 @@ export interface BusinessPlan {
   periodDays: number
 }
 
+export interface PublicPlan {
+  name: string
+  priceInCents: number
+  pricePerExtraUserInCents: number
+  availableUsers: number
+  periodDays: number
+}
+
 export interface BillingCharge {
   uuid: string
   tenantUuid: string

@@ -9,6 +9,7 @@ use crate::infrastructure::health::{
     api_docs_enabled, app_env, health_app, health_route, load_dotenv, resolve_cors_origins,
 };
 use crate::routes::authentication_routes::auth_routes;
+use crate::infrastructure::public_plans::public_plans_route;
 use crate::routes::business_plan_routes::business_plan_routes;
 use crate::routes::billing_routes::billing_routes;
 use crate::routes::customer_routes::customer_routes;
@@ -509,6 +510,7 @@ async fn start() -> anyhow::Result<()> {
         // Public routes (no authentication)
         .merge(welcome_route())
         .merge(health_route())
+        .merge(public_plans_route())
         .merge(auth_routes(state.clone()))
         .merge(resources_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))

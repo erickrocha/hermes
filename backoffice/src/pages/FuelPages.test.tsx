@@ -134,7 +134,7 @@ describe('fuel (C-029, HRMS-942…955)', () => {
       garageBaseLatitude: null, garageBaseLongitude: null, garageBaseRadiusMeters: 75, garageCycleFallbackDistanceKm: 2, garageOdometerMaxSingleJumpKm: 300, nonExecutionGraceMinutes: 60, nonExecutionMinDwellMinutes: 10 } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
     signIn('TenantOwner')
-    renderPage(<RuleSettingsPage />, '/fuel/rules', '/fuel/rules')
+    renderPage(<RuleSettingsPage />, '/tenants/tenant-1/manage', '/tenants/:uuid/manage')
     expect(await screen.findByDisplayValue('4000')).toBeInTheDocument()
     fireEvent.change(screen.getByDisplayValue('3'), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText(/^tolerance before|^tolerância antes|^tolerancia antes/i), { target: { value: '90' } })

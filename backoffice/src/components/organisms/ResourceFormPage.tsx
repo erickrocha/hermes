@@ -22,10 +22,12 @@ interface Props {
   titleKey: string; subtitleKey?: string; fields: FieldDef[]; backTo: string; controller: FormController
   /** Presente na edição: os campos `createOnly` ficam de fora e o formulário nasce do registro carregado. */
   editing?: boolean
+  /** Formulário largo em N colunas (campos numéricos curtos): usa a largura toda para evitar rolagem vertical. */
+  columns?: 4
 }
 
 /// A página de cadastro/edição: React Hook Form + Yup, navegação em vez de modal, cancelar à esquerda e salvar à direita.
-export function ResourceFormPage({ titleKey, subtitleKey, fields, backTo, controller, editing = false }: Props) {
+export function ResourceFormPage({ titleKey, subtitleKey, fields, backTo, controller, editing = false, columns }: Props) {
   const { t } = useTranslation(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>()
   const visible = useMemo(() => fields.filter((field) => !(editing && field.createOnly)), [fields, editing])
   const schema = useMemo(() => buildSchema(visible), [visible])
@@ -43,8 +45,8 @@ export function ResourceFormPage({ titleKey, subtitleKey, fields, backTo, contro
   return <>
     <PageHeader title={t(titleKey)} subtitle={subtitleKey ? t(subtitleKey) : undefined} />
     <StateView loading={controller.loading} error={editing && !current ? controller.error : ''}>
-      <form className="page-form-card" onSubmit={onSubmit} noValidate>
-        <div className="form-grid">{visible.map((field) => <FormField key={field.name} field={field} register={register} errors={errors} control={control} lookups={lookups} options={field.lookup ? lookups[field.lookup] : undefined} />)}</div>
+      <form className={`page-form-card${columns ? ' wide' : ''}`} onSubmit={onSubmit} noValidate>
+        <div className={`form-grid${columns ? ` cols-${columns}` : ''}`}>{visible.map((field) => <FormField key={field.name} field={field} register={register} errors={errors} control={control} lookups={lookups} options={field.lookup ? lookups[field.lookup] : undefined} />)}</div>
         {controller.error && (!editing || current) && <p className="form-error" role="alert">{t(controller.error, { defaultValue: controller.error })}</p>}
         <div className="form-actions split">
           <Link className="btn secondary" to={backTo}>{t('cancel')}</Link>
