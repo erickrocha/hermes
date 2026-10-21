@@ -165,10 +165,38 @@ fn driver() -> User {
 fn use_case(
     driver: Option<User>,
 ) -> VehicleAssignmentUseCase<MemoryAssignmentStore, MemoryUserStore> {
+    use_case_with(driver, Vec::new())
+}
+
+fn use_case_with(
+    driver: Option<User>,
+    assignments: Vec<VehicleAssignment>,
+) -> VehicleAssignmentUseCase<MemoryAssignmentStore, MemoryUserStore> {
     let users = MemoryUserStore {
         users: Mutex::new(driver.into_iter().collect()),
     };
-    VehicleAssignmentUseCase::new(MemoryAssignmentStore::default(), users)
+    VehicleAssignmentUseCase::new(
+        MemoryAssignmentStore {
+            assignments: Mutex::new(assignments),
+        },
+        users,
+    )
+}
+
+fn assignment(vehicle_id: i64, driver_id: i64, ended: bool) -> VehicleAssignment {
+    VehicleAssignment {
+        id: Some(vehicle_id),
+        uuid: Some(format!("assignment-{vehicle_id}")),
+        tenant_id: Some(42),
+        vehicle_id,
+        driver_id,
+        started_at: chrono::Utc::now(),
+        ended_at: ended.then(chrono::Utc::now),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
 }
 
 #[tokio::test]
@@ -225,4 +253,137 @@ async fn a_user_who_is_not_a_driver_is_refused() {
         .expect_err("only drivers can be assigned");
 
     assert_eq!(error.message, NOT_A_DRIVER);
+}
+
+#[tokio::test]
+async fn an_unknown_driver_is_refused() {
+    let use_case = use_case(None);
+
+    let error = use_case
+        .assign(&vehicle(Some(10), Some(42)), "missing-driver".into())
+        .await
+        .expect_err("the named driver must exist");
+
+    assert_eq!(error.message, NOT_A_DRIVER);
+}
+
+#[tokio::test]
+async fn a_disabled_or_cross_tenant_driver_is_refused() {
+    let mut disabled = driver();
+    disabled.enabled = false;
+    let error = use_case(Some(disabled))
+        .assign(&vehicle(Some(10), Some(42)), "driver-5".into())
+        .await
+        .expect_err("a disabled driver cannot be assigned");
+    assert_eq!(error.message, NOT_A_DRIVER);
+
+    let mut other_tenant = driver();
+    other_tenant.tenant_id = Some(99);
+    let error = use_case(Some(other_tenant))
+        .assign(&vehicle(Some(10), Some(42)), "driver-5".into())
+        .await
+        .expect_err("a driver from another tenant cannot be assigned");
+    assert_eq!(error.message, NOT_A_DRIVER);
+}
+
+#[tokio::test]
+async fn a_driver_without_a_persisted_id_is_refused() {
+    let mut no_id = driver();
+    no_id.id = None;
+    let error = use_case(Some(no_id))
+        .assign(&vehicle(Some(10), Some(42)), "driver-5".into())
+        .await
+        .expect_err("the driver must have a persisted identity");
+
+    assert_eq!(error.message, NOT_A_DRIVER);
+}
+
+#[tokio::test]
+async fn current_returns_the_live_assignment_and_its_driver() {
+    let use_case = use_case_with(Some(driver()), vec![assignment(10, 5, false)]);
+
+    let (live, assigned_driver) = use_case
+        .current(&vehicle(Some(10), Some(42)))
+        .await
+        .expect("the current assignment and driver are returned");
+
+    assert!(live.is_live());
+    assert_eq!(live.vehicle_id, 10);
+    assert_eq!(assigned_driver.id, Some(5));
+}
+
+#[tokio::test]
+async fn current_reports_when_the_vehicle_has_no_live_assignment() {
+    let use_case = use_case_with(Some(driver()), vec![assignment(10, 5, true)]);
+
+    let error = use_case
+        .current(&vehicle(Some(10), Some(42)))
+        .await
+        .expect_err("ended assignments are not current");
+
+    assert_eq!(
+        error.message,
+        business::use_cases::vehicle_assignment_use_case::NO_LIVE_ASSIGNMENT
+    );
+}
+
+#[tokio::test]
+async fn ending_a_live_assignment_preserves_it_and_returns_its_driver() {
+    let use_case = use_case_with(Some(driver()), vec![assignment(10, 5, false)]);
+
+    let (ended, assigned_driver) = use_case
+        .end(&vehicle(Some(10), Some(42)))
+        .await
+        .expect("the live assignment is ended");
+
+    assert!(!ended.is_live());
+    assert_eq!(assigned_driver.id, Some(5));
+}
+
+#[tokio::test]
+async fn history_returns_each_assignment_with_its_driver_and_total() {
+    let use_case = use_case_with(
+        Some(driver()),
+        vec![assignment(10, 5, true), assignment(10, 5, false)],
+    );
+
+    let (history, total) = use_case
+        .history(&vehicle(Some(10), Some(42)), 0, 10)
+        .await
+        .expect("assignment history is joined to its drivers");
+
+    assert_eq!(total, 2);
+    assert_eq!(history.len(), 2);
+    assert!(history.iter().all(|(_, user)| user.id == Some(5)));
+}
+
+#[tokio::test]
+async fn current_and_history_report_when_an_assigned_driver_is_missing() {
+    let assignments = vec![assignment(10, 404, false)];
+    let use_case = use_case_with(None, assignments);
+
+    assert_eq!(
+        use_case
+            .current(&vehicle(Some(10), Some(42)))
+            .await
+            .expect_err("missing driver identity must not be hidden")
+            .message,
+        "Assigned driver not found"
+    );
+    assert_eq!(
+        use_case
+            .history(&vehicle(Some(10), Some(42)), 0, 10)
+            .await
+            .expect_err("history must identify missing driver references")
+            .message,
+        "Assigned driver not found"
+    );
+    assert_eq!(
+        use_case
+            .current(&vehicle(Some(0), Some(42)))
+            .await
+            .expect_err("vehicle IDs must be positive")
+            .message,
+        "Vehicle identity is incomplete"
+    );
 }

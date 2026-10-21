@@ -6,12 +6,10 @@ use business::use_cases::customer_day_off_use_case::{
     CustomerDayOffUseCase, DAY_OFF_NOT_FOUND, DUPLICATE_DAY_OFF,
 };
 use sea_orm::prelude::async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
-struct MemoryCustomerDayOffStore {
-    day_offs: Mutex<Vec<CustomerDayOff>>,
-}
+#[derive(Clone, Default)]
+struct MemoryCustomerDayOffStore(Arc<Mutex<Vec<CustomerDayOff>>>);
 
 #[async_trait]
 impl CustomerDayOffStore for MemoryCustomerDayOffStore {
@@ -19,7 +17,7 @@ impl CustomerDayOffStore for MemoryCustomerDayOffStore {
         &self,
         mut day_off: CustomerDayOff,
     ) -> Result<CustomerDayOff, CustomerDayOffStoreError> {
-        let mut day_offs = self.day_offs.lock().map_err(|_| {
+        let mut day_offs = self.0.lock().map_err(|_| {
             CustomerDayOffStoreError::Storage(BusinessError::new("memory store poisoned".into()))
         })?;
         if day_offs.iter().any(|existing| {
@@ -38,7 +36,7 @@ impl CustomerDayOffStore for MemoryCustomerDayOffStore {
 
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<CustomerDayOff>, BusinessError> {
         let day_offs = self
-            .day_offs
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(day_offs
@@ -49,7 +47,7 @@ impl CustomerDayOffStore for MemoryCustomerDayOffStore {
 
     async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
         let mut day_offs = self
-            .day_offs
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         day_offs.retain(|day_off| day_off.id != Some(id));
@@ -63,7 +61,7 @@ impl CustomerDayOffStore for MemoryCustomerDayOffStore {
         page_size: u64,
     ) -> Result<(Vec<CustomerDayOff>, u64), BusinessError> {
         let day_offs = self
-            .day_offs
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let filtered: Vec<_> = day_offs
@@ -181,4 +179,43 @@ async fn customer_day_off_use_case_refuses_a_customer_without_a_persisted_id() {
         .expect_err("customer id is required");
 
     assert_eq!(error.message, "Customer identity is incomplete");
+}
+
+#[tokio::test]
+async fn a_customer_can_remove_its_day_off_but_missing_or_unpersisted_rows_are_hidden() {
+    let store = MemoryCustomerDayOffStore::default();
+    let use_case = CustomerDayOffUseCase::new(store.clone());
+    let created = use_case
+        .add(
+            &customer(Some(7)),
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    use_case
+        .remove(&customer(Some(7)), created.uuid.unwrap())
+        .await
+        .expect("the owning customer can remove its day off");
+    assert!(store.0.lock().unwrap().is_empty());
+    assert_eq!(
+        use_case
+            .remove(&customer(Some(7)), "missing".into())
+            .await
+            .expect_err("unknown row is not found")
+            .message,
+        DAY_OFF_NOT_FOUND
+    );
+
+    let mut incomplete = day_off(7, 14);
+    incomplete.uuid = Some("incomplete".into());
+    store.0.lock().unwrap().push(incomplete);
+    assert_eq!(
+        use_case
+            .remove(&customer(Some(7)), "incomplete".into())
+            .await
+            .expect_err("row without a persisted id is not removable")
+            .message,
+        DAY_OFF_NOT_FOUND
+    );
 }

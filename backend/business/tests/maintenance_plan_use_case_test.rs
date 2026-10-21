@@ -91,7 +91,9 @@ impl MaintenancePlanStore for MemoryPlanStore {
 }
 
 #[derive(Default)]
-struct MemoryWorkOrderStore;
+struct MemoryWorkOrderStore {
+    work_order: Option<WorkOrder>,
+}
 
 #[async_trait]
 impl WorkOrderStore for MemoryWorkOrderStore {
@@ -99,15 +101,25 @@ impl WorkOrderStore for MemoryWorkOrderStore {
         Ok(work_order)
     }
 
-    async fn get_by_id(&self, _id: i64) -> Result<Option<WorkOrder>, BusinessError> {
-        Ok(None)
+    async fn get_by_id(&self, id: i64) -> Result<Option<WorkOrder>, BusinessError> {
+        Ok(self
+            .work_order
+            .as_ref()
+            .filter(|work_order| work_order.id == Some(id))
+            .cloned())
     }
 
     async fn list_by_maintenance_plan(
         &self,
-        _plan_id: i64,
+        plan_id: i64,
     ) -> Result<Vec<WorkOrder>, BusinessError> {
-        Ok(Vec::new())
+        Ok(self
+            .work_order
+            .as_ref()
+            .filter(|work_order| work_order.maintenance_plan_id == Some(plan_id))
+            .cloned()
+            .into_iter()
+            .collect())
     }
 }
 
@@ -172,10 +184,40 @@ fn new_plan() -> MaintenancePlan {
     }
 }
 
+fn work_order(maintenance_plan_id: Option<i64>) -> WorkOrder {
+    WorkOrder {
+        id: Some(22),
+        uuid: Some("work-order-22".into()),
+        tenant_id: Some(42),
+        vehicle_id: 10,
+        opened_at: None,
+        odometer_km: 100.0,
+        origin: business::domain::enums::WorkOrderOrigin::Manual,
+        checklist_run_id: None,
+        maintenance_plan_id,
+        preventive_plan_id: None,
+        service_type: Some("Repair".into()),
+        description: "Repair brakes".into(),
+        responsible: None,
+        status: business::domain::enums::WorkOrderStatus::Open,
+        observation: None,
+        external_service: false,
+        supplier: None,
+        invoice_number: None,
+        invoice_value_cents: None,
+        invoice_date: None,
+        concluded_at: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    }
+}
+
 fn use_case(plans: MemoryPlanStore, vehicle: Vehicle) -> MaintenancePlanUseCase {
     MaintenancePlanUseCase::new(
         plans,
-        MemoryWorkOrderStore,
+        MemoryWorkOrderStore::default(),
         MemoryVehicleStore {
             vehicle: Some(vehicle),
         },
@@ -221,4 +263,144 @@ async fn maintenance_plan_refuses_an_overlapping_active_plan() {
         .expect_err("overlapping active plan is refused");
 
     assert_eq!(error.message, OVERLAPPING_PLAN_EXISTS);
+}
+
+#[tokio::test]
+async fn maintenance_plan_links_a_valid_work_order_to_the_saved_plan() {
+    let use_case = MaintenancePlanUseCase::new(
+        MemoryPlanStore::default(),
+        MemoryWorkOrderStore {
+            work_order: Some(work_order(None)),
+        },
+        MemoryVehicleStore {
+            vehicle: Some(vehicle(42)),
+        },
+    );
+
+    let (plan, linked) = use_case
+        .create(new_plan(), vec![22])
+        .await
+        .expect("same-tenant work order is linked");
+
+    assert_eq!(plan.id, Some(1));
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].maintenance_plan_id, plan.id);
+}
+
+#[tokio::test]
+async fn maintenance_plan_rejects_a_work_order_already_in_an_active_plan() {
+    let mut existing_plan = new_plan();
+    existing_plan.id = Some(5);
+    existing_plan.vehicle_id = 99;
+    let mut assigned_order = work_order(Some(5));
+    assigned_order.vehicle_id = 10;
+    let use_case = MaintenancePlanUseCase::new(
+        MemoryPlanStore {
+            plans: Mutex::new(vec![existing_plan]),
+        },
+        MemoryWorkOrderStore {
+            work_order: Some(assigned_order),
+        },
+        MemoryVehicleStore {
+            vehicle: Some(vehicle(42)),
+        },
+    );
+
+    let error = use_case
+        .create(new_plan(), vec![22])
+        .await
+        .expect_err("one work order cannot be assigned to two active plans");
+    assert_eq!(
+        error.message,
+        business::use_cases::maintenance_plan_use_case::WORK_ORDER_ALREADY_SCHEDULED
+    );
+}
+
+#[tokio::test]
+async fn maintenance_plan_allows_a_work_order_from_an_inactive_plan_to_be_rescheduled() {
+    let mut concluded_plan = new_plan();
+    concluded_plan.id = Some(5);
+    concluded_plan.vehicle_id = 99;
+    concluded_plan.status = MaintenancePlanStatus::Concluded;
+    let mut assigned_order = work_order(Some(5));
+    assigned_order.vehicle_id = 10;
+    let use_case = MaintenancePlanUseCase::new(
+        MemoryPlanStore {
+            plans: Mutex::new(vec![concluded_plan]),
+        },
+        MemoryWorkOrderStore {
+            work_order: Some(assigned_order),
+        },
+        MemoryVehicleStore {
+            vehicle: Some(vehicle(42)),
+        },
+    );
+
+    let (_, linked) = use_case
+        .create(new_plan(), vec![22])
+        .await
+        .expect("a work order from a concluded plan can be rescheduled");
+    assert_eq!(linked[0].maintenance_plan_id, Some(2));
+}
+
+#[tokio::test]
+async fn maintenance_plan_rejects_missing_or_mismatched_work_orders() {
+    let use_case = use_case(MemoryPlanStore::default(), vehicle(42));
+    let error = use_case
+        .create(new_plan(), vec![404])
+        .await
+        .expect_err("unknown work order cannot be scheduled");
+    assert_eq!(
+        error.message,
+        business::use_cases::maintenance_plan_use_case::WORK_ORDER_NOT_FOUND
+    );
+
+    let mut outside_vehicle = work_order(None);
+    outside_vehicle.vehicle_id = 99;
+    outside_vehicle.tenant_id = Some(99);
+    let use_case = MaintenancePlanUseCase::new(
+        MemoryPlanStore::default(),
+        MemoryWorkOrderStore {
+            work_order: Some(outside_vehicle),
+        },
+        MemoryVehicleStore {
+            vehicle: Some(vehicle(42)),
+        },
+    );
+    let error = use_case
+        .create(new_plan(), vec![22])
+        .await
+        .expect_err("work order for a different vehicle/tenant is refused");
+    assert_eq!(
+        error.message,
+        business::use_cases::maintenance_plan_use_case::WORK_ORDER_WRONG_VEHICLE
+    );
+}
+
+#[tokio::test]
+async fn maintenance_plan_lookup_returns_its_work_orders_and_page() {
+    let mut plan = new_plan();
+    plan.id = Some(1);
+    plan.uuid = Some("plan-1".into());
+    let use_case = MaintenancePlanUseCase::new(
+        MemoryPlanStore {
+            plans: Mutex::new(vec![plan]),
+        },
+        MemoryWorkOrderStore {
+            work_order: Some(work_order(Some(1))),
+        },
+        MemoryVehicleStore {
+            vehicle: Some(vehicle(42)),
+        },
+    );
+
+    let (found, work_orders) = use_case
+        .find_by_uuid("plan-1".into())
+        .await
+        .expect("existing plan and work orders are returned");
+    assert_eq!(found.id, Some(1));
+    assert_eq!(work_orders.len(), 1);
+    let (page, total) = use_case.find_page(0, 10).await.expect("plans are paged");
+    assert_eq!(page.len(), 1);
+    assert_eq!(total, 1);
 }

@@ -368,3 +368,48 @@ async fn gauge_uses_odometer_history_to_fill_missing_fuelling_distance() {
     assert_eq!(remaining_liters, 280.0);
     assert!(estimated);
 }
+
+#[tokio::test]
+async fn missing_reference_and_peer_history_produce_no_effective_consumption() {
+    let use_case = use_case(
+        MemoryFuelEntries::default(),
+        vehicle(Some(300.0), None),
+        MemoryKmReadings::default(),
+    );
+
+    assert_eq!(
+        use_case
+            .effective_consumption(10)
+            .await
+            .expect("absence of a usable estimate is not an error"),
+        business::use_cases::fuel_gauge_use_case::EffectiveConsumption {
+            km_per_liter: None,
+            source: None,
+        }
+    );
+    assert_eq!(
+        use_case.gauge(10).await.unwrap(),
+        TankGauge::Unavailable(GaugeUnavailable::NoReferenceFuelling)
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_vehicle_has_no_capacity_or_consumption() {
+    let use_case = use_case(
+        MemoryFuelEntries::default(),
+        vehicle(Some(300.0), Some(8.0)),
+        MemoryKmReadings::default(),
+    );
+
+    assert_eq!(
+        use_case.gauge(99).await.unwrap(),
+        TankGauge::Unavailable(GaugeUnavailable::NoTankRegistered)
+    );
+    assert_eq!(
+        use_case.effective_consumption(99).await.unwrap(),
+        business::use_cases::fuel_gauge_use_case::EffectiveConsumption {
+            km_per_liter: None,
+            source: None,
+        }
+    );
+}
