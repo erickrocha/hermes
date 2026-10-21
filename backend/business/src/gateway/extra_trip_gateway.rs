@@ -91,9 +91,7 @@ impl Gateway<ExtraTrip, extra_trip_entity::Model, extra_trip_entity::ActiveModel
                 clear_preparation_skip(&mut active);
             }
         }
-        active
-            .save(&self.db)
-            .await
+        active.save(&self.db).await
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
@@ -159,7 +157,9 @@ impl ExtraTripGateway {
         .await
         .map_err(database_error)?
         .ok_or_else(|| BusinessError::new("Trip not found".to_string()))?;
-        let mut active = ExtraTripEntityMapper::build_active_model(ExtraTripEntityMapper::from_model(trip.clone()));
+        let mut active = ExtraTripEntityMapper::build_active_model(
+            ExtraTripEntityMapper::from_model(trip.clone()),
+        );
         active.id = Set(trip.id);
         active.preparation_skip_authorized_by = Set(Some(actor));
         active.preparation_skip_authorized_at = Set(Some(authorized_at.and_utc()));
@@ -444,11 +444,15 @@ fn trips_without_valid_preparation_skip(
 /// `HRMS-607` (`D-09`): same technique every other gateway's own tests use.
 #[cfg(test)]
 mod tests {
+    use crate::commons::entity_mapper::EntityMapper;
     use crate::commons::gateway::{tenant_delete, tenant_select};
     use chrono::{NaiveDate, NaiveTime};
     use entity::audit::{AuditUser, run_with_user};
     use entity::extra_trip_entity;
-    use sea_orm::{DbBackend, EntityTrait, QueryTrait};
+    use sea_orm::{
+        DatabaseBackend, DbBackend, EntityTrait, MockDatabase, MockExecResult, QueryTrait, Value,
+    };
+    use std::collections::BTreeMap;
 
     fn authorized_trip() -> extra_trip_entity::Model {
         let date = NaiveDate::from_ymd_opt(2026, 10, 15).expect("valid test date");
@@ -550,6 +554,13 @@ mod tests {
         }
     }
 
+    fn count(value: i64) -> Vec<Vec<BTreeMap<&'static str, Value>>> {
+        vec![vec![BTreeMap::from([(
+            "num_items",
+            Value::BigInt(Some(value)),
+        )])]]
+    }
+
     #[tokio::test]
     async fn a_tenant_bound_caller_reads_only_its_own_trips() {
         let sql = run_with_user(Some(caller(Some(42), true)), async {
@@ -609,5 +620,149 @@ mod tests {
         })
         .await;
         assert!(sql.contains("`tenant_id` = 99"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn upcoming_trips_exclude_only_valid_preparation_skips() {
+        let authorized = authorized_trip();
+        let mut ordinary = authorized.clone();
+        ordinary.id = 11;
+        ordinary.order_code = "TRIP-11".into();
+        ordinary.preparation_skip_authorized_by = None;
+        ordinary.preparation_skip_authorized_at = None;
+        ordinary.preparation_skip_justification = None;
+        ordinary.preparation_skip_vehicle_id = None;
+        ordinary.preparation_skip_trip_date = None;
+        ordinary.preparation_skip_start_time = None;
+        ordinary.preparation_skip_return_date = None;
+        ordinary.preparation_skip_return_time = None;
+        ordinary.preparation_skip_destination = None;
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([[authorized, ordinary]])
+            .into_connection();
+        let gateway = super::ExtraTripGateway::new(db);
+        let from = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+
+        let trips = run_with_user(
+            Some(caller(Some(42), true)),
+            super::GarageValidityTripStore::upcoming_for_vehicle(&gateway, 7, from),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(trips.len(), 1);
+        assert_eq!(trips[0].id, Some(11));
+    }
+
+    #[tokio::test]
+    async fn trip_pages_support_search_and_driver_filtering() {
+        let trip = authorized_trip();
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(count(1))
+            .append_query_results([[trip.clone()]])
+            .append_query_results(count(2))
+            .append_query_results([[trip]])
+            .into_connection();
+        let gateway = super::ExtraTripGateway::new(db);
+
+        let (searched, searched_total) = run_with_user(
+            Some(caller(Some(42), true)),
+            gateway.find_page(0, 10, Some("TRIP-10")),
+        )
+        .await
+        .unwrap();
+        let (driver_trips, driver_total) = run_with_user(
+            Some(caller(Some(42), true)),
+            gateway.find_page_for_driver(5, 0, 10),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(searched_total, 1);
+        assert_eq!(searched.len(), 1);
+        assert_eq!(driver_total, 2);
+        assert_eq!(driver_trips.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn active_on_date_keeps_trips_that_span_the_date() {
+        let date = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
+        let mut spanning = authorized_trip();
+        spanning.return_date = Some(date);
+        let mut ended = authorized_trip();
+        ended.id = 11;
+        ended.trip_date = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
+        ended.return_date = Some(NaiveDate::from_ymd_opt(2026, 10, 15).unwrap());
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([[spanning, ended]])
+            .into_connection();
+        let gateway = super::ExtraTripGateway::new(db);
+
+        let trips = run_with_user(Some(caller(Some(42), true)), gateway.find_on_date(date))
+            .await
+            .unwrap();
+
+        assert_eq!(trips.len(), 1);
+        assert_eq!(trips[0].id, 10);
+    }
+
+    #[tokio::test]
+    async fn authorizing_a_preparation_skip_stores_the_trip_snapshot() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([[authorized_trip()]])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 10,
+                rows_affected: 1,
+            }])
+            .append_query_results([[authorized_trip()]])
+            .into_connection();
+        let gateway = super::ExtraTripGateway::new(db.clone());
+        let authorized_at = NaiveDate::from_ymd_opt(2026, 10, 15)
+            .unwrap()
+            .and_hms_opt(7, 0, 0)
+            .unwrap();
+
+        run_with_user(
+            Some(caller(Some(42), true)),
+            super::ExtraTripStore::authorize_preparation_skip(
+                &gateway,
+                10,
+                "vehicle already prepared".into(),
+                "owner@example.com".into(),
+                authorized_at,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let sql = format!("{:?}", db.into_transaction_log());
+        assert!(sql.contains("vehicle already prepared"), "{sql}");
+        assert!(sql.contains("owner@example.com"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn import_inserts_new_trips_and_commits_the_batch() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([Vec::<extra_trip_entity::Model>::new()])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 90,
+                rows_affected: 1,
+            }])
+            .append_query_results([[authorized_trip()]])
+            .into_connection();
+        let gateway = super::ExtraTripGateway::new(db);
+        let mut trip =
+            crate::domain::extra_trip::ExtraTripEntityMapper::from_model(authorized_trip());
+        trip.id = None;
+        trip.order_code = "TRIP-NEW".into();
+
+        let result = run_with_user(
+            Some(caller(Some(42), true)),
+            super::ExtraTripStore::import(&gateway, vec![trip]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, (1, 0));
     }
 }

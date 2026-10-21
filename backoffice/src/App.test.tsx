@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { configureStore } from '@reduxjs/toolkit'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router-dom'
@@ -71,6 +71,23 @@ describe('App route guards (EPIC-BO-02, EPIC-BO-04)', () => {
   it('sends an unauthenticated visitor to the login screen', async () => {
     renderAt('/plans', null)
     expect(await screen.findByRole('button', { name: /sign in|entrar/i })).toBeInTheDocument()
+  })
+
+  it('collapses and expands navigation groups', async () => {
+    renderAt('/', tenantOwnerSession)
+    const fleetGroup = await screen.findByRole('button', { name: /fleet|frota/i })
+    const vehicleLink = screen.getByRole('link', { name: /vehicles|veículos/i })
+
+    expect(fleetGroup).toHaveAttribute('aria-expanded', 'true')
+    expect(vehicleLink).toBeInTheDocument()
+
+    fireEvent.click(fleetGroup)
+    expect(fleetGroup).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('link', { name: /vehicles|veículos/i })).not.toBeInTheDocument()
+
+    fireEvent.click(fleetGroup)
+    expect(fleetGroup).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('link', { name: /vehicles|veículos/i })).toBeInTheDocument()
   })
 
 })

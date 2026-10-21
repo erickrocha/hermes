@@ -162,3 +162,42 @@ async fn customer_use_case_rejects_a_blank_name_before_storage() {
 
     assert_eq!(error.message, "Customer name is required");
 }
+
+#[tokio::test]
+async fn customer_use_case_rejects_blank_status_and_reports_missing_records() {
+    let use_case = CustomerUseCase::new(MemoryCustomerStore::default());
+    let mut missing_status = new_customer("Northwind", Some(42));
+    missing_status.status = "  ".into();
+    assert_eq!(
+        use_case
+            .create(missing_status)
+            .await
+            .expect_err("status is required")
+            .message,
+        "Customer status is required"
+    );
+    assert_eq!(
+        use_case
+            .find_by_id(404)
+            .await
+            .expect_err("unknown customer ID is reported")
+            .message,
+        "Customer not found"
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown customer UUID is reported")
+            .message,
+        "Customer not found"
+    );
+    assert_eq!(
+        use_case
+            .update(404, new_customer("Northwind", Some(42)))
+            .await
+            .expect_err("unknown customer cannot be updated")
+            .message,
+        "Customer not found"
+    );
+}

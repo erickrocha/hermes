@@ -30,6 +30,7 @@ pub mod extra_trip_import;
 pub mod province_use_case;
 pub mod reference_import;
 pub mod tenant_use_case;
+pub mod tenant_dashboard_use_case;
 pub mod user_use_case;
 pub mod vehicle_tracking_use_case;
 pub mod vehicle_use_case;

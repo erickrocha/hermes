@@ -32,6 +32,7 @@ pub mod enums;
 pub mod password_policy;
 pub mod province;
 pub mod tenant;
+pub mod tenant_dashboard;
 pub mod user;
 pub mod vehicle;
 pub mod vehicle_assignment;

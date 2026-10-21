@@ -5,9 +5,10 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
 import { loadCurrentTenant, loadPermissions, logout } from '../store'
-import { applyTheme, themeForTenant } from '../theme'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
+import { ThemePicker } from './ThemePicker'
+import { applyThemeByName, getStoredTheme } from '../theme'
 import { NotificationBell } from './molecules/NotificationBell'
 import { operationNav } from '../features/navigation'
 import { canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from '../features/routeAccess'
@@ -17,6 +18,7 @@ const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCh
 export function Shell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false)
   const [userMenu, setUserMenu] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const { t } = useTranslation()
   const session = useSelector((s: RootState) => s.auth.session)!
   const tenant = useSelector((s: RootState) => s.data.currentTenant)
@@ -30,11 +32,11 @@ export function Shell({ children }: { children: ReactNode }) {
   // once the dashboard stopped listing tenants (DEF-BO-07). A SysAdmin has no
   // tenant of their own, so they keep the vendor's default identity.
   useEffect(() => { if (session.tenantUuid) dispatch(loadCurrentTenant(session.tenantUuid)) }, [dispatch, session.tenantUuid])
+  useEffect(() => { applyThemeByName(getStoredTheme()) }, [])
   useEffect(() => { dispatch(loadPermissions()) }, [dispatch, session.userId])
-  useEffect(() => { applyTheme(themeForTenant(tenantName)) }, [tenantName])
   const userLabel = session.name || session.email || t('user')
   const links: { to: string; label: string; icon: LucideIcon; group?: string }[] = [
-    { to: '/', label: t('dashboard'), icon: Gauge },
+    { to: '/home', label: t('dashboard'), icon: Gauge },
     ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
     ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
@@ -51,7 +53,21 @@ export function Shell({ children }: { children: ReactNode }) {
     {mobile && <button className="sidebar-backdrop" aria-label={t('close')} onClick={() => setMobile(false)} />}
     <aside className={`sidebar ${mobile ? 'open' : ''}`}>
       <div className="sidebar-brand"><Logo /><button className="mobile-close" onClick={() => setMobile(false)}><X /></button></div>
-      <nav>{links.map(({ to, label, icon: Icon, group }, index) => <Fragment key={to}>{group && group !== links[index - 1]?.group && <span className="nav-group">{t(group)}</span>}<NavLink end={to === '/'} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink></Fragment>)}</nav>
+      <nav>{links.map(({ to, label, icon: Icon, group }, index) => {
+        const startsGroup = Boolean(group && group !== links[index - 1]?.group)
+        const collapsed = group ? collapsedGroups[group] ?? false : false
+        return <Fragment key={to}>
+          {startsGroup && group && <button
+            type="button"
+            className="nav-group"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsedGroups((current) => ({ ...current, [group]: !current[group] }))}
+          >
+            <span>{t(group)}</span><ChevronDown size={15} aria-hidden="true" />
+          </button>}
+          {(!group || !collapsed) && <NavLink end={to === '/'} to={to} onClick={() => setMobile(false)}><Icon size={19} /><span>{label}</span></NavLink>}
+        </Fragment>
+      })}</nav>
       <div className="sidebar-foot"><span>Hermes</span><small>v0.1</small></div>
     </aside>
     <div className="app-main">
@@ -60,6 +76,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{t(`role${session.role}`)}</small></div>
         <div className="topbar-actions">
           <NotificationBell session={session} />
+          <ThemePicker />
           <LanguagePicker />
           <div className="user-menu-wrap">
             <button className="user-trigger" onClick={() => setUserMenu(!userMenu)}><span className="avatar">{userLabel.slice(0, 1).toUpperCase()}</span><span className="user-copy"><b>{userLabel}</b><small>{session.email || ''}</small></span><ChevronDown size={16} /></button>

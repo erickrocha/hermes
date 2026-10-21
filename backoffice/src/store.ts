@@ -9,6 +9,7 @@ import { garageDeviceReducer } from './features/garageDeviceSlice'
 import { maintenanceNotificationReducer } from './features/maintenanceNotificationSlice'
 import { nonExecutionReducer } from './features/nonExecutionSlice'
 import { billingReducer } from './features/billingSlice'
+import { publicPlanReducer } from './features/publicPlanSlice'
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { apiMessage, normalizeSession } from './api'
 import * as authService from './services/authService'
@@ -57,8 +58,8 @@ const authSlice = createSlice({
 })
 
 type Counts = { tenants: number; users: number; plans: number }
-type DataState = { tenants: Page<Tenant>; plans: Page<BusinessPlan>; users: Page<User>; provinces: Province[]; cities: City[]; countries: string[]; counts: Counts; currentTenant: Tenant | null; loading: boolean; error: string }
-const initialData: DataState = { tenants: emptyPage<Tenant>(), plans: emptyPage<BusinessPlan>(), users: emptyPage<User>(), provinces: [], cities: [], countries: [], counts: { tenants: 0, users: 0, plans: 0 }, currentTenant: null, loading: false, error: '' }
+type DataState = { tenants: Page<Tenant>; plans: Page<BusinessPlan>; users: Page<User>; provinces: Province[]; cities: City[]; countries: string[]; counts: Counts; tenantDashboard: dataService.TenantDashboard; currentTenant: Tenant | null; loading: boolean; error: string }
+const initialData: DataState = { tenants: emptyPage<Tenant>(), plans: emptyPage<BusinessPlan>(), users: emptyPage<User>(), provinces: [], cities: [], countries: [], counts: { tenants: 0, users: 0, plans: 0 }, tenantDashboard: dataService.emptyTenantDashboard(), currentTenant: null, loading: false, error: '' }
 export const loadTenants = createAsyncThunk('data/tenants', dataService.fetchTenants)
 export const loadPlans = createAsyncThunk('data/plans', dataService.fetchPlans)
 export const loadUsers = createAsyncThunk('data/users', dataService.fetchUsers)
@@ -74,6 +75,7 @@ export const loadCountries = createAsyncThunk('data/countries', dataService.fetc
 // page showing "1-1 of 29 - Page 1 of 29". Counts now live in their own
 // state, so the two screens cannot overwrite each other.
 export const loadCounts = createAsyncThunk('data/counts', dataService.fetchCounts)
+export const loadTenantDashboard = createAsyncThunk('data/tenantDashboard', dataService.fetchTenantDashboard)
 
 // DEF-BO-02: the theme was derived from whichever tenant happened to be in
 // the already-loaded tenant *list*, so a TenantOwner saw their identity only
@@ -103,6 +105,7 @@ const dataSlice = createSlice({
     builder.addCase(loadCities.fulfilled, (s, a) => { s.loading = false; s.cities = a.payload })
     builder.addCase(loadCountries.fulfilled, (s, a) => { s.loading = false; s.countries = a.payload })
     builder.addCase(loadCounts.fulfilled, (s, a) => { s.counts = a.payload })
+    builder.addCase(loadTenantDashboard.fulfilled, (s, a) => { s.tenantDashboard = a.payload })
     builder.addCase(loadCurrentTenant.fulfilled, (s, a) => { s.currentTenant = a.payload })
     // A tenant the operator just renamed should retheme the console without a
     // reload, and the counts card should not go stale after a create/delete.
@@ -112,7 +115,7 @@ const dataSlice = createSlice({
 
 // Uma slice por feature (resourceSlice) mais os seletores (lookup): o registro único mantém o store e os testes de acordo.
 const featureReducers = Object.fromEntries(allResources.map((resource) => [resource.name, resource.reducer]))
-export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, billing: billingReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, maintenanceNotifications: maintenanceNotificationReducer, nonExecutions: nonExecutionReducer, ...featureReducers } })
+export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, billing: billingReducer, publicPlans: publicPlanReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, maintenanceNotifications: maintenanceNotificationReducer, nonExecutions: nonExecutionReducer, ...featureReducers } })
 export const { logout, clearAuthError } = authSlice.actions
 export const { clearDataError, clearCities } = dataSlice.actions
 export type RootState = ReturnType<typeof store.getState>

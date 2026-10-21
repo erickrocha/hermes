@@ -3,17 +3,15 @@ use business::domain::holiday::Holiday;
 use business::gateway::holiday_gateway::{HolidayStore, HolidayStoreError};
 use business::use_cases::holiday_use_case::{DUPLICATE_HOLIDAY, HolidayUseCase};
 use sea_orm::prelude::async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
-struct MemoryHolidayStore {
-    holidays: Mutex<Vec<Holiday>>,
-}
+#[derive(Clone, Default)]
+struct MemoryHolidayStore(Arc<Mutex<Vec<Holiday>>>);
 
 #[async_trait]
 impl HolidayStore for MemoryHolidayStore {
     async fn save(&self, mut holiday: Holiday) -> Result<Holiday, HolidayStoreError> {
-        let mut holidays = self.holidays.lock().map_err(|_| {
+        let mut holidays = self.0.lock().map_err(|_| {
             HolidayStoreError::Storage(BusinessError::new("memory store poisoned".into()))
         })?;
         if holidays.iter().any(|existing| {
@@ -32,7 +30,7 @@ impl HolidayStore for MemoryHolidayStore {
 
     async fn get_by_id(&self, id: i64) -> Result<Option<Holiday>, BusinessError> {
         let holidays = self
-            .holidays
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(holidays
@@ -43,7 +41,7 @@ impl HolidayStore for MemoryHolidayStore {
 
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<Holiday>, BusinessError> {
         let holidays = self
-            .holidays
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(holidays
@@ -54,7 +52,7 @@ impl HolidayStore for MemoryHolidayStore {
 
     async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
         let mut holidays = self
-            .holidays
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         holidays.retain(|holiday| holiday.id != Some(id));
@@ -67,7 +65,7 @@ impl HolidayStore for MemoryHolidayStore {
         page_size: u64,
     ) -> Result<(Vec<Holiday>, u64), BusinessError> {
         let holidays = self
-            .holidays
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let total = holidays.len() as u64;
@@ -149,4 +147,59 @@ async fn holiday_use_case_removes_a_found_holiday_by_its_persisted_id() {
     let (_, total) = use_case.find_page(0, 10).await.expect("page is listed");
 
     assert_eq!(total, 0);
+}
+
+#[tokio::test]
+async fn holiday_use_case_rejects_blank_names_and_reports_missing_holidays() {
+    let use_case = HolidayUseCase::new(MemoryHolidayStore::default());
+    assert_eq!(
+        use_case
+            .create(new_holiday(" \t "))
+            .await
+            .expect_err("blank holiday name is invalid")
+            .message,
+        "Holiday name is required"
+    );
+    assert_eq!(
+        use_case
+            .find_by_id(99)
+            .await
+            .expect_err("unknown id is not found")
+            .message,
+        "Holiday not found"
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown uuid is not found")
+            .message,
+        "Holiday not found"
+    );
+    assert_eq!(
+        use_case
+            .remove("missing".into())
+            .await
+            .expect_err("unknown holiday cannot be removed")
+            .message,
+        "Holiday not found"
+    );
+}
+
+#[tokio::test]
+async fn holiday_removal_requires_a_persisted_positive_id() {
+    let store = MemoryHolidayStore::default();
+    let mut incomplete = new_holiday("Incomplete");
+    incomplete.uuid = Some("incomplete".into());
+    store.0.lock().unwrap().push(incomplete);
+    let use_case = HolidayUseCase::new(store);
+
+    assert_eq!(
+        use_case
+            .remove("incomplete".into())
+            .await
+            .expect_err("identity-less holiday cannot be removed")
+            .message,
+        "Holiday identity is incomplete"
+    );
 }

@@ -287,3 +287,39 @@ async fn a_negative_reading_is_rejected_before_storage() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn readings_remain_queryable_when_the_vehicle_is_missing() {
+    let readings = MemoryKmEvolutionStore::default();
+    let use_case = use_case(
+        readings,
+        MemoryVehicleOdometerStore {
+            vehicle: Arc::new(Mutex::new(None)),
+        },
+    );
+
+    let created = use_case
+        .create(reading(12_000.0, at(20)))
+        .await
+        .expect("reading is recorded even if vehicle no longer exists");
+    let found = use_case
+        .find_by_uuid(created.uuid.clone().unwrap())
+        .await
+        .expect("saved reading is retrievable");
+    let (page, total) = use_case
+        .history(10, 0, 20)
+        .await
+        .expect("reading history is available");
+
+    assert_eq!(found.km, 12_000.0);
+    assert_eq!(page, vec![created]);
+    assert_eq!(total, 1);
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown reading is not found")
+            .message,
+        "Kilometre reading not found"
+    );
+}

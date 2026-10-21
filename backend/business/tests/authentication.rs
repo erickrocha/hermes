@@ -17,7 +17,8 @@ use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 use chrono::{TimeZone, Utc};
 use entity::user_entity;
-use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase, MockExecResult};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use sea_orm::{DatabaseBackend, DatabaseConnection, DbErr, MockDatabase, MockExecResult};
 use std::sync::Once;
 
 const UUID: &str = "684db325-63cb-470a-aa09-45811dd1904a";
@@ -166,6 +167,60 @@ async fn a_legacy_bcrypt_password_still_logs_in_and_is_rewritten_as_argon2id() {
 }
 
 #[tokio::test]
+async fn authentication_database_failures_are_redacted_and_do_not_block_legacy_login() {
+    secrets();
+    let login_db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_errors([DbErr::Custom("database unavailable".into())])
+        .into_connection();
+    assert_eq!(
+        authentication(&login_db)
+            .execute("owner@example.com".into(), PASSWORD.into())
+            .await
+            .expect_err("database errors must fail authentication")
+            .message,
+        "Invalid credentials"
+    );
+
+    let issued = issue_token(user());
+    let validate_db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_errors([DbErr::Custom("database unavailable".into())])
+        .into_connection();
+    assert_eq!(
+        authentication(&validate_db)
+            .validate(issued.access_token)
+            .await
+            .expect_err("account lookup errors invalidate access tokens")
+            .message,
+        "Invalid credentials"
+    );
+
+    let refresh_db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_errors([DbErr::Custom("database unavailable".into())])
+        .into_connection();
+    assert_eq!(
+        authentication(&refresh_db)
+            .refresh_token(issued.refresh_token.expect("refresh token is issued"))
+            .await
+            .expect_err("account lookup errors invalidate refresh tokens")
+            .message,
+        "Invalid credentials"
+    );
+
+    let legacy = bcrypt::hash(PASSWORD, 4).unwrap();
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![row(&legacy, true)]])
+        .append_exec_errors([DbErr::Custom("write unavailable".into())])
+        .into_connection();
+    assert!(
+        authentication(&db)
+            .execute("owner@example.com".into(), PASSWORD.into())
+            .await
+            .is_ok(),
+        "a successful password check must not fail because hash upgrade could not be saved"
+    );
+}
+
+#[tokio::test]
 async fn an_argon2id_password_is_not_rewritten_on_login() {
     secrets();
     let db = db_returning(vec![vec![row(&argon(), true)]]);
@@ -203,6 +258,25 @@ fn user() -> User {
 
 fn issue_token(user: User) -> AccessToken {
     AuthenticationUseCase::generate_access_token(user).expect("valid test user issues tokens")
+}
+
+fn issue_token_with_user_id(user_id: i64) -> String {
+    let claims = Claims::builder()
+        .with_sub("owner@example.com")
+        .exp((Utc::now() + chrono::Duration::hours(1)).timestamp())
+        .uuid(UUID)
+        .name("Owner")
+        .user_id(user_id)
+        .role(Role::TenantOwner)
+        .tenant_id(Some(42))
+        .build()
+        .expect("claims are complete");
+    encode(
+        &Header::new(Algorithm::HS512),
+        &claims,
+        &EncodingKey::from_secret("a".repeat(64).as_bytes()),
+    )
+    .expect("test token is encoded")
 }
 
 #[test]
@@ -259,6 +333,40 @@ async fn an_access_token_validates_and_a_refresh_token_does_not() {
         .validate("not.a.token".into())
         .await;
     assert!(garbage.is_err());
+}
+
+#[tokio::test]
+async fn validation_rejects_unusable_user_ids_and_missing_accounts() {
+    secrets();
+    let invalid_id = authentication(&db_returning(vec![]))
+        .validate(issue_token_with_user_id(0))
+        .await
+        .expect_err("non-positive user ids are rejected before lookup");
+    assert_eq!(invalid_id.message, "Invalid credentials");
+
+    let missing = authentication(&db_returning(vec![vec![]]))
+        .validate(issue_token_with_user_id(5))
+        .await
+        .expect_err("deleted accounts cannot keep using a token");
+    assert_eq!(missing.message, "Invalid credentials");
+
+    let no_identity = User { id: None, ..user() };
+    assert_eq!(
+        AuthenticationUseCase::generate_access_token(no_identity)
+            .expect_err("a token cannot be minted without an id")
+            .message,
+        "User identity is incomplete"
+    );
+    let no_uuid = User {
+        uuid: None,
+        ..user()
+    };
+    assert_eq!(
+        AuthenticationUseCase::generate_access_token(no_uuid)
+            .expect_err("a token cannot be minted without a UUID")
+            .message,
+        "User identity is incomplete"
+    );
 }
 
 #[tokio::test]

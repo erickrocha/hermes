@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { store } from './store'
 import './i18n'
 import './styles/main.scss'
+import './styles/landing.scss'
 import { App } from './App'
 
 createRoot(document.getElementById('root')!).render(

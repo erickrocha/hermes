@@ -8,6 +8,7 @@ pub mod holiday_endpoint;
 pub mod json;
 pub mod province_endpoint;
 pub mod tenant_endpoint;
+pub mod tenant_dashboard_endpoint;
 pub mod transport_demand_endpoint;
 pub mod transport_demand_allocation_endpoint;
 pub mod daily_schedule_endpoint;

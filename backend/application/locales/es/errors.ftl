@@ -149,3 +149,4 @@ answer-not-a-template-item = Un ítem respondido no pertenece a la plantilla de 
 odometer-negative = El kilometraje no puede ser negativo
 odometer-below-official = El kilometraje es menor que la lectura oficial del vehículo. Corrija antes la lectura oficial si es incorrecta
 checklist-template-cannot-be-default = Solo una plantilla activa de salida o llegada puede ser la predeterminada
+dashboard-forbidden = Este resumen solo está disponible dentro de un inquilino

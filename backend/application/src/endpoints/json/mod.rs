@@ -1,6 +1,7 @@
 pub mod access_token_json;
 pub mod business_plan_json;
 pub mod billing_json;
+pub mod tenant_dashboard_json;
 pub mod change_password_request;
 pub mod city_json;
 pub mod customer_json;

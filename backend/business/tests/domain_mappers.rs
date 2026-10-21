@@ -5,69 +5,267 @@
 
 use business::commons::entity_mapper::EntityMapper;
 use business::commons::functions::{bytes_para_string, string_to_bytes};
+use business::domain::access_profile::{AccessProfile, AccessProfileEntityMapper};
 use business::domain::access_token::ClaimsBuilder;
-use business::domain::business_plan::{BusinessPlan, BusinessPlanEntityMapper};
-use business::domain::city::{City, CityEntityMapper};
-use business::domain::customer::{Customer, CustomerEntityMapper};
-use business::domain::customer_day_off::{CustomerDayOff, CustomerDayOffEntityMapper};
-use business::domain::holiday::{Holiday, HolidayEntityMapper};
-use business::domain::transport_demand::{TransportDemand, TransportDemandEntityMapper};
-use business::domain::transport_demand_allocation::{
-    TransportDemandAllocation, TransportDemandAllocationEntityMapper,
+use business::domain::billing::{
+    BillingCharge, BillingChargeEntityMapper, BillingChargeStatus, TenantBilling,
+    TenantBillingEntityMapper,
 };
-use business::domain::daily_schedule::{DailySchedule, DailyScheduleEntityMapper};
-use business::domain::schedule_exception::{ScheduleException, ScheduleExceptionEntityMapper};
-use business::domain::extra_trip::{ExtraTrip, ExtraTripEntityMapper};
-use business::domain::km_evolution::{KmEvolution, KmEvolutionEntityMapper};
+use business::domain::business_plan::{BusinessPlan, BusinessPlanEntityMapper};
+use business::domain::checklist_answer::{ChecklistAnswer, ChecklistAnswerEntityMapper};
+use business::domain::checklist_run::{ChecklistRun, ChecklistRunEntityMapper};
 use business::domain::checklist_template::{ChecklistTemplate, ChecklistTemplateEntityMapper};
 use business::domain::checklist_template_item::{
     ChecklistTemplateItem, ChecklistTemplateItemEntityMapper,
 };
-use business::domain::checklist_run::{ChecklistRun, ChecklistRunEntityMapper};
-use business::domain::checklist_answer::{ChecklistAnswer, ChecklistAnswerEntityMapper};
-use business::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
-use business::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
-use business::domain::maintenance_plan::{MaintenancePlan, MaintenancePlanEntityMapper};
-use business::domain::service_type::{ServiceType, ServiceTypeEntityMapper};
-use business::domain::priced_service::{PricedService, PricedServiceEntityMapper};
-use business::domain::part::{Part, PartEntityMapper};
-use business::domain::stock_movement::{StockMovement, StockMovementEntityMapper};
-use business::domain::purchase_order::{PurchaseOrder, PurchaseOrderEntityMapper};
-use business::domain::enums::GarageTagOrigin;
-use business::domain::enums::ScheduleExceptionType;
-use business::domain::enums::TripStatus;
-use business::domain::enums::KmOrigin;
-use business::domain::enums::ChecklistType;
+use business::domain::city::{City, CityEntityMapper};
+use business::domain::customer::{Customer, CustomerEntityMapper};
+use business::domain::customer_day_off::{CustomerDayOff, CustomerDayOffEntityMapper};
+use business::domain::daily_schedule::{DailySchedule, DailyScheduleEntityMapper};
 use business::domain::enums::AnswerStatus;
-use business::domain::enums::WorkOrderStatus;
-use business::domain::enums::WorkOrderItemStatus;
-use business::domain::enums::WorkOrderOrigin;
-use business::domain::enums::MaintenancePlanStatus;
-use business::domain::enums::StockMovementType;
+use business::domain::enums::ChecklistType;
 use business::domain::enums::CostSource;
+use business::domain::enums::GarageServiceState;
+use business::domain::enums::GarageTagOrigin;
+use business::domain::enums::KmOrigin;
+use business::domain::enums::MaintenancePlanStatus;
 use business::domain::enums::PurchaseOrderStatus;
 use business::domain::enums::Role;
+use business::domain::enums::ScheduleExceptionType;
+use business::domain::enums::StockMovementType;
+use business::domain::enums::TripStatus;
 use business::domain::enums::VehicleStatus;
+use business::domain::enums::WorkOrderItemStatus;
+use business::domain::enums::WorkOrderOrigin;
+use business::domain::enums::WorkOrderStatus;
+use business::domain::extra_trip::{ExtraTrip, ExtraTripEntityMapper};
+use business::domain::fuel_entry::{FuelEntry, FuelEntryEntityMapper};
+use business::domain::fuel_gauge_setting::FuelGaugeSettingEntityMapper;
+use business::domain::garage_cycle::{GarageCycleState, GarageCycleStateEntityMapper};
+use business::domain::garage_device::{GarageDevice, GarageDeviceEntityMapper};
+use business::domain::garage_release::{
+    GarageRelease, GarageReleaseEntityMapper, GarageReleaseItem, GarageReleaseItemEntityMapper,
+};
+use business::domain::garage_service_log::{GarageServiceLog, GarageServiceLogEntityMapper};
+use business::domain::garage_service_model::{
+    GarageServiceApplicability, GarageServiceModel, GarageServiceModelEntityMapper,
+};
+use business::domain::holiday::{Holiday, HolidayEntityMapper};
+use business::domain::inspection_model::{InspectionModel, InspectionModelEntityMapper};
+use business::domain::inspection_model_item::{
+    InspectionModelItem, InspectionModelItemEntityMapper,
+};
+use business::domain::km_evolution::{KmEvolution, KmEvolutionEntityMapper};
+use business::domain::maintenance_notification::{
+    MaintenanceNotification, MaintenanceNotificationEntityMapper,
+};
+use business::domain::maintenance_plan::{MaintenancePlan, MaintenancePlanEntityMapper};
+use business::domain::non_execution::{
+    NonExecutionKind, NonExecutionOccurrence, NonExecutionOccurrenceEntityMapper,
+    NonExecutionRecord, NonExecutionRecordEntityMapper,
+};
+use business::domain::part::{Part, PartEntityMapper};
+use business::domain::preventive_plan_alert::{
+    PreventivePlanAlert, PreventivePlanAlertEntityMapper,
+};
+use business::domain::priced_service::{PricedService, PricedServiceEntityMapper};
 use business::domain::province::{Province, ProvinceEntityMapper};
+use business::domain::purchase_order::{PurchaseOrder, PurchaseOrderEntityMapper};
+use business::domain::schedule_exception::{ScheduleException, ScheduleExceptionEntityMapper};
+use business::domain::service_type::{ServiceType, ServiceTypeEntityMapper};
+use business::domain::stock_movement::{StockMovement, StockMovementEntityMapper};
 use business::domain::tenant::{Tenant, TenantEntityMapper};
+use business::domain::tenant_rule_setting::{
+    RuleSettings, TenantRuleSetting, TenantRuleSettingEntityMapper,
+};
+use business::domain::transport_demand::{TransportDemand, TransportDemandEntityMapper};
+use business::domain::transport_demand_allocation::{
+    TransportDemandAllocation, TransportDemandAllocationEntityMapper,
+};
 use business::domain::user::{User, UserEntityMapper};
 use business::domain::vehicle::{Vehicle, VehicleEntityMapper};
-use chrono::{NaiveDate, TimeZone, Utc};
+use business::domain::vehicle_assignment::{VehicleAssignment, VehicleAssignmentEntityMapper};
+use business::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
+use business::domain::work_order_item::{WorkOrderItem, WorkOrderItemEntityMapper};
+use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 use entity::{
-    business_plan_entity, city_entity, customer_day_off_entity, customer_entity,
-    checklist_answer_entity, checklist_run_entity, checklist_template_entity,
-    checklist_template_item_entity, maintenance_plan_entity, priced_service_entity,
-    service_type_entity, part_entity, stock_movement_entity, purchase_order_entity, work_order_entity,
+    business_plan_entity, checklist_answer_entity, checklist_run_entity, checklist_template_entity,
+    checklist_template_item_entity, city_entity, customer_day_off_entity, customer_entity,
+    daily_schedule_entity, extra_trip_entity, fuel_gauge_setting_entity, holiday_entity,
+    km_evolution_entity, maintenance_plan_entity, part_entity, priced_service_entity,
+    province_entity, purchase_order_entity, schedule_exception_entity, service_type_entity,
+    stock_movement_entity, tenant_entity, transport_demand_allocation_entity,
+    transport_demand_entity, user_entity, vehicle_entity, work_order_entity,
     work_order_item_entity,
-    daily_schedule_entity,
-    extra_trip_entity, holiday_entity, km_evolution_entity, province_entity,
-    schedule_exception_entity, tenant_entity, transport_demand_allocation_entity,
-    transport_demand_entity, user_entity, vehicle_entity,
 };
-use sea_orm::{ActiveValue, IntoActiveModel};
+use sea_orm::{ActiveValue, IntoActiveModel, TryIntoModel};
 use std::str::FromStr;
 
 const UUID: &str = "684db325-63cb-470a-aa09-45811dd1904a";
+
+#[test]
+fn fuel_inspection_assignment_and_garage_mappers_preserve_persisted_values() {
+    macro_rules! check {
+        ($mapper:ty, $domain:expr) => {{
+            let mut expected = $domain;
+            let mut active = <$mapper>::build_active_model(expected.clone());
+            assert!(matches!(active.created_at, ActiveValue::NotSet));
+            assert!(matches!(active.updated_at, ActiveValue::NotSet));
+            assert_eq!(<$mapper>::from_active_model(active.clone()), expected);
+            active.created_at = ActiveValue::Set(at());
+            active.created_by = ActiveValue::Set(Some("owner@example.com".into()));
+            active.updated_at = ActiveValue::Set(at());
+            active.updated_by = ActiveValue::Set(Some("mechanic@example.com".into()));
+            expected.created_at = Some(at().naive_utc());
+            expected.created_by = Some("owner@example.com".into());
+            expected.updated_at = Some(at().naive_utc());
+            expected.updated_by = Some("mechanic@example.com".into());
+            assert_eq!(<$mapper>::from_active_model(active), expected);
+        }};
+    }
+
+    check!(
+        FuelEntryEntityMapper,
+        FuelEntry {
+            id: Some(12),
+            uuid: Some(UUID.into()),
+            tenant_id: Some(42),
+            vehicle_id: 10,
+            recorded_at: at().naive_utc(),
+            volume_liters: 80.5,
+            value_cents: 48_000,
+            odometer_km: Some(60_000.0),
+            station: Some("Depot".into()),
+            full_tank: true,
+            origin: business::domain::enums::FuelEntryOrigin::Manual,
+            provider_transaction_id: Some("provider-12".into()),
+            reported_by_user_id: Some(7),
+            odometer_override_note: Some("Verified photo".into()),
+            provider_confirmed_at: Some(at().naive_utc()),
+            deleted_at: Some(at().naive_utc()),
+            unified_into_id: Some(13),
+            unification_note: Some("Duplicate".into()),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    );
+    check!(
+        InspectionModelEntityMapper,
+        InspectionModel {
+            id: Some(12),
+            uuid: Some(UUID.into()),
+            tenant_id: Some(42),
+            name: "Safety inspection".into(),
+            generates_work_order: true,
+            periodicity_days: Some(30),
+            observation: Some("Before departure".into()),
+            active: true,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    );
+    check!(
+        VehicleAssignmentEntityMapper,
+        VehicleAssignment {
+            id: Some(12),
+            uuid: Some(UUID.into()),
+            tenant_id: Some(42),
+            vehicle_id: 10,
+            driver_id: 7,
+            started_at: at(),
+            ended_at: Some(at() + chrono::Duration::hours(8)),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    );
+    check!(
+        GarageServiceLogEntityMapper,
+        GarageServiceLog {
+            id: Some(12),
+            uuid: Some(UUID.into()),
+            tenant_id: Some(42),
+            attendance_id: 4,
+            vehicle_id: 10,
+            service_model_id: 9,
+            name_key: "wash".into(),
+            new_state: GarageServiceState::Performed,
+            acted_by_user_id: Some(7),
+            acted_at: at().naive_utc(),
+            origin: "Manual".into(),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    );
+    check!(
+        GarageServiceModelEntityMapper,
+        GarageServiceModel {
+            id: Some(12),
+            uuid: Some(UUID.into()),
+            tenant_id: Some(42),
+            name: "Wash".into(),
+            name_key: "wash".into(),
+            display_order: 3,
+            active: true,
+            service_group: business::domain::enums::GarageServiceGroup::External,
+            required_for_departure: true,
+            governed_by_tank: false,
+            applicability: GarageServiceApplicability::Vehicles(vec![UUID.into()]),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        }
+    );
+}
+
+#[test]
+fn partially_loaded_maintenance_and_schedule_models_preserve_business_fields() {
+    macro_rules! check {
+        ($mapper:ty, $fixture:expr) => {{
+            let model = $fixture;
+            let mut expected = <$mapper>::from_model(model.clone());
+            expected.updated_at = None;
+            let mut active = model.into_active_model();
+            active.updated_at = ActiveValue::NotSet;
+            assert_eq!(<$mapper>::from_active_model(active), expected);
+        }};
+    }
+
+    check!(WorkOrderEntityMapper, work_order_model());
+    check!(ExtraTripEntityMapper, extra_trip_model());
+    check!(StockMovementEntityMapper, stock_movement_model());
+    check!(WorkOrderItemEntityMapper, work_order_item_model());
+    check!(MaintenancePlanEntityMapper, maintenance_plan_model());
+    check!(PurchaseOrderEntityMapper, purchase_order_model());
+    check!(KmEvolutionEntityMapper, km_evolution_model());
+    check!(ScheduleExceptionEntityMapper, schedule_exception_model());
+    check!(ChecklistRunEntityMapper, checklist_run_model());
+    check!(PartEntityMapper, part_model());
+    check!(ChecklistAnswerEntityMapper, checklist_answer_model());
+    check!(ChecklistTemplateEntityMapper, checklist_template_model());
+    check!(DailyScheduleEntityMapper, daily_schedule_model());
+    check!(
+        TransportDemandAllocationEntityMapper,
+        transport_demand_allocation_model()
+    );
+    check!(CustomerDayOffEntityMapper, customer_day_off_model());
+    check!(HolidayEntityMapper, holiday_model());
+    check!(TransportDemandEntityMapper, transport_demand_model());
+    check!(ServiceTypeEntityMapper, service_type_model());
+    check!(PricedServiceEntityMapper, priced_service_model());
+    check!(
+        ChecklistTemplateItemEntityMapper,
+        checklist_template_item_model()
+    );
+}
 
 fn at() -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap()
@@ -675,9 +873,15 @@ fn schedule_exception_round_trips_through_the_mapper() {
         ScheduleExceptionEntityMapper::from_model(schedule_exception_model());
     assert_eq!(exception.id, Some(80));
     assert_eq!(exception.demand_id, 50);
-    assert_eq!(exception.exception_type, ScheduleExceptionType::Substitution);
+    assert_eq!(
+        exception.exception_type,
+        ScheduleExceptionType::Substitution
+    );
     assert_eq!(exception.new_driver_id, Some(6));
-    assert_eq!(exception.reason.as_deref(), Some("Regular driver called in sick"));
+    assert_eq!(
+        exception.reason.as_deref(),
+        Some("Regular driver called in sick")
+    );
 
     let active_model = ScheduleExceptionEntityMapper::build_active_model(exception.clone());
     assert_eq!(
@@ -773,14 +977,10 @@ fn customer_day_off_model() -> customer_day_off_entity::Model {
 /// through_the_mapper`.
 #[test]
 fn customer_day_off_round_trips_through_the_mapper() {
-    let day_off: CustomerDayOff =
-        CustomerDayOffEntityMapper::from_model(customer_day_off_model());
+    let day_off: CustomerDayOff = CustomerDayOffEntityMapper::from_model(customer_day_off_model());
     assert_eq!(day_off.id, Some(30));
     assert_eq!(day_off.customer_id, 20);
-    assert_eq!(
-        day_off.date,
-        NaiveDate::from_ymd_opt(2026, 12, 25).unwrap()
-    );
+    assert_eq!(day_off.date, NaiveDate::from_ymd_opt(2026, 12, 25).unwrap());
     assert_eq!(day_off.reason.as_deref(), Some("National holiday"));
 
     let active = CustomerDayOffEntityMapper::build_active_model(day_off.clone());
@@ -788,9 +988,7 @@ fn customer_day_off_round_trips_through_the_mapper() {
     assert!(matches!(active.created_at, ActiveValue::NotSet));
 
     assert_eq!(
-        CustomerDayOffEntityMapper::from_active_model(
-            customer_day_off_model().into_active_model()
-        ),
+        CustomerDayOffEntityMapper::from_active_model(customer_day_off_model().into_active_model()),
         day_off
     );
 }
@@ -841,8 +1039,7 @@ fn transport_demand_model() -> transport_demand_entity::Model {
 /// through_the_mapper`.
 #[test]
 fn transport_demand_round_trips_through_the_mapper() {
-    let demand: TransportDemand =
-        TransportDemandEntityMapper::from_model(transport_demand_model());
+    let demand: TransportDemand = TransportDemandEntityMapper::from_model(transport_demand_model());
     assert_eq!(demand.id, Some(50));
     assert_eq!(demand.demand_type, "RecurringLine");
     assert_eq!(demand.customer_id, Some(20));
@@ -948,7 +1145,10 @@ fn extra_trip_round_trips_through_the_mapper() {
     let trip: ExtraTrip = ExtraTripEntityMapper::from_model(extra_trip_model());
     assert_eq!(trip.id, Some(90));
     assert_eq!(trip.order_code, "ORD-100");
-    assert_eq!(trip.trip_date, NaiveDate::from_ymd_opt(2026, 1, 10).unwrap());
+    assert_eq!(
+        trip.trip_date,
+        NaiveDate::from_ymd_opt(2026, 1, 10).unwrap()
+    );
     assert_eq!(trip.customer_id, Some(20));
     assert_eq!(trip.status, TripStatus::Scheduled);
     assert_eq!(trip.freight_value_cents, Some(150_000));
@@ -1215,7 +1415,9 @@ fn checklist_answer_round_trips_through_the_mapper() {
     assert!(matches!(active.created_at, ActiveValue::NotSet));
 
     assert_eq!(
-        ChecklistAnswerEntityMapper::from_active_model(checklist_answer_model().into_active_model()),
+        ChecklistAnswerEntityMapper::from_active_model(
+            checklist_answer_model().into_active_model()
+        ),
         answer
     );
 }
@@ -1397,7 +1599,10 @@ fn work_order_item_statuses_round_trip_and_an_unknown_one_is_rejected() {
         WorkOrderItemStatus::Cancelled,
         WorkOrderItemStatus::AwaitingParts,
     ] {
-        assert_eq!(WorkOrderItemStatus::from_str(&status.to_string()), Ok(status));
+        assert_eq!(
+            WorkOrderItemStatus::from_str(&status.to_string()),
+            Ok(status)
+        );
     }
     assert!(WorkOrderItemStatus::from_str("Roundtrip").is_err());
     assert!(
@@ -1446,7 +1651,9 @@ fn maintenance_plan_round_trips_through_the_mapper() {
     assert!(matches!(active.created_at, ActiveValue::NotSet));
 
     assert_eq!(
-        MaintenancePlanEntityMapper::from_active_model(maintenance_plan_model().into_active_model()),
+        MaintenancePlanEntityMapper::from_active_model(
+            maintenance_plan_model().into_active_model()
+        ),
         plan
     );
 }
@@ -1469,7 +1676,10 @@ fn maintenance_plan_statuses_round_trip_and_an_unknown_one_is_rejected() {
         MaintenancePlanStatus::Cancelled,
         MaintenancePlanStatus::NotExecuted,
     ] {
-        assert_eq!(MaintenancePlanStatus::from_str(&status.to_string()), Ok(status));
+        assert_eq!(
+            MaintenancePlanStatus::from_str(&status.to_string()),
+            Ok(status)
+        );
     }
     assert!(MaintenancePlanStatus::from_str("Roundtrip").is_err());
     assert!(
@@ -1477,7 +1687,10 @@ fn maintenance_plan_statuses_round_trip_and_an_unknown_one_is_rejected() {
         "the vocabulary is case-sensitive"
     );
     assert!(MaintenancePlanStatus::from_str("").is_err());
-    assert_eq!(MaintenancePlanStatus::default(), MaintenancePlanStatus::Scheduled);
+    assert_eq!(
+        MaintenancePlanStatus::default(),
+        MaintenancePlanStatus::Scheduled
+    );
 }
 
 // ----------------------------------------------------------- ServiceType
@@ -1538,7 +1751,8 @@ fn priced_service_model() -> priced_service_entity::Model {
 /// mapper in this file gets.
 #[test]
 fn priced_service_round_trips_through_the_mapper() {
-    let priced_service: PricedService = PricedServiceEntityMapper::from_model(priced_service_model());
+    let priced_service: PricedService =
+        PricedServiceEntityMapper::from_model(priced_service_model());
     assert_eq!(priced_service.id, Some(700));
     assert_eq!(priced_service.name, "Oil change");
     assert_eq!(priced_service.default_value_cents, Some(15_000));
@@ -1678,7 +1892,8 @@ fn purchase_order_model() -> purchase_order_entity::Model {
 /// mapper in this file gets, including the enum-degrade fallback.
 #[test]
 fn purchase_order_round_trips_through_the_mapper() {
-    let purchase_order: PurchaseOrder = PurchaseOrderEntityMapper::from_model(purchase_order_model());
+    let purchase_order: PurchaseOrder =
+        PurchaseOrderEntityMapper::from_model(purchase_order_model());
     assert_eq!(purchase_order.id, Some(950));
     assert_eq!(purchase_order.part_id, 800);
     assert_eq!(purchase_order.status, PurchaseOrderStatus::Requested);
@@ -1735,4 +1950,489 @@ fn business_errors_render_their_message() {
     assert!(format!("{error:?}").contains("Tenant not found"));
     let as_std: &dyn std::error::Error = &error;
     assert!(as_std.source().is_none());
+}
+
+// ----------------------------------------------------------- Recent mappers
+
+#[test]
+fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values() {
+    let profile = AccessProfile {
+        id: Some(901),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        name: "Dispatcher".into(),
+        name_key: "dispatcher".into(),
+        base_role: Role::TenantOwner,
+        active: false,
+        permissions: vec!["work-orders.read".into(), "work-orders.update".into()],
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = AccessProfileEntityMapper::build_active_model(profile);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(Some("owner@example.com".into()));
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(Some("owner@example.com".into()));
+    let mapped = AccessProfileEntityMapper::from_active_model(active);
+    assert_eq!(mapped.base_role, Role::TenantOwner);
+    assert_eq!(
+        mapped.permissions,
+        ["work-orders.read", "work-orders.update"]
+    );
+    assert_eq!(mapped.created_at, Some(at().naive_utc()));
+
+    let mut malformed = AccessProfileEntityMapper::build_active_model(AccessProfile {
+        id: Some(902),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        name: "Invalid".into(),
+        name_key: "invalid".into(),
+        base_role: Role::TenantOwner,
+        active: true,
+        permissions: vec![],
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    });
+    malformed.base_role = ActiveValue::Set("Unknown".into());
+    malformed.permissions = ActiveValue::Set("{".into());
+    malformed.created_at = ActiveValue::Set(at());
+    malformed.updated_at = ActiveValue::Set(at());
+    let mapped = AccessProfileEntityMapper::from_active_model(malformed);
+    assert_eq!(mapped.base_role, Role::TenantUser);
+    assert!(mapped.permissions.is_empty());
+
+    let partial = AccessProfileEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.base_role, Role::TenantUser);
+    assert!(partial.active);
+    assert!(partial.permissions.is_empty());
+}
+
+#[test]
+fn tenant_rule_settings_round_trip_all_thresholds_and_partial_active_models() {
+    let rules = RuleSettings {
+        avg_recent_window_days: 45,
+        garage_alert_low_percent: 35.0,
+        garage_monitor_card_limit: 12,
+        non_execution_min_dwell_minutes: 20,
+        ..RuleSettings::default()
+    };
+    let mut setting = TenantRuleSetting::new(Some(42), rules);
+    setting.id = Some(903);
+    setting.uuid = Some(UUID.into());
+    let mut active = TenantRuleSettingEntityMapper::build_active_model(setting);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let model = active
+        .try_into_model()
+        .expect("complete settings map to an entity");
+    assert_eq!(RuleSettings::from(&model), rules);
+    assert_eq!(
+        TenantRuleSettingEntityMapper::from_active_model(model.into_active_model())
+            .avg_recent_window_days,
+        45
+    );
+
+    let partial = TenantRuleSettingEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.tenant_id, None);
+    assert_eq!(partial.avg_recent_window_days, 0);
+    assert_eq!(partial.garage_monitor_card_limit, 0);
+}
+
+#[test]
+fn tenant_billing_mapper_covers_complete_and_partial_rows() {
+    let billing = TenantBilling {
+        id: Some(904),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        grace_days: Some(7),
+        cycle_started_at: Some(at().naive_utc()),
+        pending_business_plan_id: Some(8),
+        suspended_at: None,
+        suspended_by: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = TenantBillingEntityMapper::build_active_model(billing);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = TenantBillingEntityMapper::from_active_model(active);
+    assert_eq!(mapped.tenant_id, Some(42));
+    assert_eq!(mapped.grace_days, Some(7));
+    assert_eq!(mapped.pending_business_plan_id, Some(8));
+
+    let partial = TenantBillingEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.tenant_id, None);
+    assert_eq!(partial.grace_days, None);
+    assert_eq!(partial.cycle_started_at, None);
+}
+
+#[test]
+fn billing_charges_round_trip_status_and_default_unknown_partial_statuses() {
+    let charge = BillingCharge {
+        id: Some(905),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        tenant_uuid: UUID.into(),
+        period_start: at().naive_utc(),
+        period_end: at().naive_utc(),
+        tenant_name: "Acme".into(),
+        plan_name: "Pro".into(),
+        currency: "BRL".into(),
+        price_in_cents: 10_000,
+        price_per_extra_user_in_cents: 500,
+        included_users: 10,
+        active_users: 12,
+        extra_users: 2,
+        grace_days: 7,
+        total_in_cents: 11_000,
+        status: BillingChargeStatus::Paid,
+        paid_at: Some(at().naive_utc()),
+        paid_by: Some("owner@example.com".into()),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = BillingChargeEntityMapper::build_active_model(charge);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = BillingChargeEntityMapper::from_active_model(active);
+    assert_eq!(mapped.status, BillingChargeStatus::Paid);
+    assert_eq!(mapped.total_in_cents, 11_000);
+    assert_eq!(mapped.paid_at, Some(at().naive_utc()));
+    assert_eq!(BillingChargeStatus::Pending.as_str(), "Pending");
+    assert_eq!("Paid".parse(), Ok(BillingChargeStatus::Paid));
+    assert!("unknown".parse::<BillingChargeStatus>().is_err());
+
+    let partial = BillingChargeEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.status, BillingChargeStatus::Pending);
+    assert_eq!(partial.currency, "BRL");
+    assert_eq!(partial.period_start, NaiveDateTime::default());
+}
+
+#[test]
+fn garage_release_and_release_items_round_trip_and_default_partial_fields() {
+    let release = GarageRelease {
+        id: Some(906),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        attendance_id: 12,
+        vehicle_id: 33,
+        work_order_id: 44,
+        justification: "Parts unavailable".into(),
+        responsible_user_id: 8,
+        released_at: at().naive_utc(),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = GarageReleaseEntityMapper::build_active_model(release);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = GarageReleaseEntityMapper::from_active_model(active);
+    assert_eq!(mapped.work_order_id, 44);
+    assert_eq!(mapped.justification, "Parts unavailable");
+
+    let item = GarageReleaseItem {
+        id: Some(907),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        garage_release_id: 906,
+        garage_service_id: 50,
+        work_order_item_id: 60,
+        service_name: "Brakes".into(),
+        garage_state: GarageServiceState::Pending,
+        work_order_status: WorkOrderItemStatus::AwaitingParts,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = GarageReleaseItemEntityMapper::build_active_model(item);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = GarageReleaseItemEntityMapper::from_active_model(active);
+    assert_eq!(mapped.garage_state, GarageServiceState::Pending);
+    assert_eq!(mapped.work_order_status, WorkOrderItemStatus::AwaitingParts);
+
+    assert_eq!(
+        GarageReleaseEntityMapper::from_active_model(Default::default()).attendance_id,
+        0
+    );
+    let partial = GarageReleaseItemEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.garage_release_id, 0);
+    assert_eq!(partial.garage_state, GarageServiceState::default());
+    assert_eq!(partial.work_order_status, WorkOrderItemStatus::default());
+}
+
+#[test]
+fn inspection_items_and_maintenance_notifications_map_complete_and_partial_rows() {
+    let item = InspectionModelItem {
+        id: Some(908),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        inspection_model_id: 21,
+        description: "Check lights".into(),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = InspectionModelItemEntityMapper::build_active_model(item);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    assert_eq!(
+        InspectionModelItemEntityMapper::from_active_model(active).description,
+        "Check lights"
+    );
+    let partial = InspectionModelItemEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.inspection_model_id, 0);
+    assert!(partial.description.is_empty());
+
+    let notification = MaintenanceNotification {
+        id: Some(909),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        work_order_id: 44,
+        part_id: 13,
+        part_name: "Filter".into(),
+        quantity: 2.5,
+        read_at: Some(at().naive_utc()),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = MaintenanceNotificationEntityMapper::build_active_model(notification);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = MaintenanceNotificationEntityMapper::from_active_model(active);
+    assert_eq!(mapped.part_name, "Filter");
+    assert_eq!(mapped.quantity, 2.5);
+    assert_eq!(mapped.read_at, Some(at().naive_utc()));
+
+    let partial = MaintenanceNotificationEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.work_order_id, 0);
+    assert_eq!(partial.quantity, 0.0);
+    assert_eq!(partial.read_at, None);
+}
+
+#[test]
+fn non_execution_records_and_occurrences_round_trip_and_reject_unknown_kinds() {
+    let record = NonExecutionRecord {
+        id: Some(910),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        work_order_id: 44,
+        vehicle_id: 33,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = NonExecutionRecordEntityMapper::build_active_model(record);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = NonExecutionRecordEntityMapper::from_active_model(active);
+    assert_eq!(mapped.work_order_id, 44);
+    assert_eq!(mapped.vehicle_id, 33);
+
+    let occurrence = NonExecutionOccurrence {
+        id: Some(911),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        record_id: 910,
+        maintenance_plan_id: 12,
+        kind: NonExecutionKind::EnteredAndLeft,
+        business_key: "order:44:plan:12".into(),
+        window_start: at().naive_utc(),
+        window_end: at().naive_utc(),
+        arrived_at: Some(at().naive_utc()),
+        departed_at: None,
+        dwell_minutes: Some(15),
+        minutes_in_window: Some(30),
+        justification: Some("Part unavailable".into()),
+        justified_by: Some("owner@example.com".into()),
+        justified_at: Some(at().naive_utc()),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = NonExecutionOccurrenceEntityMapper::build_active_model(occurrence);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = NonExecutionOccurrenceEntityMapper::from_active_model(active);
+    assert_eq!(mapped.kind, NonExecutionKind::EnteredAndLeft);
+    assert_eq!(mapped.dwell_minutes, Some(15));
+    assert_eq!(mapped.justified_by.as_deref(), Some("owner@example.com"));
+
+    assert_eq!("Manual".parse(), Ok(NonExecutionKind::Manual));
+    assert_eq!(" DidNotAppear ".parse(), Ok(NonExecutionKind::DidNotAppear));
+    assert!("Other".parse::<NonExecutionKind>().is_err());
+    assert_eq!(
+        NonExecutionKind::EnteredAndLeft.to_string(),
+        "EnteredAndLeft"
+    );
+
+    assert_eq!(
+        NonExecutionRecordEntityMapper::from_active_model(Default::default()).work_order_id,
+        0
+    );
+    let partial = NonExecutionOccurrenceEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.kind, NonExecutionKind::Manual);
+    assert_eq!(partial.window_start, NaiveDateTime::default());
+}
+
+#[test]
+fn garage_cycle_state_round_trips_and_handles_a_partial_active_model() {
+    let mut state = GarageCycleState::new(Some(42), 33);
+    state.id = Some(912);
+    state.uuid = Some(UUID.into());
+    state.reference_odometer_meters = Some(100_000.0);
+    state.last_observed_odometer_meters = Some(106_000.0);
+    state.last_observed_at = Some(at().naive_utc());
+    state.open_cycle_started_at = Some(at().naive_utc());
+    state.open_cycle_start_odometer_meters = Some(105_000.0);
+    state.open_cycle_distance_meters = 1_000.0;
+    state.last_completed_cycle_distance_meters = Some(5_000.0);
+    state.last_completed_cycle_at = Some(at().naive_utc());
+    let mut active = GarageCycleStateEntityMapper::build_active_model(state);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = GarageCycleStateEntityMapper::from_active_model(active);
+    assert!(mapped.cycle_is_open());
+    assert_eq!(mapped.open_cycle_distance_meters, 1_000.0);
+    assert_eq!(mapped.last_completed_cycle_distance_meters, Some(5_000.0));
+
+    let partial = GarageCycleStateEntityMapper::from_active_model(Default::default());
+    assert!(!partial.cycle_is_open());
+    assert_eq!(partial.vehicle_id, 0);
+    assert_eq!(partial.open_cycle_distance_meters, 0.0);
+}
+
+#[test]
+fn garage_devices_round_trip_pairing_state_and_default_partial_credentials() {
+    let device = GarageDevice {
+        id: Some(913),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        name: "Garage wall".into(),
+        credential_version: 4,
+        pairing_code: Some("one-time-code".into()),
+        pairing_code_expires_at: Some(at().naive_utc()),
+        paired_at: Some(at().naive_utc()),
+        revoked_at: None,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = GarageDeviceEntityMapper::build_active_model(device);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = GarageDeviceEntityMapper::from_active_model(active);
+    assert_eq!(mapped.credential_version, 4);
+    assert_eq!(mapped.pairing_code.as_deref(), Some("one-time-code"));
+    assert_eq!(mapped.paired_at, Some(at().naive_utc()));
+
+    let partial = GarageDeviceEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.name, "");
+    assert_eq!(partial.credential_version, 1);
+    assert_eq!(partial.pairing_code, None);
+}
+
+#[test]
+fn preventive_plan_alerts_round_trip_and_default_partial_values() {
+    let alert = PreventivePlanAlert {
+        id: Some(914),
+        uuid: Some(UUID.into()),
+        tenant_id: Some(42),
+        preventive_plan_id: 21,
+        at_km: 25_000.0,
+        title: "Intermediate inspection".into(),
+        inspection_model: "annual".into(),
+        discharged_cycle: Some("cycle-4".into()),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    let mut active = PreventivePlanAlertEntityMapper::build_active_model(alert);
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(None);
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    let mapped = PreventivePlanAlertEntityMapper::from_active_model(active);
+    assert_eq!(mapped.at_km, 25_000.0);
+    assert_eq!(mapped.discharged_cycle.as_deref(), Some("cycle-4"));
+
+    let partial = PreventivePlanAlertEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.preventive_plan_id, 0);
+    assert_eq!(partial.at_km, 0.0);
+    assert!(partial.title.is_empty());
+}
+
+#[test]
+fn fuel_gauge_setting_maps_models_and_partial_active_models() {
+    let model = fuel_gauge_setting_entity::Model {
+        id: 15,
+        uuid: string_to_bytes(UUID),
+        tenant_id: Some(42),
+        suspect_margin_ratio: 1.1,
+        set_aside_min_expected_liters: 9.0,
+        set_aside_ratio: 0.4,
+        large_fuelling_ratio: 0.6,
+        created_at: at(),
+        created_by: Some("owner@example.com".into()),
+        updated_at: at(),
+        updated_by: None,
+    };
+    let setting = FuelGaugeSettingEntityMapper::from_model(model);
+    assert_eq!(setting.id, Some(15));
+    assert_eq!(setting.uuid.as_deref(), Some(UUID));
+    assert_eq!(setting.suspect_margin_ratio, 1.1);
+    let mut active = FuelGaugeSettingEntityMapper::build_active_model(setting.clone());
+    active.created_at = ActiveValue::Set(at());
+    active.created_by = ActiveValue::Set(Some("owner@example.com".into()));
+    active.updated_at = ActiveValue::Set(at());
+    active.updated_by = ActiveValue::Set(None);
+    assert_eq!(
+        FuelGaugeSettingEntityMapper::from_active_model(active),
+        setting
+    );
+
+    let partial = FuelGaugeSettingEntityMapper::from_active_model(Default::default());
+    assert_eq!(partial.suspect_margin_ratio, 0.0);
+    assert_eq!(partial.large_fuelling_ratio, 0.0);
+    assert_eq!(partial.tenant_id, None);
 }

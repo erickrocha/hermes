@@ -11,12 +11,10 @@ use business::use_cases::transport_demand_allocation_use_case::{
 };
 use chrono::NaiveDate;
 use sea_orm::prelude::async_trait::async_trait;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
-struct MemoryAllocationStore {
-    allocations: Mutex<Vec<TransportDemandAllocation>>,
-}
+#[derive(Clone, Default)]
+struct MemoryAllocationStore(Arc<Mutex<Vec<TransportDemandAllocation>>>);
 
 #[async_trait]
 impl TransportDemandAllocationStore for MemoryAllocationStore {
@@ -25,7 +23,7 @@ impl TransportDemandAllocationStore for MemoryAllocationStore {
         mut allocation: TransportDemandAllocation,
     ) -> Result<TransportDemandAllocation, BusinessError> {
         let mut allocations = self
-            .allocations
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let id = allocation.id.unwrap_or(allocations.len() as i64 + 1);
@@ -37,7 +35,7 @@ impl TransportDemandAllocationStore for MemoryAllocationStore {
 
     async fn get_by_id(&self, id: i64) -> Result<Option<TransportDemandAllocation>, BusinessError> {
         let allocations = self
-            .allocations
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(allocations
@@ -51,7 +49,7 @@ impl TransportDemandAllocationStore for MemoryAllocationStore {
         uuid: String,
     ) -> Result<Option<TransportDemandAllocation>, BusinessError> {
         let allocations = self
-            .allocations
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         Ok(allocations
@@ -67,7 +65,7 @@ impl TransportDemandAllocationStore for MemoryAllocationStore {
         page_size: u64,
     ) -> Result<(Vec<TransportDemandAllocation>, u64), BusinessError> {
         let allocations = self
-            .allocations
+            .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
         let filtered: Vec<_> = allocations
@@ -192,8 +190,16 @@ fn vehicle(tenant_id: i64) -> Vehicle {
 }
 
 fn use_case(user: Option<User>, vehicle: Option<Vehicle>) -> TransportDemandAllocationUseCase {
+    use_case_with_store(MemoryAllocationStore::default(), user, vehicle)
+}
+
+fn use_case_with_store(
+    store: MemoryAllocationStore,
+    user: Option<User>,
+    vehicle: Option<Vehicle>,
+) -> TransportDemandAllocationUseCase {
     TransportDemandAllocationUseCase::new(
-        MemoryAllocationStore::default(),
+        store,
         MemoryUserStore { user },
         MemoryVehicleStore { vehicle },
     )
@@ -259,4 +265,71 @@ async fn allocation_rejects_an_end_date_before_its_start_date_and_accepts_the_bo
         .await
         .expect_err("an edit cannot invert the range either");
     assert_eq!(error.message, ENDS_BEFORE_IT_STARTS);
+}
+
+#[tokio::test]
+async fn allocations_can_be_found_updated_and_paged() {
+    let store = MemoryAllocationStore::default();
+    let use_case = use_case_with_store(
+        store,
+        Some(driver(Some(42), Role::Driver)),
+        Some(vehicle(42)),
+    );
+    let created = use_case.create(allocation()).await.unwrap();
+    let uuid = created.uuid.clone().unwrap();
+    assert_eq!(use_case.find_by_id(1).await.unwrap(), created);
+    assert_eq!(use_case.find_by_uuid(uuid).await.unwrap(), created);
+    assert_eq!(
+        use_case.history(5, 0, 10).await.unwrap(),
+        (vec![created.clone()], 1)
+    );
+
+    let mut edited = allocation();
+    edited.demand_id = 99;
+    edited.days_of_week = Some("2".into());
+    let updated = use_case.update(1, edited).await.unwrap();
+    assert_eq!(updated.id, Some(1));
+    assert_eq!(updated.uuid, created.uuid);
+    assert_eq!(updated.demand_id, created.demand_id);
+    assert_eq!(updated.tenant_id, created.tenant_id);
+    assert_eq!(updated.days_of_week.as_deref(), Some("2"));
+}
+
+#[tokio::test]
+async fn allocations_reject_unreadable_days_and_report_missing_rows() {
+    let use_case = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)));
+    let mut invalid = allocation();
+    invalid.days_of_week = Some("Funday".into());
+    assert_eq!(
+        use_case
+            .create(invalid)
+            .await
+            .expect_err("unknown weekday is rejected")
+            .message,
+        business::use_cases::transport_demand_allocation_use_case::DAYS_OF_WEEK_UNREADABLE
+    );
+    assert_eq!(
+        use_case
+            .find_by_id(404)
+            .await
+            .expect_err("unknown allocation id is not found")
+            .message,
+        "Allocation not found"
+    );
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown allocation uuid is not found")
+            .message,
+        "Allocation not found"
+    );
+    assert_eq!(
+        use_case
+            .update(404, allocation())
+            .await
+            .expect_err("missing allocation cannot be updated")
+            .message,
+        "Allocation not found"
+    );
 }

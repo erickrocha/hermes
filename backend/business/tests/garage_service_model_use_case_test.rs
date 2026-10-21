@@ -5,7 +5,8 @@ use business::domain::vehicle::Vehicle;
 use business::gateway::garage_service_model_gateway::GarageServiceModelStore;
 use business::gateway::vehicle_gateway::VehicleUuidLookupStore;
 use business::use_cases::garage_service_model_use_case::{
-    DUPLICATE_NAME, GarageServiceModelUseCase, INVALID_APPLICABILITY,
+    DUPLICATE_NAME, GarageServiceModelUseCase, INVALID_APPLICABILITY, NAME_REQUIRED,
+    SERVICE_NOT_FOUND,
 };
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::Mutex;
@@ -236,4 +237,96 @@ async fn garage_service_vehicle_applicability_requires_a_same_tenant_vehicle() {
         .await
         .expect_err("cross-tenant vehicle is rejected");
     assert_eq!(error.message, INVALID_APPLICABILITY);
+}
+
+#[tokio::test]
+async fn garage_service_names_and_vehicle_type_applicability_are_normalized() {
+    let use_case = new_use_case(vec![]);
+    assert_eq!(
+        use_case
+            .create(new_service("  "))
+            .await
+            .expect_err("service name is required")
+            .message,
+        NAME_REQUIRED
+    );
+
+    let mut service = new_service("Engine inspection");
+    service.applicability = GarageServiceApplicability::VehicleTypes(vec![
+        "  Van ".into(),
+        "van".into(),
+        "Truck".into(),
+    ]);
+    let created = use_case
+        .create(service)
+        .await
+        .expect("valid vehicle types are normalized and deduplicated");
+    assert_eq!(created.name, "Engine inspection");
+    assert_eq!(
+        created.applicability,
+        GarageServiceApplicability::VehicleTypes(vec!["Van".into(), "Truck".into()])
+    );
+
+    let mut empty_types = new_service("Empty applicability");
+    empty_types.applicability = GarageServiceApplicability::VehicleTypes(Vec::new());
+    assert_eq!(
+        use_case
+            .create(empty_types)
+            .await
+            .expect_err("vehicle type applicability cannot be empty")
+            .message,
+        INVALID_APPLICABILITY
+    );
+}
+
+#[tokio::test]
+async fn garage_service_update_keeps_identity_and_reports_missing_records() {
+    let use_case = new_use_case(vec![]);
+    let created = use_case
+        .create(new_service("Oil check"))
+        .await
+        .expect("service is created");
+    let mut edited = created.clone();
+    edited.name = "  Oil and filter  ".into();
+
+    let updated = use_case
+        .update(edited)
+        .await
+        .expect("service can be renamed");
+    assert_eq!(updated.id, created.id);
+    assert_eq!(updated.uuid, created.uuid);
+    assert_eq!(updated.name, "Oil and filter");
+    assert_eq!(updated.name_key, "oil and filter");
+
+    assert_eq!(
+        use_case
+            .find_by_uuid("missing".into())
+            .await
+            .expect_err("unknown service UUID is reported")
+            .message,
+        SERVICE_NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn vehicle_applicability_rejects_missing_tenant_invalid_uuid_and_empty_list() {
+    let vehicle_uuid = "684db325-63cb-470a-aa09-45811dd1904a";
+    let cases = [
+        (None, vec![vehicle_uuid.into()]),
+        (Some(42), vec!["not-a-uuid".into()]),
+        (Some(42), Vec::new()),
+    ];
+    for (tenant_id, uuids) in cases {
+        let mut service = new_service("Vehicle-specific service");
+        service.tenant_id = tenant_id;
+        service.applicability = GarageServiceApplicability::Vehicles(uuids);
+        assert_eq!(
+            new_use_case(vec![vehicle(vehicle_uuid, Some(42))])
+                .create(service)
+                .await
+                .expect_err("invalid vehicle-specific scope is rejected")
+                .message,
+            INVALID_APPLICABILITY
+        );
+    }
 }

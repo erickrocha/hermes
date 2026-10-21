@@ -1,16 +1,22 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { applyTheme, hexToRgbTriple, themeForTenant, transmegaTheme } from './theme'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { applyTheme, getStoredTheme, hexToRgbTriple, setTheme, transmegaTheme } from './theme'
 
-describe('themeForTenant (EPIC-BO-01-S02/S03)', () => {
-  it('matches Transmega by name, case-insensitively', () => {
-    expect(themeForTenant('Transmega')).toBe(transmegaTheme)
-    expect(themeForTenant('TRANSMEGA TRANSPORTES')).toBe(transmegaTheme)
+describe('theme persistence', () => {
+  beforeEach(() => localStorage.clear())
+  afterEach(() => applyTheme(null))
+
+  it('falls back to default when nothing or garbage is stored', () => {
+    expect(getStoredTheme()).toBe('default')
+    localStorage.setItem('hermes.theme', 'nope')
+    expect(getStoredTheme()).toBe('default')
   })
 
-  it('gives no theme override to any other tenant or a SysAdmin session (no tenant)', () => {
-    expect(themeForTenant('Acme Logistics')).toBeNull()
-    expect(themeForTenant(undefined)).toBeNull()
-    expect(themeForTenant(null)).toBeNull()
+  it('setTheme stores the choice and applies it', () => {
+    setTheme('transmega')
+    expect(getStoredTheme()).toBe('transmega')
+    expect(document.documentElement.style.getPropertyValue('--accent-primary').trim()).toBe(transmegaTheme.variables['--accent-primary'])
+    setTheme('default')
+    expect(document.documentElement.style.getPropertyValue('--accent-primary')).toBe('')
   })
 })
 
