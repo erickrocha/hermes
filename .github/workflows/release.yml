@@ -45,6 +45,8 @@ jobs:
       run:
         working-directory: backend
     steps:
+      - name: Free runner disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
