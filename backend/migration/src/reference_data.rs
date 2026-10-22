@@ -112,6 +112,101 @@ pub async fn seed_country(
     Ok(())
 }
 
+/// Adds places to a country whose provinces are already seeded, resolving
+/// each acronym against the provinces stored in the database (not a
+/// hardcoded id list). Places that already exist in their province are
+/// skipped, so loading a complete list over a partial one is safe.
+pub async fn add_places(
+    manager: &SchemaManager<'_>,
+    country_code: &str,
+    places: &str,
+) -> Result<(), DbErr> {
+    let rows = place_rows(manager, country_code, places).await?;
+    let db = manager.get_connection();
+    let existing: std::collections::HashSet<(i32, String)> = db
+        .query_all(
+            &Query::select()
+                .columns([City::ProvinceId, City::Name])
+                .from(City::Table)
+                .to_owned(),
+        )
+        .await?
+        .iter()
+        .map(|row| Ok((row.try_get("", "province_id")?, row.try_get("", "name")?)))
+        .collect::<Result<_, DbErr>>()?;
+    let missing: Vec<_> = rows
+        .iter()
+        .filter(|(province_id, name)| !existing.contains(&(*province_id, name.clone())))
+        .collect();
+
+    for chunk in missing.chunks(500) {
+        let mut insert = Query::insert();
+        insert
+            .into_table(City::Table)
+            .columns([City::Uuid, City::ProvinceId, City::Name]);
+        for (province_id, name) in chunk {
+            insert.values_panic([
+                Uuid::new_v4().as_bytes().to_vec().into(),
+                (*province_id).into(),
+                name.as_str().into(),
+            ]);
+        }
+        manager.exec_stmt(insert.to_owned()).await?;
+    }
+    Ok(())
+}
+
+/// Reverses [`add_places`]: deletes exactly the listed places. The caller
+/// passes only the places its own `up` added, never the original seed.
+pub async fn remove_places(
+    manager: &SchemaManager<'_>,
+    country_code: &str,
+    places: &str,
+) -> Result<(), DbErr> {
+    let rows = place_rows(manager, country_code, places).await?;
+    for chunk in rows.chunks(500) {
+        let mut any = Condition::any();
+        for (province_id, name) in chunk {
+            any = any.add(
+                Condition::all()
+                    .add(Expr::col(City::ProvinceId).eq(*province_id))
+                    .add(Expr::col(City::Name).eq(name.as_str())),
+            );
+        }
+        manager
+            .exec_stmt(Query::delete().from_table(City::Table).cond_where(any).to_owned())
+            .await?;
+    }
+    Ok(())
+}
+
+async fn place_rows(
+    manager: &SchemaManager<'_>,
+    country_code: &str,
+    places: &str,
+) -> Result<Vec<(i32, String)>, DbErr> {
+    let stored: Vec<(i32, String)> = manager
+        .get_connection()
+        .query_all(
+            &Query::select()
+                .columns([Province::Id, Province::Acronym])
+                .from(Province::Table)
+                .and_where(Expr::col(Province::CountryCode).eq(country_code))
+                .to_owned(),
+        )
+        .await?
+        .iter()
+        .map(|row| Ok((row.try_get("", "id")?, row.try_get("", "acronym")?)))
+        .collect::<Result<_, DbErr>>()?;
+    let provinces: Vec<(i32, &str, &str)> =
+        stored.iter().map(|(id, acronym)| (*id, acronym.as_str(), "")).collect();
+    Ok(parse_places(country_code, &provinces, places)
+        .map_err(DbErr::Custom)?
+        .into_iter()
+        .map(|(province_id, name)| (province_id, name.to_string()))
+        .collect())
+}
+
 /// Reverses [`seed_country`] for exactly `country_code`: cities are deleted
 /// by a subquery scoped to that country's own province ids, never by a
 /// hardcoded id range, so unseeding one country cannot reach another's rows

@@ -6,23 +6,24 @@ name: release
 #
 # Two halves, deliberately separated:
 #
-#   * `build-and-push` runs on a version tag. Merging to develop publishes
-#     nothing; tagging does. The tag is the "known commit".
+#   * `build-and-push` runs on a push to main, i.e. when a PR is merged (main
+#     only accepts PRs — see the repository ruleset). Other branches publish
+#     nothing. The commit SHA is the "known commit".
 #   * `deploy` is `workflow_dispatch` only — a human chooses a tag and an
 #     environment and presses a button, and GitHub records who and when.
 #     Nothing here deploys on push, ever.
 #
-# The images are immutable and tagged with the git tag and the commit SHA;
+# The images are immutable and tagged with the commit SHA (sha-<full sha>);
 # `latest` is never published, because rollback is "redeploy the previous tag"
 # and a moving tag would make that meaningless (see infra/prod/deploy.sh).
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Existing image tag to deploy (e.g. v0.1.0). Use the previous tag to roll back."
+        description: "Existing image tag to deploy (e.g. sha-<full commit sha>). Use the previous tag to roll back."
         required: true
         type: string
 
@@ -35,11 +36,10 @@ env:
 jobs:
   # ---------------------------------------------------------------------
   # Do not publish an image from a commit that does not pass its own tests.
-  # backend-ci.yml runs on pushes to branches; a tag push is not covered by
-  # it, so the checks are re-run here against the exact tagged commit.
+  # the checks are re-run here against the exact merged commit.
   # ---------------------------------------------------------------------
   verify:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -58,7 +58,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   build-and-push:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push'
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -89,9 +89,8 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
-          # The git tag and the commit SHA. No `latest` — see the header.
+          # The commit SHA only. No `latest` — see the header.
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
