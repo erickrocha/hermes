@@ -76,18 +76,18 @@ describe('App route guards (EPIC-BO-02, EPIC-BO-04)', () => {
   it('collapses and expands navigation groups', async () => {
     renderAt('/', tenantOwnerSession)
     const fleetGroup = await screen.findByRole('button', { name: /fleet|frota/i })
-    const vehicleLink = screen.getByRole('link', { name: /vehicles|veículos/i })
+    const vehicleLink = screen.getByRole('link', { name: /^(vehicles|veículos)$/i })
 
     expect(fleetGroup).toHaveAttribute('aria-expanded', 'true')
     expect(vehicleLink).toBeInTheDocument()
 
     fireEvent.click(fleetGroup)
     expect(fleetGroup).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('link', { name: /vehicles|veículos/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^(vehicles|veículos)$/i })).not.toBeInTheDocument()
 
     fireEvent.click(fleetGroup)
     expect(fleetGroup).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('link', { name: /vehicles|veículos/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /^(vehicles|veículos)$/i })).toBeInTheDocument()
   })
 
 })
