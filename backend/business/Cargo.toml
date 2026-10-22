@@ -228,3 +228,39 @@ required-features = ["mock"]
 [[test]]
 name = "preventive_plan_use_case_test"
 required-features = ["mock"]
+
+[[test]]
+name = "cost_report_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "access_billing_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "effective_schedule_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_fuelling_mark_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_release_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "maintenance_notification_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "garage_queue_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "non_execution_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "tenant_dashboard_gateway_test"
+required-features = ["mock"]

@@ -442,7 +442,7 @@ fn trips_without_valid_preparation_skip(
 }
 
 /// `HRMS-607` (`D-09`): same technique every other gateway's own tests use.
-#[cfg(test)]
+#[cfg(all(test, feature = "mock"))]
 mod tests {
     use crate::commons::entity_mapper::EntityMapper;
     use crate::commons::gateway::{tenant_delete, tenant_select};
