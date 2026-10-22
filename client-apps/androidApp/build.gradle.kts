@@ -15,7 +15,7 @@ val releaseSigningVariables = listOf(
 val releaseSigningValues = releaseSigningVariables.associateWith { name ->
     providers.environmentVariable(name).orNull
 }
-val verifyReleaseSigning by tasks.registering {
+val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
     doLast {
         val missing = releaseSigningValues.filterValues { it.isNullOrBlank() }.keys
         check(missing.isEmpty()) {
@@ -32,7 +32,7 @@ tasks.configureEach {
 
 android {
     namespace = "com.progressrail.hermes.client.tv"
-    compileSdk = 36
+    compileSdk = 37
     buildFeatures {
         buildConfig = true
         compose = true
@@ -40,7 +40,7 @@ android {
 
     defaultConfig {
         applicationId = "com.progressrail.hermes.client.tv"
-        minSdk = 21
+        minSdk = 23
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
@@ -65,17 +65,17 @@ android {
 
 dependencies {
     implementation(project(":sharedLogic"))
-    implementation("io.ktor:ktor-client-core:3.5.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-    implementation(platform("androidx.compose:compose-bom:2025.11.01"))
-    implementation("androidx.activity:activity-compose:1.11.0")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.ui:ui")
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("io.ktor:ktor-client-core:3.5.2")
-    testImplementation("io.ktor:ktor-client-mock:3.5.2")
-    testImplementation("io.ktor:ktor-client-content-negotiation:3.5.2")
-    testImplementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    implementation(libs.ktor.client.core)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    testImplementation(libs.junit)
+    testImplementation(libs.ktor.client.core)
+    testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.ktor.client.content.negotiation)
+    testImplementation(libs.ktor.serialization.kotlinx.json)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -7,18 +7,19 @@ plugins {
 kotlin {
     android {
         namespace = "com.progressrail.hermes.client.shared"
-        compileSdk = 36
-        minSdk = 21
+        compileSdk = 37
+        minSdk = 23
+        withHostTest { }
     }
 
     sourceSets {
         commonMain.dependencies {
-            implementation("io.ktor:ktor-client-core:3.5.2")
-            implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
+            implementation("io.ktor:ktor-client-core:3.6.0")
+            implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
         }
         androidMain.dependencies {
-            implementation("io.ktor:ktor-client-android:3.5.2")
+            implementation("io.ktor:ktor-client-android:3.6.0")
         }
     }
 }

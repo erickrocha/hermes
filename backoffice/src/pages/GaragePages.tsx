@@ -153,8 +153,8 @@ export function GarageMonitorPage() {
           <td><span className={`badge ${m.urgent ? 'gray' : 'blue'}`}>{t(`readiness${String(m.readiness ?? 'None')}`, { defaultValue: String(m.readiness ?? '—') })}{m.urgent ? ` · ${t('urgent')}` : ''}</span></td>
           <td>{String(entry.nextDeparture ?? '—').slice(0, 16).replace('T', ' ')}</td></tr> })}</tbody></table></div>
     </PanelSection>
-    <PanelSection titleKey="vehicleCards" loading={cards.loading} error={cards.error} empty={!cards.data || cards.data.cards.length === 0}>
-      {cards.data && <div className="stat-grid">{cards.data.cards.map((c) => <div className="stat-card" key={String(c.vehicleUuid)}><span>{label(c.vehicleUuid, c.prefix)}</span>
+    <PanelSection titleKey="vehicleCards" loading={cards.loading} error={cards.error} empty={!cards.data?.cards?.length}>
+      {cards.data?.cards && <div className="stat-grid">{cards.data.cards.map((c) => <div className="stat-card" key={String(c.vehicleUuid)}><span>{label(c.vehicleUuid, c.prefix)}</span>
         <b>{c.tankPercent === undefined || c.tankPercent === null ? '—' : `${Number(c.tankPercent).toFixed(0)} %`}</b>{!!c.needsRefuel && <small>{t('needsRefuel')}</small>}</div>)}
         {cards.data.notShown > 0 && <div className="stat-card"><span>{t('notShown')}</span><b>{cards.data.notShown}</b></div>}</div>}
     </PanelSection>
@@ -163,8 +163,8 @@ export function GarageMonitorPage() {
         <tbody>{rows(callList.data).map((c) => <tr key={String(c.vehicleUuid)}><td>{label(c.vehicleUuid, c.prefix)}</td><td>{String(c.nextDeparture ?? '—').slice(0, 16).replace('T', ' ')}</td>
           <td>{c.calledByManager ? t('yes') : t('no')}</td><td>{c.tankCalls ? t('yes') : t('no')}</td></tr>)}</tbody></table></div>
     </PanelSection>
-    <PanelSection titleKey="serviceMatrix" loading={matrix.loading} error={matrix.error} empty={!matrix.data || matrix.data.rows.length === 0}>
-      {matrix.data && <div className="table-card"><table><thead><tr><th>{t('vehicle')}</th>{matrix.data.columns.map((c) => <th key={String(c.serviceModelUuid)}>{String(c.name)}</th>)}</tr></thead>
+    <PanelSection titleKey="serviceMatrix" loading={matrix.loading} error={matrix.error} empty={!matrix.data?.rows?.length}>
+      {matrix.data?.rows && <div className="table-card"><table><thead><tr><th>{t('vehicle')}</th>{matrix.data.columns.map((c) => <th key={String(c.serviceModelUuid)}>{String(c.name)}</th>)}</tr></thead>
         <tbody>{matrix.data.rows.map((r) => <tr key={String(r.vehicleUuid)}><td>{label(r.vehicleUuid, r.prefix)}</td>
           {((r.cells as (Row | null)[]) ?? []).map((cell, i) => <td key={i}>{cell ? t(`serviceState${String(cell.effectiveState)}`) : '—'}</td>)}</tr>)}</tbody></table></div>}
     </PanelSection></>
