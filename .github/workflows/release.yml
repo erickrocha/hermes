@@ -62,7 +62,9 @@ jobs:
   build-and-push:
     if: github.event_name == 'push'
     needs: verify
-    runs-on: ubuntu-latest
+    # Production is an OCI Ampere A1 VM (aarch64): build natively on ARM.
+    # Add an amd64 build here when an x86 environment exists.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
