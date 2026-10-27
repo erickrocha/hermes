@@ -14,7 +14,7 @@ operação de frotas) por uma arquitetura multi-tenant adequada. A Transmega, op
 |---|---|
 | `backend/` | Workspace Cargo em Rust — veja abaixo |
 | `backoffice/` | Console administrativo em Vite + React + TypeScript — veja [`backoffice/README.md`](backoffice/README.md) |
-| `client-apps/` | Kotlin Multiplatform: lógica compartilhada (`sharedLogic`), o app Android TV da garagem (`androidApp`) e o app Android do motorista (`driverApp`) |
+| `client-apps/` | Kotlin Multiplatform: lógica compartilhada (`sharedLogic`), o app Android TV da garagem (`hermesTvApp`) e o app Android do motorista (`hermesDriverApp`) |
 | `acceptance/` | Testes de aceitação (Gate 3) — veja [`acceptance/README.md`](acceptance/README.md) |
 | `infra/dev/docker-compose.yml` | MariaDB local para desenvolvimento |
 | `infra/test/` | Stack descartável de teste (banco, API, console e mock de rastreamento) — veja [`infra/test/README.md`](infra/test/README.md) |
@@ -50,16 +50,16 @@ não só para as que um dia substituirão parte do domínio do operacao-trm.
    servido em `/swagger-ui` e o documento OpenAPI em `/api-docs/openapi.json`.
 5. Execute o console: veja [`backoffice/README.md`](backoffice/README.md).
 6. Compile o cliente Android TV: a partir de `client-apps/`, execute
-   `ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ./gradlew :androidApp:assembleDebug`.
+   `ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ./gradlew :hermesTvApp:assembleDebug`.
    Os builds de debug usam por padrão a API do emulador em `http://10.0.2.2:8080`; defina `HERMES_API_BASE_URL` ou
    `-PhermesApiBaseUrl=...` para apontar para outra API. O HTTP sem criptografia fica habilitado apenas em builds de debug;
    configure uma URL HTTPS para os builds de release.
    Para um APK de release distribuído manualmente, configure `HERMES_RELEASE_KEYSTORE`,
    `HERMES_RELEASE_STORE_PASSWORD`, `HERMES_RELEASE_KEY_ALIAS` e
    `HERMES_RELEASE_KEY_PASSWORD` no ambiente de build e então execute
-   `./gradlew :androidApp:assembleRelease`. Mantenha o keystore e as senhas fora do controle de versão.
-   Envie `androidApp/build/outputs/apk/release/androidApp-release.apk` ao usuário para instalação local.
-7. Compile o app do motorista (`driverApp`): na mesma pasta, `./gradlew :driverApp:assembleDebug`, com as mesmas variáveis
+   `./gradlew :hermesTvApp:assembleRelease`. Mantenha o keystore e as senhas fora do controle de versão.
+   Envie `hermesTvApp/build/outputs/apk/release/hermesTvApp-release.apk` ao usuário para instalação local.
+7. Compile o app do motorista (`hermesDriverApp`): na mesma pasta, `./gradlew :hermesDriverApp:assembleDebug`, com as mesmas variáveis
    `HERMES_API_BASE_URL` / `-PhermesApiBaseUrl=...` (padrão `http://10.0.2.2:8080`). Para testar contra a stack de teste, use
    `-PhermesApiBaseUrl=http://10.0.2.2:8082`. O build de **release** exige uma URL `https://` e as variáveis
    `HERMES_DRIVER_RELEASE_KEYSTORE`, `HERMES_DRIVER_RELEASE_STORE_PASSWORD`, `HERMES_DRIVER_RELEASE_KEY_ALIAS` e
@@ -136,7 +136,7 @@ A partir de `backend/`:
 
 Os testes de aceitação (Gate 3) ficam em [`acceptance/`](acceptance/README.md); a stack descartável para executá-los está em [`infra/test/`](infra/test/README.md) (`docker compose -f infra/test/docker-compose.yml up --build --wait`).
 
-A partir de `client-apps/`: `./gradlew :driverApp:testDebugUnitTest :androidApp:testDebugUnitTest`.
+A partir de `client-apps/`: `./gradlew :hermesDriverApp:testDebugUnitTest :hermesTvApp:testDebugUnitTest`.
 
 A partir de `backoffice/`, veja [`backoffice/README.md`](backoffice/README.md).
 

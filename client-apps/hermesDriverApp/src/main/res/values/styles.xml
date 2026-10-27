@@ -1,0 +1,43 @@
+<resources>
+    <style name="Theme.Hermes.Base" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:editTextColor">?attr/hermesTextPrimary</item>
+        <item name="android:textColorHint">?attr/hermesTextSecondary</item>
+    </style>
+
+    <style name="Theme.Hermes.Transmega" parent="Theme.Hermes.Base">
+        <item name="android:colorAccent">@color/transmega_accent</item>
+        <item name="android:windowBackground">@color/transmega_screen_background</item>
+        <item name="hermesScreenBackground">@color/transmega_screen_background</item>
+        <item name="hermesTextPrimary">@color/transmega_text_primary</item>
+        <item name="hermesTextSecondary">@color/transmega_text_secondary</item>
+        <item name="hermesError">@color/transmega_error</item>
+    </style>
+
+    <style name="Theme.Hermes.Default" parent="Theme.Hermes.Base">
+        <item name="android:colorAccent">@color/hermes_accent</item>
+        <item name="android:windowBackground">@color/hermes_screen_background</item>
+        <item name="hermesScreenBackground">@color/hermes_screen_background</item>
+        <item name="hermesTextPrimary">@color/hermes_text_primary</item>
+        <item name="hermesTextSecondary">@color/hermes_text_secondary</item>
+        <item name="hermesError">@color/hermes_error</item>
+    </style>
+
+    <!-- The manifest theme, before the stored choice is applied. -->
+    <style name="AppTheme" parent="Theme.Hermes.Transmega" />
+
+    <style name="TextAppearance.Hermes.Title" parent="@android:style/TextAppearance.Material.Headline">
+        <item name="android:textColor">?attr/hermesTextPrimary</item>
+        <item name="android:textSize">26sp</item>
+    </style>
+
+    <style name="TextAppearance.Hermes.Body" parent="@android:style/TextAppearance.Material.Body1">
+        <item name="android:textColor">?attr/hermesTextSecondary</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="TextAppearance.Hermes.Error" parent="@android:style/TextAppearance.Material.Body1">
+        <item name="android:textColor">?attr/hermesError</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+</resources>

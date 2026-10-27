@@ -1,0 +1,14 @@
+<resources>
+    <!-- Transmega: mirrored from backoffice/src/theme.ts (transmegaTheme). -->
+    <color name="transmega_screen_background">#F8F8F7</color>
+    <color name="transmega_text_primary">#111111</color>
+    <color name="transmega_text_secondary">#5F6368</color>
+    <color name="transmega_accent">#C2410C</color>
+    <color name="transmega_error">#A43124</color>
+    <!-- Hermes: the vendor's own identity. -->
+    <color name="hermes_screen_background">#E8F1EE</color>
+    <color name="hermes_text_primary">#163A3A</color>
+    <color name="hermes_text_secondary">#406A65</color>
+    <color name="hermes_accent">#B96632</color>
+    <color name="hermes_error">#A43124</color>
+</resources>
