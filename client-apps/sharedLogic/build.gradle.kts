@@ -6,7 +6,7 @@ plugins {
 
 kotlin {
     android {
-        namespace = "com.progressrail.hermes.client.shared"
+        namespace = "com.erocha.hermes.client.shared"
         compileSdk = 37
         minSdk = 23
         withHostTest { }

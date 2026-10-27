@@ -158,6 +158,32 @@ pub struct GarageMonitorCardsJson {
     pub not_shown: usize,
 }
 
+/// One tracked vehicle on the wall monitor's map.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMonitorMapVehicleJson {
+    pub vehicle_uuid: String,
+    pub prefix: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Whether the fix is valid and recent enough to show where the vehicle is now.
+    pub live: bool,
+    pub reported_at: Option<String>,
+    pub ignition: Option<bool>,
+}
+
+/// The tenant's tracked vehicles plus the garage base, when the tenant set one.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GarageMonitorMapJson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_longitude: Option<f64>,
+    pub base_radius_meters: f64,
+    pub vehicles: Vec<GarageMonitorMapVehicleJson>,
+}
+
 /// `EPIC-GA-07-S03` (`HRMS-966`): an away vehicle on the call-to-base list.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]

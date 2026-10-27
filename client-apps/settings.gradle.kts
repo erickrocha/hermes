@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "hermes-client-apps"
-include(":androidApp", ":driverApp", ":sharedLogic")
+include(":hermesTvApp", ":hermesDriverApp", ":sharedLogic")
