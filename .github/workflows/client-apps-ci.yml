@@ -27,38 +27,38 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client-apps
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ""
       - name: Install Android 36 platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Build shared logic and both debug shells
-        run: ./gradlew :sharedLogic:build :driverApp:assembleDebug :androidApp:assembleDebug
+        run: ./gradlew :sharedLogic:build :hermesDriverApp:assembleDebug :hermesTvApp:assembleDebug
       - name: Test both Android shells
-        run: ./gradlew :driverApp:testDebugUnitTest :androidApp:testDebugUnitTest
-      - uses: actions/upload-artifact@v4
+        run: ./gradlew :hermesDriverApp:testDebugUnitTest :hermesTvApp:testDebugUnitTest
+      - uses: actions/upload-artifact@v7
         with:
           name: driver-app-debug
-          path: client-apps/driverApp/build/outputs/apk/debug/driverApp-debug.apk
+          path: client-apps/hermesDriverApp/build/outputs/apk/debug/hermesDriverApp-debug.apk
           if-no-files-found: error
           retention-days: 7
 
   distribute-driver-app:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_driver_app
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: driver-release
     defaults:
       run:
@@ -71,18 +71,18 @@ jobs:
       FIREBASE_APP_ID: ${{ vars.FIREBASE_DRIVER_APP_ID }}
       FIREBASE_TESTER_GROUPS: ${{ vars.FIREBASE_DRIVER_TESTER_GROUPS }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ""
       - name: Install Android 36 platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Validate and prepare release credentials
         env:
           KEYSTORE_BASE64: ${{ secrets.HERMES_DRIVER_RELEASE_KEYSTORE_BASE64 }}
@@ -104,20 +104,20 @@ jobs:
           echo "HERMES_DRIVER_RELEASE_KEYSTORE=$RUNNER_TEMP/driver-release.jks" >> "$GITHUB_ENV"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
       - name: Build signed driver release
-        run: ./gradlew :driverApp:assembleRelease
-      - uses: actions/upload-artifact@v4
+        run: ./gradlew :hermesDriverApp:assembleRelease
+      - uses: actions/upload-artifact@v7
         with:
           name: driver-app-release
-          path: client-apps/driverApp/build/outputs/apk/release/driverApp-release.apk
+          path: client-apps/hermesDriverApp/build/outputs/apk/release/hermesDriverApp-release.apk
           if-no-files-found: error
           retention-days: 30
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Distribute to Firebase App Distribution
         run: >-
           npx --yes firebase-tools@15.34.0 appdistribution:distribute
-          driverApp/build/outputs/apk/release/driverApp-release.apk
+          hermesDriverApp/build/outputs/apk/release/hermesDriverApp-release.apk
           --app "$FIREBASE_APP_ID"
           --groups "$FIREBASE_TESTER_GROUPS"
           --release-notes "Driver app ${GITHUB_REF_NAME} (${GITHUB_SHA})"
@@ -125,7 +125,7 @@ jobs:
   build-garage-tv-release:
     if: github.event_name == 'workflow_dispatch' && inputs.build_garage_tv_release
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: garage-tv-release
     defaults:
       run:
@@ -136,18 +136,18 @@ jobs:
       HERMES_RELEASE_KEY_PASSWORD: ${{ secrets.HERMES_RELEASE_KEY_PASSWORD }}
       HERMES_API_BASE_URL: ${{ vars.HERMES_API_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ""
       - name: Install Android 36 platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Validate and prepare TV release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.HERMES_RELEASE_KEYSTORE_BASE64 }}
@@ -162,14 +162,14 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/garage-tv-release.jks"
           echo "HERMES_RELEASE_KEYSTORE=$RUNNER_TEMP/garage-tv-release.jks" >> "$GITHUB_ENV"
       - name: Build signed Android TV APK
-        run: ./gradlew :androidApp:assembleRelease
+        run: ./gradlew :hermesTvApp:assembleRelease
       - name: Verify APK signature
         run: >-
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify
-          androidApp/build/outputs/apk/release/androidApp-release.apk
-      - uses: actions/upload-artifact@v4
+          hermesTvApp/build/outputs/apk/release/hermesTvApp-release.apk
+      - uses: actions/upload-artifact@v7
         with:
           name: garage-tv-release
-          path: client-apps/androidApp/build/outputs/apk/release/androidApp-release.apk
+          path: client-apps/hermesTvApp/build/outputs/apk/release/hermesTvApp-release.apk
           if-no-files-found: error
           retention-days: 30

@@ -168,6 +168,7 @@ fn is_device_monitor_path(method: &axum::http::Method, path: &str) -> bool {
             | "/garage-attendance/monitor/cards"
             | "/garage-attendance/call-list"
             | "/garage-attendance/monitor/matrix"
+            | "/garage-attendance/monitor/map"
     )
 }
 
@@ -233,6 +234,7 @@ mod tests {
         assert!(is_device_monitor_path(&Method::GET, "/garage-attendance/monitor/cards"));
         assert!(is_device_monitor_path(&Method::GET, "/garage-attendance/call-list"));
         assert!(is_device_monitor_path(&Method::GET, "/garage-attendance/monitor/matrix"));
+        assert!(is_device_monitor_path(&Method::GET, "/garage-attendance/monitor/map"));
         assert!(!is_device_monitor_path(&Method::POST, "/garage-attendance/monitor"));
         assert!(!is_device_monitor_path(&Method::GET, "/garage-attendance/queue"));
         assert!(!is_device_monitor_path(&Method::GET, "/garage-device"));

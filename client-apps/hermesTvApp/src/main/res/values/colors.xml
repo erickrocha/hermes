@@ -1,0 +1,35 @@
+<resources>
+    <!-- Transmega: mirrored from backoffice/src/theme.ts (transmegaTheme). -->
+    <color name="transmega_screen_background">#F8F8F7</color>
+    <color name="transmega_text_primary">#111111</color>
+    <color name="transmega_text_secondary">#5F6368</color>
+    <color name="transmega_accent">#C2410C</color>
+    <color name="transmega_error">#A43124</color>
+    <color name="transmega_monitor_background">#0C0A09</color>
+    <color name="transmega_monitor_surface">#1C1917</color>
+    <color name="transmega_monitor_surface_raised">#292524</color>
+    <color name="transmega_monitor_text">#F5F5F4</color>
+    <color name="transmega_monitor_text_muted">#A8A29E</color>
+    <color name="transmega_monitor_accent">#FF5B00</color>
+    <!-- Status "ok" stays green: the brand orange is chrome/focus, not a status. -->
+    <color name="transmega_monitor_ok">#83D6B2</color>
+    <color name="transmega_monitor_warning">#FBBF24</color>
+    <color name="transmega_monitor_danger">#F87171</color>
+    <color name="transmega_monitor_outline">#44403C</color>
+    <!-- Hermes: the vendor's own identity. -->
+    <color name="hermes_screen_background">#E8F1EE</color>
+    <color name="hermes_text_primary">#163A3A</color>
+    <color name="hermes_text_secondary">#406A65</color>
+    <color name="hermes_accent">#B96632</color>
+    <color name="hermes_error">#A43124</color>
+    <color name="hermes_monitor_background">#111B18</color>
+    <color name="hermes_monitor_surface">#1D2D29</color>
+    <color name="hermes_monitor_surface_raised">#293B35</color>
+    <color name="hermes_monitor_text">#F1F5F3</color>
+    <color name="hermes_monitor_text_muted">#AABBB4</color>
+    <color name="hermes_monitor_accent">#83D6B2</color>
+    <color name="hermes_monitor_ok">#83D6B2</color>
+    <color name="hermes_monitor_warning">#FFBC70</color>
+    <color name="hermes_monitor_danger">#F0786E</color>
+    <color name="hermes_monitor_outline">#3C5149</color>
+</resources>

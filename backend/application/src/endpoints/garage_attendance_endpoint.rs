@@ -8,7 +8,7 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::garage_attendance_json::{
     GarageAttendanceJson, GarageAttendanceOpenJson, GarageCallListEntryJson, GarageMatrixCellJson,
     GarageMatrixColumnJson, GarageMatrixJson, GarageMatrixRowJson, GarageMonitorCardJson,
-    GarageMonitorCardsJson, GarageMonitorEntryJson, GarageQueueEntryJson, GarageServiceJson,
+    GarageMonitorCardsJson, GarageMonitorEntryJson, GarageMonitorMapJson, GarageMonitorMapVehicleJson, GarageQueueEntryJson, GarageServiceJson,
     GarageServiceMarkJson, GarageReleaseJson, GarageReleaseItemJson, GarageReleaseRequestJson,
 };
 use crate::endpoints::vehicle_endpoint::find_visible;
@@ -672,6 +672,70 @@ pub async fn monitor_cards(
             ErrorKey::UnexpectedError,
         )),
     }
+}
+
+#[utoipa::path(
+    get,
+    tag = "GarageAttendance",
+    path = "/garage-attendance/monitor/map",
+    responses(
+        (status = 200, description = "Where the tenant's tracked vehicles are now, for the wall monitor's map: the provider's last position of every vehicle with a linked tracker (`live` says whether the fix is valid and recent, a stale one is still returned so the display can grey it out) and the garage base when the tenant set one. Read-only; nothing is stored (HRMS-930). **Roles:** any authenticated role; own tenant only.", body = GarageMonitorMapJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 503, description = "The tracking provider is not configured or did not answer", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn monitor_map(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    current_user: Option<Extension<User>>,
+    device: Option<Extension<DevicePrincipal>>,
+) -> HttpResponse<Json<GarageMonitorMapJson>> {
+    use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
+    use business::gateway::vehicle_gateway::VehicleStore;
+    use business::gateway::tracking_provider::{TrackingProvider, configured_provider};
+    use business::use_cases::garage_geofence::position_is_fresh_and_valid;
+    let unavailable = || ExceptionResponse::ServiceUnavailable(locale.clone(), ErrorKey::TrackingUnavailable);
+    let failed = || ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError);
+    let tenant_id = device
+        .map(|Extension(device)| device.tenant_id)
+        .or_else(|| current_user.and_then(|Extension(user)| user.tenant_id));
+    let db = state.conn.as_ref().clone();
+    let settings = TenantRuleSettingGateway::new(db.clone())
+        .settings_for(tenant_id)
+        .await
+        .map_err(|_| failed())?;
+    let vehicles = VehicleGateway::new(db).list_all().await.map_err(|_| failed())?;
+    let positions: std::collections::HashMap<_, _> = configured_provider()
+        .map_err(|_| unavailable())?
+        .last_positions()
+        .await
+        .map_err(|_| unavailable())?
+        .into_iter()
+        .map(|position| (position.device_id, position))
+        .collect();
+    let now = chrono::Utc::now();
+    let vehicles = vehicles
+        .into_iter()
+        .filter_map(|vehicle| {
+            let position = positions.get(&vehicle.tracker_device_id?)?;
+            Some(GarageMonitorMapVehicleJson {
+                vehicle_uuid: vehicle.uuid.clone()?,
+                prefix: vehicle.prefix.clone().unwrap_or_else(|| vehicle.plate.clone()),
+                latitude: position.latitude,
+                longitude: position.longitude,
+                live: position_is_fresh_and_valid(position, now),
+                reported_at: position.recorded_at.map(|at| at.to_rfc3339()),
+                ignition: position.ignition,
+            })
+        })
+        .collect();
+    Ok(Json(GarageMonitorMapJson {
+        base_latitude: settings.garage_base_latitude,
+        base_longitude: settings.garage_base_longitude,
+        base_radius_meters: settings.garage_base_radius_meters,
+        vehicles,
+    }))
 }
 
 #[utoipa::path(
