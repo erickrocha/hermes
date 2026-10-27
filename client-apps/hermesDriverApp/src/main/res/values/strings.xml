@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">Hermes Motorista</string>
     <string name="login_title">Entrar</string>
-    <string name="login_message">Use o e-mail ou o CPF e a senha da sua conta de motorista.</string>
+    <string name="login_message">Use o e-mail ou o CPF e a senha da sua conta.</string>
     <string name="email_hint">E-mail ou CPF</string>
     <string name="password_hint">Senha</string>
     <string name="login_button">Entrar</string>
@@ -9,7 +9,7 @@
     <string name="credentials_required">Informe o e-mail ou CPF e a senha.</string>
     <string name="credentials_invalid">E-mail, CPF ou senha inválidos, ou conta desabilitada.</string>
     <string name="login_failed">Não foi possível entrar. Verifique a conexão e tente de novo.</string>
-    <string name="not_a_driver">Esta conta não é de motorista. Use uma conta com o papel de motorista.</string>
+    <string name="not_a_driver">Esta conta não é de motorista nem de mecânico. Use uma conta com um desses papéis.</string>
     <string name="session_expired">Sua sessão terminou. Entre novamente.</string>
     <string name="authenticated_title">Olá, %1$s</string>
     <string name="authenticated_role">Papel: motorista</string>
@@ -98,4 +98,30 @@
     <string name="theme_button">Tema: %1$s</string>
     <string name="theme_transmega">Transmega</string>
     <string name="theme_hermes">Hermes</string>
+    <!-- Mechanic: garage services (C-028) -->
+    <string name="garage_title">Serviços da garagem</string>
+    <string name="garage_filter_all">Todos</string>
+    <string name="garage_filter_external">Externos</string>
+    <string name="garage_filter_internal">Internos</string>
+    <string name="garage_empty">Nenhum veículo na garagem agora.</string>
+    <string name="garage_loading_failed">Não foi possível carregar a garagem. Puxe para tentar de novo.</string>
+    <string name="garage_all_done">Tudo em dia</string>
+    <string name="garage_pending_prefix">Pendente: %1$s</string>
+    <string name="garage_called">Chamado</string>
+    <string name="garage_tank_low">Tanque baixo</string>
+    <string name="garage_departure">Saída %1$s</string>
+    <string name="garage_progress">%1$d de %2$d serviços</string>
+    <string name="garage_required">Obrigatório</string>
+    <string name="garage_state_pending">Pendente</string>
+    <string name="garage_state_performed">Realizado</string>
+    <string name="garage_state_not_needed">Não precisa</string>
+    <string name="garage_state_not_done">Não feito</string>
+    <string name="garage_mark_failed">Não foi possível marcar o serviço.</string>
+    <string name="garage_no_services">Este veículo não tem serviços neste grupo.</string>
+    <string name="garage_open_triage">Abrir triagem</string>
+    <string name="garage_open_triage_title">Qual veículo chegou?</string>
+    <string name="garage_search_hint">Prefixo ou placa</string>
+    <string name="garage_no_vehicles">Nenhum veículo sem triagem.</string>
+    <string name="garage_back">Voltar</string>
+    <string name="cancel">Cancelar</string>
 </resources>

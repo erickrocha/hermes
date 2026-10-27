@@ -28,7 +28,7 @@ use crate::domain::business_error::BusinessError;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::env;
+use crate::domain::tenant_tracking_setting::TrackingCredentials;
 
 /// A position reading, translated out of the provider's wire format but not
 /// yet judged. `valid` and `recorded_at` are carried verbatim so the policy
@@ -81,11 +81,11 @@ pub trait TrackingProvider {
     ) -> impl Future<Output = Result<Vec<ProviderIgnitionEvent>, BusinessError>> + Send;
 }
 
-/// The provider this deployment is configured for. Callers outside this
-/// module ask for "the provider", never for a vendor (HRMS-902): changing
-/// provider changes this function and nothing that calls it.
-pub fn configured_provider() -> Result<impl TrackingProvider, BusinessError> {
-    PinMeTrackingProvider::from_env()
+/// The provider a tenant is configured for. Callers outside this module ask
+/// for "the provider", never for a vendor (HRMS-902): changing provider
+/// changes this function and nothing that calls it.
+pub fn provider_for(credentials: &TrackingCredentials) -> impl TrackingProvider + use<> {
+    PinMeTrackingProvider::new(&credentials.base_url, &credentials.email, &credentials.password)
 }
 
 /// The PinME / Traccar adapter.
@@ -98,24 +98,6 @@ pub struct PinMeTrackingProvider {
 }
 
 impl PinMeTrackingProvider {
-    /// Reads `TRACKING_API_BASE_URL`, `TRACKING_API_EMAIL` and
-    /// `TRACKING_API_PASSWORD`.
-    ///
-    /// Named for the role, not the vendor: swapping provider should not
-    /// require renaming deployment configuration. Configuration is read here
-    /// rather than at boot for the same reason `EmailSender` does — a missing
-    /// tracking credential blocks one workflow, and is not a reason to refuse
-    /// to start the API.
-    pub fn from_env() -> Result<Self, BusinessError> {
-        let base_url = env::var("TRACKING_API_BASE_URL")
-            .map_err(|_| BusinessError::new("TRACKING_API_BASE_URL must be set".to_string()))?;
-        let email = env::var("TRACKING_API_EMAIL")
-            .map_err(|_| BusinessError::new("TRACKING_API_EMAIL must be set".to_string()))?;
-        let password = env::var("TRACKING_API_PASSWORD")
-            .map_err(|_| BusinessError::new("TRACKING_API_PASSWORD must be set".to_string()))?;
-        Ok(Self::new(&base_url, &email, &password))
-    }
-
     pub fn new(base_url: &str, email: &str, password: &str) -> Self {
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(format!("{email}:{password}"));

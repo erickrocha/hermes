@@ -5,13 +5,16 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, UnauthorizedErrorJson,
 };
 use crate::endpoints::json::internal_tank_json::InternalTankQuery;
-use crate::endpoints::json::tenant_rule_setting_json::TenantRuleSettingJson;
+use crate::endpoints::json::tenant_rule_setting_json::{TenantRuleSettingJson, TenantTrackingSettingJson};
 use axum::Json;
+use axum::http::StatusCode;
 use axum::extract::{Extension, Query, State};
 use business::domain::authorization::{can_configure_fuel_gauge, can_read_tenant_configuration};
 use business::domain::tenant_rule_setting::{RuleSettings, TenantRuleSetting};
 use business::domain::user::User;
 use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
+use business::gateway::tenant_tracking_setting_gateway::TenantTrackingSettingGateway;
+use business::use_cases::tenant_tracking_setting_use_case::TenantTrackingSettingUseCase;
 use business::use_cases::tenant_rule_setting_use_case::TenantRuleSettingUseCase;
 
 fn use_case(state: &AppState) -> TenantRuleSettingUseCase<TenantRuleSettingGateway> {
@@ -58,6 +61,7 @@ fn json(tenant_id: Option<i64>, uuid: Option<String>, s: RuleSettings) -> Tenant
         garage_base_latitude: s.garage_base_latitude,
         garage_base_longitude: s.garage_base_longitude,
         garage_base_radius_meters: s.garage_base_radius_meters,
+        garage_map_radius_km: s.garage_map_radius_km,
         garage_cycle_fallback_distance_km: s.garage_cycle_fallback_distance_km,
         garage_odometer_max_single_jump_km: s.garage_odometer_max_single_jump_km,
         non_execution_grace_minutes: s.non_execution_grace_minutes,
@@ -126,6 +130,7 @@ pub async fn configure(
         garage_base_latitude: p.garage_base_latitude,
         garage_base_longitude: p.garage_base_longitude,
         garage_base_radius_meters: p.garage_base_radius_meters,
+        garage_map_radius_km: p.garage_map_radius_km,
         garage_cycle_fallback_distance_km: p.garage_cycle_fallback_distance_km,
         garage_odometer_max_single_jump_km: p.garage_odometer_max_single_jump_km,
         non_execution_grace_minutes: p.non_execution_grace_minutes,
@@ -163,5 +168,76 @@ pub async fn get_current(
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "TenantRuleSetting",
+    path = "/tenant-rule-settings/tracking",
+    params(InternalTankQuery),
+    responses(
+        (status = 200, description = "The tenant's GPS provider account (URL and e-mail; the password is never returned, `passwordSet` says whether one is stored). Empty fields while none is configured. **Roles:** SysAdmin, TenantOwner (own tenant only).", body = TenantTrackingSettingJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_tracking(
+    state: State<AppState>,
+    Query(query): Query<InternalTankQuery>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+) -> HttpResponse<Json<TenantTrackingSettingJson>> {
+    if !can_read_tenant_configuration(&current_user) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
+    }
+    let target = current_user.tenant_id.or(query.tenant_id);
+    let Some(tenant_id) = target else {
+        return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
+    };
+    let use_case = TenantTrackingSettingUseCase::new(TenantTrackingSettingGateway::new(state.conn.as_ref().clone()));
+    match use_case.current(tenant_id).await {
+        Ok(credentials) => Ok(Json(TenantTrackingSettingJson {
+            tenant_id: target,
+            password_set: credentials.is_some(),
+            base_url: credentials.as_ref().map(|c| c.base_url.clone()).unwrap_or_default(),
+            email: credentials.map(|c| c.email).unwrap_or_default(),
+            password: None,
+        })),
+        Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
+    }
+}
+
+#[utoipa::path(
+    put,
+    tag = "TenantRuleSetting",
+    path = "/tenant-rule-settings/tracking",
+    request_body = TenantTrackingSettingJson,
+    responses(
+        (status = 204, description = "The tenant's GPS provider account was saved. **Roles:** SysAdmin (naming `tenantId`), TenantOwner (own tenant only)."),
+        (status = 400, description = "URL, e-mail or password missing (a blank password is accepted only while one is already stored)", body = BadRequestErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not configure the tenant", body = ForbiddenErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn configure_tracking(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Json(p): Json<TenantTrackingSettingJson>,
+) -> HttpResponse<StatusCode> {
+    if !can_configure_fuel_gauge(&current_user, p.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
+    }
+    let Some(tenant_id) = current_user.tenant_id.or(p.tenant_id) else {
+        return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
+    };
+    let use_case = TenantTrackingSettingUseCase::new(TenantTrackingSettingGateway::new(state.conn.as_ref().clone()));
+    match use_case.configure(tenant_id, &p.base_url, &p.email, p.password.as_deref()).await {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(_) => Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)),
     }
 }

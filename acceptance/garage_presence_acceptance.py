@@ -84,6 +84,8 @@ def run():
             "garageOdometerMaxSingleJumpKm": 300.0,
         })
         config_status, _ = http("PUT", "/tenant-rule-settings", rules, owner)
+        tracking_status, _ = http("PUT", "/tenant-rule-settings/tracking",
+                                  {"baseUrl": "http://tracking-mock:8080/api", "email": "test", "password": "test"}, owner)
         service_status, _ = garage_core.service(owner, "QA Geofence Service", required=True)
         vehicle_status, vehicle = http("POST", "/vehicle", {
             "tenantId": b.TENANT_ID,
@@ -92,7 +94,7 @@ def run():
             "status": "Active",
             "trackerDeviceId": DEVICE_ID,
         }, admin)
-        if rules_status != 200 or config_status != 200 or service_status != 201 or vehicle_status != 201:
+        if rules_status != 200 or config_status != 200 or tracking_status != 204 or service_status != 201 or vehicle_status != 201:
             raise RuntimeError(f"setup failed: settings {rules_status}/{config_status}, service {service_status}, vehicle {vehicle_status}")
 
         b.record_km(owner, vehicle, 12_000.0, "2026-10-13T10:00:00")

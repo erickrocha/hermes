@@ -87,5 +87,6 @@ data class GarageMap(
     val baseLatitude: Double? = null,
     val baseLongitude: Double? = null,
     val baseRadiusMeters: Double = 0.0,
+    val mapRadiusKm: Double = 100.0,
     val vehicles: List<GarageMapVehicle> = emptyList(),
 )

@@ -60,6 +60,7 @@ pub mod preventive_plan_gateway;
 pub mod inspection_model_gateway;
 pub mod inspection_model_item_gateway;
 pub mod tenant_rule_setting_gateway;
+pub mod tenant_tracking_setting_gateway;
 pub mod technical_inspection_gateway;
 pub mod technical_inspection_workflow_gateway;
 pub mod technical_inspection_item_gateway;

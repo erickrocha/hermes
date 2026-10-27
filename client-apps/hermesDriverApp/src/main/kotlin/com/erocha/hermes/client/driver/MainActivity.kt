@@ -17,15 +17,18 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.ComposeView
 import com.erocha.hermes.client.shared.AccessTokenResponse
 import com.erocha.hermes.client.shared.AuthApi
 import com.erocha.hermes.client.shared.DriverSession
 import com.erocha.hermes.client.shared.FleetApi
+import com.erocha.hermes.client.shared.GarageApi
 import com.erocha.hermes.client.shared.HermesTheme
 import com.erocha.hermes.client.shared.ThemeStore
 import com.erocha.hermes.client.shared.apiError
 import com.erocha.hermes.client.shared.createHermesHttpClient
-import com.erocha.hermes.client.shared.isDriverRole
+import com.erocha.hermes.client.shared.isFieldRole
+import com.erocha.hermes.client.shared.isMechanicRole
 import com.erocha.hermes.client.shared.secondsUntilRefresh
 import com.erocha.hermes.client.shared.themeColor
 import io.ktor.client.HttpClient
@@ -53,6 +56,7 @@ class MainActivity : ComponentActivity(), FleetHost {
     private val refreshRunnable = Runnable { refreshNow() }
     private val authApi get() = AuthApi(httpClient, BuildConfig.API_BASE_URL)
     private val fleetApi get() = FleetApi(httpClient, BuildConfig.API_BASE_URL)
+    private val garageApi get() = GarageApi(httpClient, BuildConfig.API_BASE_URL)
 
     override val context: Context get() = this
     override val userUuid: String get() = session?.uuid.orEmpty()
@@ -120,6 +124,7 @@ class MainActivity : ComponentActivity(), FleetHost {
     }
 
     private fun showAuthenticated(current: DriverSession, message: String? = null) {
+        if (isMechanicRole(current.role)) return showMechanic(current)
         val content = createContent()
         content.addView(text(getString(R.string.authenticated_title, current.name), R.style.TextAppearance_Hermes_Title))
         content.addView(text(getString(R.string.authenticated_role), R.style.TextAppearance_Hermes_Body))
@@ -140,6 +145,25 @@ class MainActivity : ComponentActivity(), FleetHost {
         content.addView(themeButton(), contentParams())
         setContentView(ScrollView(this).apply { isFillViewport = true; addView(content) })
         fleet = if (current.uuid.isBlank()) null else FleetContent(this, fleetContainer).also { it.start() }
+    }
+
+    /** The mechanic's home: the garage services, laid out by Compose and refreshed on its own. */
+    private fun showMechanic(current: DriverSession) {
+        fleet = null
+        messageView = null
+        setContentView(
+            ComposeView(this).apply {
+                setContent {
+                    MechanicApp(
+                        host = this@MainActivity,
+                        userName = current.name,
+                        themeLabel = getString(R.string.theme_button, themeLabel(themeStore.load())),
+                        onTheme = { themeStore.save(themeStore.load().next()); recreate() },
+                        onSignOut = { signOut() },
+                    )
+                }
+            },
+        )
     }
 
     /** Shows or clears the notice line without rebuilding the screen, so a form in progress is kept. */
@@ -176,9 +200,9 @@ class MainActivity : ComponentActivity(), FleetHost {
 
     private fun acceptLogin(response: AccessTokenResponse, email: String) {
         val next = response.toSession()
-        if (next == null || !isDriverRole(response.role)) {
+        if (next == null || !isFieldRole(response.role)) {
             // Interface courtesy only: nothing is stored; the server remains the authority.
-            val message = if (isDriverRole(response.role)) R.string.login_failed else R.string.not_a_driver
+            val message = if (isFieldRole(response.role)) R.string.login_failed else R.string.not_a_driver
             showLogin(getString(message), email)
             return
         }
@@ -197,7 +221,7 @@ class MainActivity : ComponentActivity(), FleetHost {
                 val next = renewBlocking(current, force = true)
                 mainHandler.post {
                     if (!alive()) return@post
-                    if (fleet == null && next.uuid.isNotBlank()) showAuthenticated(next) else showNotice(null)
+                    if (!isMechanicRole(next.role) && fleet == null && next.uuid.isNotBlank()) showAuthenticated(next) else showNotice(null)
                 }
             } catch (ended: SessionEnded) {
                 mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }
@@ -221,9 +245,9 @@ class MainActivity : ComponentActivity(), FleetHost {
             throw failure
         }
         val next = response.toSession()
-        if (next == null || !isDriverRole(response.role)) {
+        if (next == null || !isFieldRole(response.role)) {
             // A driver role without usable tokens is a bad response, not a role change.
-            throw SessionEnded(if (isDriverRole(response.role)) R.string.session_expired else R.string.not_a_driver)
+            throw SessionEnded(if (isFieldRole(response.role)) R.string.session_expired else R.string.not_a_driver)
         }
         store.save(next) // the backend issues a new refresh token on every refresh: replace what is stored
         session = next
@@ -231,16 +255,22 @@ class MainActivity : ComponentActivity(), FleetHost {
         return next
     }
 
-    override fun <T> run(work: suspend (api: FleetApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) {
+    override fun <T> run(work: suspend (api: FleetApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) =
+        execute({ token -> work(fleetApi, token) }, onDone)
+
+    override fun <T> runGarage(work: suspend (api: GarageApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) =
+        execute({ token -> work(garageApi, token) }, onDone)
+
+    private fun <T> execute(call: suspend (accessToken: String) -> T, onDone: (Result<T>) -> Unit) {
         executor.execute {
             val outcome: Result<T> = try {
                 val first = session ?: throw SessionEnded(null)
                 try {
-                    Result.success(runBlocking { work(fleetApi, first.accessToken) })
+                    Result.success(runBlocking { call(first.accessToken) })
                 } catch (failure: ClientRequestException) {
                     if (failure.response.status != HttpStatusCode.Unauthorized) throw failure
                     val renewed = renewBlocking(first)
-                    Result.success(runBlocking { work(fleetApi, renewed.accessToken) })
+                    Result.success(runBlocking { call(renewed.accessToken) })
                 }
             } catch (ended: SessionEnded) {
                 mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }

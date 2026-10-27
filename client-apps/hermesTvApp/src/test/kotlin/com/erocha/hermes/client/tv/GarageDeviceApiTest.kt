@@ -83,7 +83,7 @@ class GarageDeviceApiTest {
                         [{"vehicleUuid":"vehicle-2","prefix":"DEF-5678","nextDeparture":"2026-10-15T12:00:00","calledByManager":true,"hasDepartureAhead":true,"tankCalls":false}]
                     """.trimIndent()
                     "/garage-attendance/monitor/map" -> """
-                        {"baseLatitude":-23.5,"baseLongitude":-46.6,"baseRadiusMeters":150.0,"vehicles":[{"vehicleUuid":"vehicle-1","prefix":"ABC-1234","latitude":-23.6,"longitude":-46.7,"live":true,"reportedAt":"2026-10-27T10:00:00+00:00","ignition":true}]}
+                        {"baseLatitude":-23.5,"baseLongitude":-46.6,"baseRadiusMeters":150.0,"mapRadiusKm":250.0,"vehicles":[{"vehicleUuid":"vehicle-1","prefix":"ABC-1234","latitude":-23.6,"longitude":-46.7,"live":true,"reportedAt":"2026-10-27T10:00:00+00:00","ignition":true}]}
                     """.trimIndent()
                     else -> """
                         {"columns":[{"serviceModelUuid":"service-1","name":"Oil","internal":false}],"rows":[{"vehicleUuid":"vehicle-1","prefix":"ABC-1234","cells":[{"effectiveState":"pending","stamp":"2026-10-10T08:00:00","lastPerformedAt":"2026-09-01T08:00:00"}]}],"rowsNotShown":1,"columnsNotShown":0}
@@ -118,6 +118,7 @@ class GarageDeviceApiTest {
         assertEquals("2026-10-10T08:00:00", matrix.rows.single().cells.single()?.stamp)
         assertEquals(1, matrix.rowsNotShown)
         assertEquals(-23.5, map.baseLatitude)
+        assertEquals(250.0, map.mapRadiusKm, 0.0)
         assertEquals(true, map.vehicles.single().live)
         client.close()
     }

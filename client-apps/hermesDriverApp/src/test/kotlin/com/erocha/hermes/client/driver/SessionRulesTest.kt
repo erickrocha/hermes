@@ -4,6 +4,8 @@ import com.erocha.hermes.client.shared.DriverSession
 import com.erocha.hermes.client.shared.decodeDriverSession
 import com.erocha.hermes.client.shared.encode
 import com.erocha.hermes.client.shared.isDriverRole
+import com.erocha.hermes.client.shared.isFieldRole
+import com.erocha.hermes.client.shared.isMechanicRole
 import com.erocha.hermes.client.shared.secondsUntilRefresh
 import com.erocha.hermes.client.shared.shouldRefresh
 import org.junit.Assert.assertEquals
@@ -14,10 +16,12 @@ import org.junit.Test
 
 class SessionRulesTest {
     @Test
-    fun onlyTheDriverRoleIsAccepted() {
-        assertTrue(isDriverRole("Driver"))
-        listOf("TenantOwner", "TenantUser", "Mechanic", "SysAdmin", "driver", "").forEach {
-            assertFalse(it, isDriverRole(it))
+    fun onlyTheDriverAndMechanicRolesAreAccepted() {
+        assertTrue(isDriverRole("Driver") && !isMechanicRole("Driver"))
+        assertTrue(isMechanicRole("Mechanic") && !isDriverRole("Mechanic"))
+        assertTrue(isFieldRole("Driver") && isFieldRole("Mechanic"))
+        listOf("TenantOwner", "TenantUser", "SysAdmin", "driver", "mechanic", "").forEach {
+            assertFalse(it, isFieldRole(it))
         }
     }
 

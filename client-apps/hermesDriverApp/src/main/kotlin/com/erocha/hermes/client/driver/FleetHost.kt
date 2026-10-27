@@ -4,6 +4,7 @@ import android.content.Context
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.erocha.hermes.client.shared.FleetApi
+import com.erocha.hermes.client.shared.GarageApi
 
 /** The server refused the call; [message] is its localized reason (`SR-CA-03-07`), when it gave one. */
 internal class FleetRefused(val status: Int, val reason: String?, val errorKey: String = "") : Exception(reason)
@@ -25,6 +26,9 @@ internal interface FleetHost {
      * never delivered.
      */
     fun <T> run(work: suspend (api: FleetApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit)
+
+    /** Same as [run], for the garage-yard routes the mechanic uses. */
+    fun <T> runGarage(work: suspend (api: GarageApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit)
 
     /** Opens [latitude]/[longitude] in the device's map app; false when there is none. */
     fun openMap(latitude: Double, longitude: Double): Boolean

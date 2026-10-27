@@ -3,4 +3,9 @@
     <attr name="hermesTextPrimary" format="color" />
     <attr name="hermesTextSecondary" format="color" />
     <attr name="hermesError" format="color" />
+    <attr name="hermesSurface" format="color" />
+    <attr name="hermesAccent" format="color" />
+    <attr name="hermesOutline" format="color" />
+    <attr name="hermesOk" format="color" />
+    <attr name="hermesWarning" format="color" />
 </resources>

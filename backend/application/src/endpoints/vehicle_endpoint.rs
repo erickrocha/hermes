@@ -22,7 +22,8 @@ use business::domain::enums::Role;
 use business::gateway::vehicle_assignment_gateway::VehicleAssignmentGateway;
 use business::gateway::vehicle_gateway::{VehicleGateway, VehicleLookupStore};
 use business::domain::vehicle_tracking::VehicleTrackingStatus;
-use business::gateway::tracking_provider::configured_provider;
+use business::gateway::tenant_tracking_setting_gateway::{TenantTrackingSettingGateway, TenantTrackingSettingStore};
+use business::gateway::tracking_provider::provider_for;
 use business::use_cases::vehicle_tracking_use_case::VehicleTrackingUseCase;
 use business::use_cases::vehicle_use_case::{
     DUPLICATE_PLATE, DUPLICATE_TRACKER_DEVICE, VehicleUseCase,
@@ -284,9 +285,15 @@ pub async fn tracking(
 
     // In-request and unpersisted (HRMS-930): the reading is scoped to the
     // vehicle's own tenant (HRMS-903) and handed straight back.
-    let provider = configured_provider().map_err(|_| unavailable())?;
-    let statuses = VehicleTrackingUseCase::new(provider)
-        .ingest_for_tenant(vehicle.tenant_id.unwrap_or_default(), &[device_id])
+    let tenant_id = vehicle.tenant_id.unwrap_or_default();
+    let credentials = TenantTrackingSettingGateway::new(state.conn.as_ref().clone())
+        .get(tenant_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(unavailable)?;
+    let statuses = VehicleTrackingUseCase::new(provider_for(&credentials))
+        .ingest_for_tenant(tenant_id, &[device_id])
         .await
         .map_err(|_| unavailable())?;
     statuses.into_iter().next().map(Json).ok_or_else(unavailable)

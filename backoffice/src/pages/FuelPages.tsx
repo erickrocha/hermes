@@ -8,7 +8,7 @@ import { can, OFFICE, OWNER, OWNER_MECHANIC } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useActionForm, usePanel, useResourceForm, useSingletonForm } from '../features/hooks'
 import { loadLookup } from '../features/lookupSlice'
-import { fuelEntries, fuelGaugeSettings, internalTank, ruleSettings, type Row } from '../features/resources'
+import { fuelEntries, fuelGaugeSettings, internalTank, ruleSettings, trackingSettings, type Row } from '../features/resources'
 import type { AppDispatch, RootState } from '../store'
 import { Confirm, PageHeader } from '../components/UI'
 import { DetailCard } from '../components/molecules/DetailCard'
@@ -61,10 +61,16 @@ export const ruleFields: FieldDef[] = [
   num('garageMonitorUrgentMinutes', 'garageMonitorUrgentMinutes', true, 0), num('garageMonitorTripWindowMinutes', 'garageMonitorTripWindowMinutes', true, 0), num('garageMonitorLineWindowMinutes', 'garageMonitorLineWindowMinutes', true, 0),
   num('garageMonitorCardLimit', 'garageMonitorCardLimit', true, 1), num('garageMonitorMatrixRows', 'garageMonitorMatrixRows', true, 1), num('garageMonitorMatrixColumns', 'garageMonitorMatrixColumns', true, 1),
   num('garageFuellingFreshnessHours', 'garageFuellingFreshnessHours', true, 0), num('garageUtcOffsetMinutes', 'garageUtcOffsetMinutes', true),
-  num('garageBaseLatitude', 'garageBaseLatitude'), num('garageBaseLongitude', 'garageBaseLongitude'), num('garageBaseRadiusMeters', 'garageBaseRadiusMeters', true, 0.1),
+  num('garageBaseLatitude', 'garageBaseLatitude'), num('garageBaseLongitude', 'garageBaseLongitude'), num('garageBaseRadiusMeters', 'garageBaseRadiusMeters', true, 0.1), num('garageMapRadiusKm', 'garageMapRadiusKm', true, 1),
   num('garageCycleFallbackDistanceKm', 'garageCycleFallbackDistanceKm', true, 0.1), num('garageOdometerMaxSingleJumpKm', 'garageOdometerMaxSingleJumpKm', true, 0.1),
   // Manutenção não executada (C-026): a tolerância do "não apareceu" e a permanência mínima do registro manual.
   num('nonExecutionGraceMinutes', 'nonExecutionGraceMinutes', true, 0), num('nonExecutionMinDwellMinutes', 'nonExecutionMinDwellMinutes', true, 1),
+]
+
+// A conta do provedor de GPS é do tenant: a senha só entra (em branco mantém a guardada) e nunca volta do servidor.
+export const trackingFields: FieldDef[] = [
+  { name: 'baseUrl', labelKey: 'trackingBaseUrl', type: 'text', required: true }, { name: 'email', labelKey: 'trackingEmail', type: 'text', required: true },
+  { name: 'password', labelKey: 'trackingPassword', type: 'password' },
 ]
 
 export function FuelPage() {
@@ -180,4 +186,4 @@ export function FuelSettingsPage() {
   return <ResourceFormPage titleKey="fuelSettings" subtitleKey="fuelSettingsText" fields={gaugeSettingFields} backTo="/fuel" controller={useSingletonForm(fuelGaugeSettings, '/fuel-gauge-settings')} />
 }
 export function RuleSettingsPage() { return <ResourceFormPage titleKey="ruleSettings" subtitleKey="ruleSettingsText" fields={ruleFields} columns={4} backTo="/tenants" controller={useSingletonForm(ruleSettings, '/tenant-rule-settings')} /> }
-
+export function TrackingSettingsPage() { return <ResourceFormPage titleKey="trackingSettings" subtitleKey="trackingSettingsText" fields={trackingFields} backTo="/tenants" controller={useSingletonForm(trackingSettings, '/tenant-rule-settings/tracking')} /> }

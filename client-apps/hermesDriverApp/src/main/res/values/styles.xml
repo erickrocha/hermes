@@ -12,6 +12,11 @@
         <item name="hermesTextPrimary">@color/transmega_text_primary</item>
         <item name="hermesTextSecondary">@color/transmega_text_secondary</item>
         <item name="hermesError">@color/transmega_error</item>
+        <item name="hermesSurface">@color/transmega_surface</item>
+        <item name="hermesAccent">@color/transmega_accent</item>
+        <item name="hermesOutline">@color/transmega_outline</item>
+        <item name="hermesOk">@color/transmega_ok</item>
+        <item name="hermesWarning">@color/transmega_warning</item>
     </style>
 
     <style name="Theme.Hermes.Default" parent="Theme.Hermes.Base">
@@ -21,6 +26,11 @@
         <item name="hermesTextPrimary">@color/hermes_text_primary</item>
         <item name="hermesTextSecondary">@color/hermes_text_secondary</item>
         <item name="hermesError">@color/hermes_error</item>
+        <item name="hermesSurface">@color/hermes_surface</item>
+        <item name="hermesAccent">@color/hermes_accent</item>
+        <item name="hermesOutline">@color/hermes_outline</item>
+        <item name="hermesOk">@color/hermes_ok</item>
+        <item name="hermesWarning">@color/hermes_warning</item>
     </style>
 
     <!-- The manifest theme, before the stored choice is applied. -->

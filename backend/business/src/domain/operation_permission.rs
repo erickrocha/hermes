@@ -142,6 +142,8 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("POST", "/tenant", "tenant.create"),
     ("GET", "/tenant-rule-settings", "tenant-rule-settings.read"),
     ("PUT", "/tenant-rule-settings", "tenant-rule-settings.update"),
+    ("GET", "/tenant-rule-settings/tracking", "tenant-rule-settings.read"),
+    ("PUT", "/tenant-rule-settings/tracking", "tenant-rule-settings.update"),
     ("GET", "/tenant/uuid/{uuid}", "tenant.read"),
     ("PUT", "/tenant/uuid/{uuid}", "tenant.update"),
     ("GET", "/tenant/uuid/{uuid}/plan", "tenant.plan"),

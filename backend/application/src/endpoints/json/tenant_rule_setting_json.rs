@@ -82,6 +82,9 @@ pub struct TenantRuleSettingJson {
     pub garage_base_longitude: Option<f64>,
     #[serde(default = "default_garage_base_radius_meters")]
     pub garage_base_radius_meters: f64,
+    /// Default 100. The TV monitor's map opens centred on the garage showing this many km around it
+    #[serde(default = "default_garage_map_radius_km")]
+    pub garage_map_radius_km: f64,
     #[serde(default = "default_garage_cycle_fallback_distance_km")]
     pub garage_cycle_fallback_distance_km: f64,
     #[serde(default = "default_garage_odometer_max_single_jump_km")]
@@ -106,10 +109,32 @@ fn default_garage_base_radius_meters() -> f64 {
     75.0
 }
 
+fn default_garage_map_radius_km() -> f64 {
+    100.0
+}
+
 fn default_garage_cycle_fallback_distance_km() -> f64 {
     2.0
 }
 
 fn default_garage_odometer_max_single_jump_km() -> f64 {
     300.0
+}
+
+/// `HRMS-900`..`905`: the tenant's GPS provider account. The password is
+/// write-only: it is never returned, `passwordSet` says whether one is stored,
+/// and a blank `password` on `PUT` keeps the stored one.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantTrackingSettingJson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<i64>,
+    pub base_url: String,
+    pub email: String,
+    #[serde(default, skip_serializing)]
+    #[schema(write_only)]
+    pub password: Option<String>,
+    #[serde(default)]
+    #[schema(read_only)]
+    pub password_set: bool,
 }

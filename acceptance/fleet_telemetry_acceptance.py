@@ -123,7 +123,7 @@ def ft_001():
     boundary_exists = os.path.exists(BOUNDARY)
     src = read(BOUNDARY) if boundary_exists else ""
     # Consuming: an outbound HTTP client reading a configured base URL.
-    consumes = "reqwest" in src and "TRACKING_API_BASE_URL" in src
+    consumes = "reqwest" in src and "base_url" in src
 
     # Not rebuilding: no polling loop of our own. `rastreador-cron` is the
     # component PD-025 rules out by name, so the names it would arrive under
@@ -136,7 +136,7 @@ def ft_001():
 
     check("FT-001", boundary_exists and consumes and not reimplemented,
           "position data is consumed from a configured third-party provider "
-          "(reqwest + TRACKING_API_BASE_URL); no polling tracker is reimplemented",
+          "(reqwest + the tenant's configured base URL); no polling tracker is reimplemented",
           f"boundary present={boundary_exists}; consumes={consumes}; "
           f"tracker-like code found in {reimplemented}")
 

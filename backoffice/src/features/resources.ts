@@ -48,6 +48,7 @@ export const checklistRuns = slice('checklistRuns', '/checklist-run')
 export const fuelEntries = slice('fuelEntries', '/fuel-entry')
 export const fuelGaugeSettings = slice('fuelGaugeSettings', '/fuel-gauge-settings')
 export const ruleSettings = slice('ruleSettings', '/tenant-rule-settings')
+export const trackingSettings = slice('trackingSettings', '/tenant-rule-settings/tracking')
 export const internalTank = slice('internalTank', '/internal-tank')
 
 const text = (name: string, labelKey: string, required = false): FieldDef => ({ name, labelKey, type: 'text', required })
