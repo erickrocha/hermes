@@ -31,6 +31,12 @@ pub trait UserStore: UserLookupStore {
     }
     async fn save(&self, user: User) -> Result<User, BusinessError>;
     async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError>;
+    /// Every account holding this CPF (digits only). More than one means the CPF
+    /// is shared across tenants, which login treats as ambiguous. The default
+    /// suits in-memory stores that do not carry CPFs.
+    async fn get_by_cpf(&self, _cpf: String) -> Result<Vec<User>, BusinessError> {
+        Ok(Vec::new())
+    }
     async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError>;
     async fn list_page(
         &self,
@@ -94,6 +100,13 @@ impl UserStore for UserGateway {
             .await
             .map_err(database_error)?;
         Ok(model.map(UserEntityMapper::from_model))
+    }
+
+    async fn get_by_cpf(&self, cpf: String) -> Result<Vec<User>, BusinessError> {
+        let models = UserGateway::find_all_by_cpf(&self.db, cpf)
+            .await
+            .map_err(database_error)?;
+        Ok(models.into_iter().map(UserEntityMapper::from_model).collect())
     }
 
     async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError> {
@@ -202,6 +215,16 @@ impl UserGateway {
 }
 
 impl UserGateway {
+    pub async fn find_all_by_cpf(
+        db: &DbConn,
+        cpf: String,
+    ) -> Result<Vec<user_entity::Model>, DbErr> {
+        UserQuery::find()
+            .filter(user_entity::Column::Cpf.eq(cpf))
+            .all(db)
+            .await
+    }
+
     pub async fn find_by_email(
         db: &DbConn,
         email: String,
