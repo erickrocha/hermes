@@ -191,5 +191,6 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("PUT", "/work-order/uuid/{uuid}/conclude", "work-order.conclude"),
     ("POST", "/work-order/uuid/{uuid}/issue-part", "work-order.issue-part"),
     ("POST", "/work-order/uuid/{uuid}/item", "work-order.item.add"),
+    ("PUT", "/work-order/uuid/{uuid}/item/uuid/{item_uuid}/resolve", "work-order.item.resolve"),
     ("GET", "/work-order/uuid/{uuid}/postings", "work-order.posting.read"),
 ];

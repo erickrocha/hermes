@@ -1,7 +1,7 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
 use crate::endpoints::work_order_endpoint::{
-    add, add_item, cancel, conclude, get_by_uuid, issue_part, list_all, list_postings,
+    add, add_item, cancel, conclude, get_by_uuid, issue_part, list_all, list_postings, resolve_item,
 };
 use axum::routing::{get, post, put};
 use axum::{Router, middleware};
@@ -14,6 +14,7 @@ pub fn work_order_routes(state: AppState) -> Router<AppState> {
         .route("/", get(list_all))
         .route("/uuid/{uuid}", get(get_by_uuid))
         .route("/uuid/{uuid}/item", post(add_item))
+        .route("/uuid/{uuid}/item/uuid/{item_uuid}/resolve", put(resolve_item))
         .route("/uuid/{uuid}/conclude", put(conclude))
         .route("/uuid/{uuid}/cancel", put(cancel))
         .route("/uuid/{uuid}/issue-part", post(issue_part))

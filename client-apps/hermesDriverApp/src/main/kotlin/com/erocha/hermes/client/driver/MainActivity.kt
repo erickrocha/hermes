@@ -14,7 +14,6 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.ComposeView
@@ -23,6 +22,7 @@ import com.erocha.hermes.client.shared.AuthApi
 import com.erocha.hermes.client.shared.DriverSession
 import com.erocha.hermes.client.shared.FleetApi
 import com.erocha.hermes.client.shared.GarageApi
+import com.erocha.hermes.client.shared.WorkshopApi
 import com.erocha.hermes.client.shared.HermesTheme
 import com.erocha.hermes.client.shared.ThemeStore
 import com.erocha.hermes.client.shared.apiError
@@ -40,7 +40,7 @@ import java.util.concurrent.Executors
 
 /**
  * Driver app: sign in through the platform's existing auth, keep the session encrypted, renew it, sign out (C-017),
- * and host the fleet screens (C-031) in [FleetContent]. Every network call runs on one background thread, so a
+ * and host the signed-in screens (driver, mechanic) in Compose. Every network call runs on one background thread, so a
  * scheduled renewal and a renewal after a `401` can never overlap.
  */
 class MainActivity : ComponentActivity(), FleetHost {
@@ -51,12 +51,11 @@ class MainActivity : ComponentActivity(), FleetHost {
     private lateinit var httpClient: HttpClient
     @Volatile private var session: DriverSession? = null
     private var loginButton: Button? = null
-    private var messageView: TextView? = null
-    private var fleet: FleetContent? = null
     private val refreshRunnable = Runnable { refreshNow() }
     private val authApi get() = AuthApi(httpClient, BuildConfig.API_BASE_URL)
     private val fleetApi get() = FleetApi(httpClient, BuildConfig.API_BASE_URL)
     private val garageApi get() = GarageApi(httpClient, BuildConfig.API_BASE_URL)
+    private val workshopApi get() = WorkshopApi(httpClient, BuildConfig.API_BASE_URL)
 
     override val context: Context get() = this
     override val userUuid: String get() = session?.uuid.orEmpty()
@@ -123,55 +122,21 @@ class MainActivity : ComponentActivity(), FleetHost {
         setContentView(content)
     }
 
-    private fun showAuthenticated(current: DriverSession, message: String? = null) {
-        if (isMechanicRole(current.role)) return showMechanic(current)
-        val content = createContent()
-        content.addView(text(getString(R.string.authenticated_title, current.name), R.style.TextAppearance_Hermes_Title))
-        content.addView(text(getString(R.string.authenticated_role), R.style.TextAppearance_Hermes_Body))
-        val notice = text(message.orEmpty(), R.style.TextAppearance_Hermes_Error).apply {
-            visibility = if (message == null) View.GONE else View.VISIBLE
-        }
-        messageView = notice
-        content.addView(notice, contentParams())
-        val fleetContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(fleetContainer, contentParams())
-        content.addView(
-            Button(this).apply {
-                text = getString(R.string.sign_out_button)
-                setOnClickListener { signOut() }
-            },
-            contentParams(),
-        )
-        content.addView(themeButton(), contentParams())
-        setContentView(ScrollView(this).apply { isFillViewport = true; addView(content) })
-        fleet = if (current.uuid.isBlank()) null else FleetContent(this, fleetContainer).also { it.start() }
-    }
-
-    /** The mechanic's home: the garage services, laid out by Compose and refreshed on its own. */
-    private fun showMechanic(current: DriverSession) {
-        fleet = null
-        messageView = null
+    /** The signed-in home, laid out by Compose: the garage for a mechanic, the driver's own information otherwise. */
+    private fun showAuthenticated(current: DriverSession) {
         setContentView(
             ComposeView(this).apply {
                 setContent {
-                    MechanicApp(
-                        host = this@MainActivity,
-                        userName = current.name,
-                        themeLabel = getString(R.string.theme_button, themeLabel(themeStore.load())),
-                        onTheme = { themeStore.save(themeStore.load().next()); recreate() },
-                        onSignOut = { signOut() },
-                    )
+                    val themeText = getString(R.string.theme_button, themeLabel(themeStore.load()))
+                    val switchTheme = { themeStore.save(themeStore.load().next()); recreate() }
+                    if (isMechanicRole(current.role)) {
+                        MechanicApp(this@MainActivity, current.name, themeText, switchTheme) { signOut() }
+                    } else {
+                        DriverApp(this@MainActivity, current.name, themeText, switchTheme) { signOut() }
+                    }
                 }
             },
         )
-    }
-
-    /** Shows or clears the notice line without rebuilding the screen, so a form in progress is kept. */
-    private fun showNotice(message: String?) {
-        messageView?.apply {
-            text = message.orEmpty()
-            visibility = if (message == null) View.GONE else View.VISIBLE
-        }
     }
 
     private fun submitLogin(email: String, password: String) {
@@ -218,11 +183,7 @@ class MainActivity : ComponentActivity(), FleetHost {
         executor.execute {
             val current = session ?: return@execute
             try {
-                val next = renewBlocking(current, force = true)
-                mainHandler.post {
-                    if (!alive()) return@post
-                    if (!isMechanicRole(next.role) && fleet == null && next.uuid.isNotBlank()) showAuthenticated(next) else showNotice(null)
-                }
+                renewBlocking(current, force = true)
             } catch (ended: SessionEnded) {
                 mainHandler.post { if (alive()) endSession(ended.messageRes?.let(::getString)) }
             } catch (_: Exception) {
@@ -261,6 +222,9 @@ class MainActivity : ComponentActivity(), FleetHost {
     override fun <T> runGarage(work: suspend (api: GarageApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) =
         execute({ token -> work(garageApi, token) }, onDone)
 
+    override fun <T> runWorkshop(work: suspend (api: WorkshopApi, accessToken: String) -> T, onDone: (Result<T>) -> Unit) =
+        execute({ token -> work(workshopApi, token) }, onDone)
+
     private fun <T> execute(call: suspend (accessToken: String) -> T, onDone: (Result<T>) -> Unit) {
         executor.execute {
             val outcome: Result<T> = try {
@@ -287,10 +251,9 @@ class MainActivity : ComponentActivity(), FleetHost {
     }
 
     /** Network trouble keeps the session; try again shortly. */
-    private fun retryLater(current: DriverSession) {
+    private fun retryLater(@Suppress("UNUSED_PARAMETER") current: DriverSession) {
         mainHandler.removeCallbacks(refreshRunnable)
         mainHandler.postDelayed(refreshRunnable, RETRY_MILLIS)
-        if (session == current) showNotice(getString(R.string.refresh_unavailable))
     }
 
     private fun scheduleRefresh(current: DriverSession) {
@@ -305,8 +268,6 @@ class MainActivity : ComponentActivity(), FleetHost {
         mainHandler.removeCallbacks(refreshRunnable)
         store.clear()
         session = null
-        fleet = null
-        messageView = null
         showLogin(message)
     }
 
@@ -355,12 +316,10 @@ class MainActivity : ComponentActivity(), FleetHost {
         false
     }
 
-    override fun text(value: String, appearance: Int): TextView = TextView(this).apply {
+    private fun text(value: String, appearance: Int): TextView = TextView(this).apply {
         setTextAppearance(this@MainActivity, appearance)
         text = value
     }
-
-    override fun spacing(): LinearLayout.LayoutParams = contentParams()
 
     private fun contentParams(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,

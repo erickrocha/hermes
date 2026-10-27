@@ -52,6 +52,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        // The recognizer ships native code per ABI; 32-bit phones are out of scope (arm64 phones and the x86_64 emulator).
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     signingConfigs {
@@ -80,6 +82,8 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
+    // On-device text recognition for the fuel receipt: the photo never leaves the phone.
+    implementation(libs.mlkit.text.recognition)
     testImplementation(libs.junit)
     testImplementation(libs.ktor.client.core)
     testImplementation(libs.ktor.client.mock)

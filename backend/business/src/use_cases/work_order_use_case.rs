@@ -17,6 +17,8 @@ pub const PLAN_NOT_ON_THIS_VEHICLE: &str =
     "The preventive plan does not belong to this work order's vehicle";
 pub const ITEM_NOT_FOUND: &str = "Work order item not found";
 pub const ITEM_NOT_ON_THIS_WORK_ORDER: &str = "This item does not belong to the named work order";
+pub const RESOLUTION_REQUIRED: &str = "A resolution description is required";
+pub const WORK_ORDER_CLOSED: &str = "The work order is already concluded or cancelled";
 
 pub struct WorkOrderUseCase {
     store: Box<dyn WorkOrderWorkflowStore>,
@@ -263,6 +265,38 @@ impl WorkOrderUseCase {
             }
         };
         self.recomputed_after(work_order, updated_item).await
+    }
+
+    /// `TRM-205`: the mechanic closes out one pendency of an open order, saying what was done. The order's
+    /// own status is recomputed like every other item change (`TRM-206`/`207`); concluding the order stays the
+    /// administrative act it is (`TRM-208`). A concluded or cancelled order takes no more work.
+    pub async fn resolve_item(
+        &self,
+        work_order_id: i64,
+        item_id: i64,
+        resolution: &str,
+        resolved_by: &str,
+    ) -> Result<WorkOrder, BusinessError> {
+        let resolution = resolution.trim();
+        if resolution.is_empty() {
+            return Err(BusinessError::new(RESOLUTION_REQUIRED.to_string()));
+        }
+        let work_order = self.loaded(work_order_id).await?;
+        if matches!(work_order.status, WorkOrderStatus::Concluded | WorkOrderStatus::Cancelled) {
+            return Err(BusinessError::new(WORK_ORDER_CLOSED.to_string()));
+        }
+        let item = self.loaded_item(item_id).await?;
+        if item.work_order_id != work_order_id {
+            return Err(BusinessError::new(ITEM_NOT_ON_THIS_WORK_ORDER.to_string()));
+        }
+        let resolved = WorkOrderItem {
+            status: WorkOrderItemStatus::Resolved,
+            resolved_by: Some(resolved_by.to_string()),
+            resolved_at: Some(Utc::now().naive_utc()),
+            resolution_description: Some(resolution.to_string()),
+            ..item
+        };
+        self.recomputed_after(work_order, resolved).await
     }
 
     pub(crate) async fn loaded(&self, work_order_id: i64) -> Result<WorkOrder, BusinessError> {

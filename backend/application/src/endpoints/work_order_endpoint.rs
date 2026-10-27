@@ -6,7 +6,7 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
-use crate::endpoints::json::work_order_item_json::WorkOrderItemJson;
+use crate::endpoints::json::work_order_item_json::{WorkOrderItemJson, WorkOrderItemResolveJson};
 use crate::endpoints::json::work_order_json::WorkOrderJson;
 use crate::endpoints::json::work_order_posting_json::WorkOrderPostingJson;
 use crate::endpoints::vehicle_endpoint::find_visible;
@@ -688,5 +688,53 @@ pub async fn list_postings(
             locale,
             ErrorKey::UnexpectedError,
         )),
+    }
+}
+
+#[utoipa::path(
+    put,
+    tag = "WorkOrder",
+    path = "/work-order/uuid/{uuid}/item/uuid/{item_uuid}/resolve",
+    params(
+        ("uuid" = String, Path, description = "Work order UUID"),
+        ("item_uuid" = String, Path, description = "Work order item UUID"),
+    ),
+    request_body = WorkOrderItemResolveJson,
+    responses(
+        (status = 204, description = "The item is resolved, with who resolved it, when and what was done (TRM-205), and the work order's status is recomputed (TRM-206/207). **Roles:** SysAdmin (any tenant); TenantOwner, Mechanic (own tenant only)."),
+        (status = 400, description = "A blank resolution, an item of another order, or an order already concluded or cancelled", body = BadRequestErrorJson),
+        (status = 404, description = "Work order or item not found, **or in another tenant** (PD-034)", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "The caller's role may not manage this work order", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn resolve_item(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path((uuid, item_uuid)): Path<(String, String)>,
+    Json(payload): Json<WorkOrderItemResolveJson>,
+) -> HttpResponse<StatusCode> {
+    let (work_order, items) = use_case(&state)
+        .find_by_uuid(uuid)
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::WorkOrderNotFound))?;
+    if !can_read_work_order(&current_user, work_order.tenant_id) {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+    }
+    if !can_create_work_order(&current_user, work_order.tenant_id) {
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::WorkOrderForbidden));
+    }
+    let Some(item_id) = items.iter().find(|item| item.uuid.as_deref() == Some(item_uuid.as_str())).and_then(|item| item.id) else {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::WorkOrderNotFound));
+    };
+    match use_case(&state)
+        .resolve_item(work_order.id.unwrap_or_default(), item_id, &payload.resolution_description, &current_user.email)
+        .await
+    {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => Err(error(locale, &e.message)),
     }
 }

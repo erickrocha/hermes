@@ -27,6 +27,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -35,7 +39,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,11 +65,8 @@ import kotlinx.coroutines.delay
 
 private const val POLL_MILLIS = 20_000L
 
-@Composable
-private fun token(attr: Int) = Color(LocalContext.current.themeColor(attr))
-
 /** The mechanic's screen state; every call goes through the host, which renews the session and reports refusals. */
-private class MechanicState(private val host: FleetHost) {
+internal class MechanicState(private val host: FleetHost) {
     var queue by mutableStateOf<List<GarageQueueEntry>?>(null)
     var refreshing by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
@@ -76,8 +79,7 @@ private class MechanicState(private val host: FleetHost) {
     var picking by mutableStateOf(false)
     var vehicles by mutableStateOf<List<Vehicle>?>(null)
 
-    private fun message(failure: Throwable, fallback: Int) =
-        (failure as? FleetRefused)?.reason ?: host.context.getString(fallback)
+    private fun message(failure: Throwable, fallback: Int) = failureMessage(host, failure, fallback)
 
     fun refresh(silent: Boolean = false) {
         if (!silent) refreshing = true
@@ -140,15 +142,30 @@ private class MechanicState(private val host: FleetHost) {
 
 @Composable
 internal fun MechanicApp(host: FleetHost, userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
-    val state = remember { MechanicState(host) }
+    HermesMaterialTheme { MechanicBody(host, userName, themeLabel, onTheme, onSignOut) }
+}
+
+@Composable
+private fun MechanicBody(host: FleetHost, userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
+    val garage = remember { MechanicState(host) }
+    val valeta = remember { ValetaState(host) }
+    val orders = remember { MaintenanceState(host) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
-        state.refresh()
+        garage.refresh()
         while (true) {
             delay(POLL_MILLIS)
-            if (state.saving == null) state.refresh(silent = true)
+            if (garage.saving == null) garage.refresh(silent = true)
+            if (tab == 2 && orders.busy == null) orders.refresh(silent = true)
         }
     }
-    BackHandler(enabled = state.open != null) { state.close() }
+    LaunchedEffect(tab) {
+        if (tab == 1) valeta.start()
+        if (tab == 2) orders.refresh()
+    }
+    BackHandler(enabled = tab == 0 && garage.open != null) { garage.close() }
+    BackHandler(enabled = tab == 1 && valeta.canGoBack) { valeta.back() }
+    BackHandler(enabled = tab == 2 && orders.open != null) { orders.close() }
 
     Column(
         modifier = Modifier
@@ -157,31 +174,40 @@ internal fun MechanicApp(host: FleetHost, userName: String, themeLabel: String, 
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        val attendance = state.open
-        if (attendance == null) {
-            QueueHeader(userName, themeLabel, onTheme, onSignOut)
-            GroupChips(state.group) { state.group = it }
-            state.error?.let { ErrorBanner(it) }
-            QueueList(state)
+        val attendance = garage.open
+        if (tab == 0 && attendance != null) {
+            VehicleScreen(garage, attendance)
+        } else if (tab == 2 && orders.open != null) {
+            OrderScreen(orders)
         } else {
-            VehicleScreen(state, attendance)
+            val title = when (tab) {
+                0 -> R.string.garage_title
+                1 -> R.string.valeta_title
+                else -> R.string.orders_title
+            }
+            AppHeader(stringResource(title), userName, themeLabel, onTheme, onSignOut)
+            Box(modifier = Modifier.weight(1f)) {
+                when (tab) {
+                    0 -> GarageTab(garage)
+                    1 -> ValetaTab(valeta)
+                    else -> OrdersTab(orders)
+                }
+            }
+            BottomNav(
+                listOf(R.string.tab_garage to "🔧", R.string.tab_valeta to "🔍", R.string.tab_maintenance to "🛠"),
+                tab,
+            ) { tab = it }
         }
     }
-    if (state.picking) VehiclePicker(state)
+    if (garage.picking) VehiclePicker(garage)
 }
 
 @Composable
-private fun QueueHeader(userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.garage_title), color = token(R.attr.hermesTextPrimary), fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Text(userName, color = token(R.attr.hermesTextSecondary), fontSize = 14.sp)
-        }
-        TextButton(onClick = onTheme) { Text(themeLabel, color = token(R.attr.hermesAccent)) }
-        TextButton(onClick = onSignOut) { Text(stringResource(R.string.sign_out_button), color = token(R.attr.hermesAccent)) }
+private fun GarageTab(state: MechanicState) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        GroupChips(state.group) { state.group = it }
+        state.error?.let { ErrorBanner(it) }
+        QueueList(state)
     }
 }
 
@@ -206,16 +232,6 @@ private fun GroupChips(selected: String, onSelect: (String) -> Unit) {
             )
         }
     }
-}
-
-@Composable
-private fun ErrorBanner(message: String) {
-    Text(
-        message,
-        color = token(R.attr.hermesError),
-        fontSize = 14.sp,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -279,18 +295,7 @@ private fun QueueCard(entry: GarageQueueEntry, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Pill(text: String, color: Color) {
-    Text(
-        text,
-        color = color,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.background(color.copy(alpha = 0.14f), RoundedCornerShape(50)).padding(horizontal = 10.dp, vertical = 3.dp),
-    )
-}
-
-@Composable
-private fun VehicleScreen(state: MechanicState, attendance: GarageAttendance) {
+internal fun VehicleScreen(state: MechanicState, attendance: GarageAttendance) {
     val services = GarageRules.ordered(GarageRules.visible(attendance.services, state.group))
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 12.dp),

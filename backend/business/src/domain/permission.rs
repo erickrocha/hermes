@@ -97,6 +97,7 @@ pub const GRANTABLE: &[Permission] = &[
     Permission { code: "work-order.create", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "work-order.issue-part", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "work-order.item.add", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
+    Permission { code: "work-order.item.resolve", module: "Maintenance", tenant_user: false, driver: false, mechanic: true, own: false },
     Permission { code: "work-order.posting.read", module: "Maintenance", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "work-order.read", module: "Maintenance", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "customer.create", module: "Scheduling", tenant_user: false, driver: false, mechanic: false, own: false },
