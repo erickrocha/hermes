@@ -65,7 +65,7 @@ impl<S: GarageDeviceStore> GarageDeviceUseCase<S> {
         }
         let now = Utc::now();
         let expires_at = now + Duration::minutes(PAIRING_CODE_MINUTES);
-        let code = Uuid::new_v4().simple().to_string();
+        let code = new_pairing_code();
         let device = self
             .store
             .save(GarageDevice {
@@ -96,7 +96,7 @@ impl<S: GarageDeviceStore> GarageDeviceUseCase<S> {
         let current = self.find_by_uuid(uuid).await?;
         let now = Utc::now();
         let expires_at = now + Duration::minutes(PAIRING_CODE_MINUTES);
-        let code = Uuid::new_v4().simple().to_string();
+        let code = new_pairing_code();
         let device = self
             .store
             .save(GarageDevice {
@@ -238,6 +238,11 @@ fn next_version(current: i64) -> Result<i64, BusinessError> {
     current
         .checked_add(1)
         .ok_or_else(|| BusinessError::new(DEVICE_CREDENTIAL_INVALID.to_string()))
+}
+
+/// Eight digits, so it can be typed on a TV remote. The 10-minute lifetime and single use bound guessing.
+fn new_pairing_code() -> String {
+    format!("{:08}", Uuid::new_v4().as_u128() % 100_000_000)
 }
 
 fn pairing_code(device: &GarageDevice, code: String, expires_at: NaiveDateTime) -> PairingCode {

@@ -57,6 +57,7 @@ pub const GRANTABLE: &[Permission] = &[
     Permission { code: "garage.call.create", module: "Garage", tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "garage.call.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "garage.monitor-cards.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "garage.monitor-map.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "garage.monitor-matrix.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "garage.monitor.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "garage.queue.read", module: "Garage", tenant_user: true, driver: true, mechanic: true, own: false },

@@ -158,7 +158,8 @@ async fn pairing_is_single_use_and_revocation_invalidates_the_live_device_token(
         .issue_pairing_code(&owner(), "Garage wall".into())
         .await
         .expect("owner can issue code");
-    assert_eq!(pairing.code.len(), 32);
+    assert_eq!(pairing.code.len(), 8);
+    assert!(pairing.code.chars().all(|c| c.is_ascii_digit()));
 
     let (first, second) = tokio::join!(
         use_case.pair(pairing.code.clone()),

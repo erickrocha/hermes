@@ -1,0 +1,16 @@
+<resources>
+    <attr name="hermesScreenBackground" format="color" />
+    <attr name="hermesTextPrimary" format="color" />
+    <attr name="hermesTextSecondary" format="color" />
+    <attr name="hermesError" format="color" />
+    <attr name="hermesMonitorBackground" format="color" />
+    <attr name="hermesMonitorSurface" format="color" />
+    <attr name="hermesMonitorSurfaceRaised" format="color" />
+    <attr name="hermesMonitorText" format="color" />
+    <attr name="hermesMonitorTextMuted" format="color" />
+    <attr name="hermesMonitorAccent" format="color" />
+    <attr name="hermesMonitorOk" format="color" />
+    <attr name="hermesMonitorWarning" format="color" />
+    <attr name="hermesMonitorDanger" format="color" />
+    <attr name="hermesMonitorOutline" format="color" />
+</resources>

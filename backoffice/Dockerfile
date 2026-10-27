@@ -32,16 +32,17 @@ FROM node:20.19.0-bookworm-slim AS builder
 
 WORKDIR /build
 
-# `npm ci` installs exactly `package-lock.json`, which is what makes this
-# reproducible; `npm install` would be free to resolve newer versions.
-COPY package.json package-lock.json ./
-RUN npm ci
+# `yarn install --frozen-lockfile` installs exactly `yarn.lock` (the project's
+# lockfile, same command as `frontend-ci.yml`), which is what makes this
+# reproducible; a plain `yarn install` would be free to resolve newer versions.
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
 
 COPY . .
 
 # Same-origin: see the note at the top of this file.
 ENV VITE_API_URL=/api
-RUN npm run build
+RUN yarn build
 
 # ---------- runtime ----------
 # `nginx-unprivileged` rather than `nginx`: the stock image starts as root to
