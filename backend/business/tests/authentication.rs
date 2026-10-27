@@ -99,6 +99,29 @@ async fn a_correct_password_issues_access_and_refresh_tokens() {
 }
 
 #[tokio::test]
+async fn a_driver_logs_in_with_the_cpf_and_a_cpf_shared_across_tenants_is_refused() {
+    secrets();
+    let mut driver = row(&argon(), true);
+    driver.cpf = Some("52998224725".into());
+    driver.role = "Driver".into();
+    let db = db_returning(vec![vec![driver.clone()]]);
+    let token = authentication(&db)
+        .execute("529.982.247-25".into(), PASSWORD.into())
+        .await
+        .expect("CPF login");
+    assert_eq!(token.role, Role::Driver);
+
+    let db = db_returning(vec![vec![driver.clone(), driver]]);
+    assert!(
+        authentication(&db)
+            .execute("52998224725".into(), PASSWORD.into())
+            .await
+            .is_err(),
+        "the same CPF in two tenants identifies nobody"
+    );
+}
+
+#[tokio::test]
 async fn every_login_failure_looks_the_same() {
     // HRM-043: unknown email, wrong password and disabled account are
     // indistinguishable, so the error can't be used to enumerate accounts.

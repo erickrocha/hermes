@@ -44,7 +44,22 @@ impl AuthenticationUseCase {
         }
     }
 
-    /// Carrega o usuário pelo e-mail e recusa conta desabilitada.
+    /// O login aceita e-mail ou CPF (motoristas não têm e-mail próprio). Um
+    /// identificador sem `@` com 11 dígitos é buscado como CPF; só vale se
+    /// houver exatamente uma conta com ele, porque o mesmo CPF em dois tenants
+    /// não identifica ninguém. Qualquer outro caso cai na busca por e-mail.
+    async fn find_by_identifier(&self, identifier: &str) -> Result<Option<User>, BusinessError> {
+        if !identifier.contains('@') {
+            let digits: String = identifier.chars().filter(char::is_ascii_digit).collect();
+            if digits.len() == 11 {
+                let mut accounts = self.users.get_by_cpf(digits).await?;
+                return Ok(if accounts.len() == 1 { accounts.pop() } else { None });
+            }
+        }
+        self.users.get_by_email(identifier.to_string()).await
+    }
+
+    /// Carrega o usuário pelo e-mail (ou CPF) e recusa conta desabilitada.
     ///
     /// Todo caminho de autenticação passa por aqui — login, validação de access
     /// token e de refresh token —, então é este o ponto que faz `user.enabled`
@@ -53,8 +68,7 @@ impl AuthenticationUseCase {
     /// curso nem impediria um novo login.
     async fn load_enabled_user(&self, email: &str, context: &str) -> Result<User, BusinessError> {
         let found = self
-            .users
-            .get_by_email(email.to_string())
+            .find_by_identifier(email)
             .await
             .map_err(|err| {
                 log::error!(
