@@ -16,7 +16,7 @@ RENAME = {
     "garage-attendance.active": "garage.triage.read", "garage-attendance.call-list": "garage.call-list.read",
     "garage-attendance.checkout": "garage.triage.check-out", "garage-attendance.create": "garage.triage.open",
     "garage-attendance.monitor": "garage.monitor.read", "garage-attendance.monitor.cards": "garage.monitor-cards.read",
-    "garage-attendance.monitor.matrix": "garage.monitor-matrix.read", "garage-attendance.queue": "garage.queue.read",
+    "garage-attendance.monitor.map": "garage.monitor-map.read", "garage-attendance.monitor.matrix": "garage.monitor-matrix.read", "garage-attendance.queue": "garage.queue.read",
     "garage-attendance.read": "garage.triage.read", "garage-attendance.service.update": "garage.triage.mark-service",
     "garage-call.cancel": "garage.call.cancel", "garage-call.create": "garage.call.create", "garage-call.read": "garage.call.read",
     "garage-service.create": "garage.service-catalogue.create", "garage-service.read": "garage.service-catalogue.read",
