@@ -1,26 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, FormProvider, useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
 import { Building2, CheckCircle2, CircleOff, CreditCard, Pencil, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react'
-import { can, OWNER } from '../features/access'
+import { can, has, isPlatform } from '../features/access'
 import { useDispatch, useSelector } from 'react-redux'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { localeCountryCode } from '../i18n'
 import type { AppDispatch, RootState } from '../store'
-import { clearCities, loadCities, loadPlans, loadProvinces, loadTenants, loadUsers } from '../store'
+import { loadPlans, loadTenants, loadUsers } from '../store'
 import { fetchPlan, fetchSubscription, fetchTenant, fetchUser, removePlan, saveBusinessPlan, saveManagedUser, saveSubscription, saveTenant, sendUserInvite, toggleUser } from '../features/managementSlice'
 import type { BusinessPlan, Tenant, User } from '../types'
 import type { ColumnDef } from '@tanstack/react-table'
 import { DataTable, Pagination } from '../components/DataTable'
 import { usePagedList } from '../usePagedList'
 import { Combobox } from '../components/Combobox'
+import { AddressFields } from '../components/organisms/AddressFields'
+import { TaxIdField } from '../components/molecules/TaxIdField'
+import { digitsOnly, isValidCnpj, maskPhone } from '../features/masks'
 import { Confirm, Empty, Form, Loading, PageHeader, SearchBox } from '../components/UI'
-import { canCreateUsers, tenantOwnerCreatableRoles } from '../features/routeAccess'
-import { UserProfilePicker } from './ProfilePages'
+import { canCreateTenants, canCreateUsers, canManageSubscription } from '../features/routeAccess'
+import { fetchAccessOptions } from '../features/profileSlice'
+import type { AccessProfile, Permission } from '../types'
+import { UserAccessFields, UserProfilePicker } from './ProfilePages'
 
-export { canCreateUsers, canManageProfiles, canManageTenant, canReachAdministration, canSeeProfiles, canSeeTenants, canSeeUsers, tenantOwnerCreatableRoles } from '../features/routeAccess'
+export { canCreateUsers, canSeeProfiles, canSeeTenants, canSeeUsers } from '../features/routeAccess'
 
 const money = (cents: number, locale: string) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'BRL' }).format(cents / 100)
 // EPIC-BO-03-S02 (HRMS-412): the API's unit is integer cents, but a person
@@ -35,7 +40,7 @@ const blankPlan: BusinessPlan = { name: '', priceInCents: 0, pricePerExtraUserIn
 export function TenantsPage() {
   const { t } = useTranslation(); const { tenants, loading } = useSelector((s: RootState) => s.data); const session = useSelector((s: RootState) => s.auth.session)!
   const { search, setSearch, onPageChange, reload } = usePagedList(loadTenants)
-  return <><PageHeader title={t('tenants')} subtitle={session.role === 'SysAdmin' ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{session.role === 'SysAdmin' && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.items.length ? <Loading /> : !tenants.items.length ? <Empty /> : <><div className="tenant-grid">{tenants.items.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.uuid && <Link to={`/tenants/${tenant.uuid}/edit`}><Pencil size={15} />{t('edit')}</Link>}{tenant.uuid && can(session, 'tenant-rule-settings.update', OWNER) && <Link to={`/tenants/${tenant.uuid}/manage`}><Settings size={15} />{t('manage')}</Link>}{tenant.uuid && can(session, 'tenant-rule-settings.update', OWNER) && <Link to={`/tenants/${tenant.uuid}/tracking`}><Settings size={15} />{t('trackingSettings')}</Link>}{session.role === 'SysAdmin' && tenant.uuid && <Link to={`/tenants/${tenant.uuid}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div><Pagination page={tenants} onPageChange={onPageChange} /></>}</>
+  return <><PageHeader title={t('tenants')} subtitle={isPlatform(session) ? t('sysSummary') : t('ownerSummary')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{canCreateTenants(session) && <Link className="btn primary" to="/tenants/new"><Plus size={17} />{t('newTenant')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} /></div>{loading && !tenants.items.length ? <Loading /> : !tenants.items.length ? <Empty /> : <><div className="tenant-grid">{tenants.items.map((tenant) => <article className="tenant-card" key={tenant.id}><div className="tenant-card-head"><span><Building2 /></span></div><h3>{tenantName(tenant)}</h3><p>{tenant.businessName}</p><dl><div><dt>{t('taxId')}</dt><dd>{tenant.taxId}</dd></div><div><dt>{t('email')}</dt><dd>{tenant.email || '—'}</dd></div><div><dt>{t('city')}</dt><dd>{[tenant.locality, tenant.administrativeArea].filter(Boolean).join(' · ') || '—'}</dd></div></dl><footer>{tenant.uuid && <Link to={`/tenants/${tenant.uuid}/edit`}><Pencil size={15} />{t('edit')}</Link>}{tenant.uuid && can(session, 'tenant-rule-settings.update') && <Link to={`/tenants/${tenant.uuid}/manage`}><Settings size={15} />{t('manage')}</Link>}{tenant.uuid && can(session, 'tenant-rule-settings.update') && <Link to={`/tenants/${tenant.uuid}/tracking`}><Settings size={15} />{t('trackingSettings')}</Link>}{canManageSubscription(session) && tenant.uuid && <Link to={`/tenants/${tenant.uuid}/subscription`}><CreditCard size={15} />{t('subscription')}</Link>}</footer></article>)}</div><Pagination page={tenants} onPageChange={onPageChange} /></>}</>
 }
 
 export function TenantEditorPage() {
@@ -47,7 +52,6 @@ export function TenantEditorPage() {
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
   const { t, i18n } = useTranslation()
-  const { provinces, cities } = useSelector((s: RootState) => s.data)
   const localeCountry = localeCountryCode(i18n.resolvedLanguage || i18n.language)
   const [loading, setLoading] = useState(Boolean(id))
   const [saving, setSaving] = useState(false)
@@ -64,51 +68,25 @@ export function TenantEditorPage() {
     website: yup.string().url(t('genericError')).optional(),
     countryCode: yup.string().oneOf(['BR', 'US']).required(t('genericError')),
   })
-  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<Tenant>({ resolver: yupResolver(schema) as never, defaultValues: blankTenant() })
+  const form = useForm<Tenant>({ resolver: yupResolver(schema) as never, defaultValues: blankTenant() })
+  const { control, register, handleSubmit, reset, watch, formState: { errors: validationErrors } } = form
   const countryCode = watch('countryCode') || ''
-  const administrativeArea = watch('administrativeArea') || ''
 
   useEffect(() => {
-    if (!id) {
-      dispatch(loadProvinces(countryCode || localeCountry))
-      return
-    }
+    if (!id) return
     setLoading(true)
     dispatch(fetchTenant(id)).unwrap()
-      .then((data) => {
-        const country = data.countryCode || localeCountry
-        reset({ ...data, countryCode: country })
-        dispatch(loadProvinces(country))
-      })
+      .then((data) => reset({ ...data, countryCode: data.countryCode || localeCountry }))
       .catch(() => setError(t('loadError')))
       .finally(() => setLoading(false))
   }, [dispatch, id, localeCountry, reset, t])
-
-  useEffect(() => {
-    if (!administrativeArea) {
-      dispatch(clearCities())
-      return
-    }
-    const province = provinces.find(
-      (item) => item.acronym === administrativeArea || item.name === administrativeArea
-    )
-    if (province) {
-      dispatch(loadCities(province.id))
-    }
-  }, [dispatch, administrativeArea, provinces])
-
-  const handleCountryChange = (selectedCountry: string) => {
-    setValue('administrativeArea', '')
-    setValue('locality', '')
-    dispatch(clearCities())
-    dispatch(loadProvinces(selectedCountry))
-  }
 
   const save = handleSubmit(async (tenant) => {
     setSaving(true)
     setError('')
     try {
-      await dispatch(saveTenant({ uuid: id, tenant })).unwrap()
+      // Masks are presentation: the document, the phone and the postal code travel and are stored as digits only.
+      await dispatch(saveTenant({ uuid: id, tenant: { ...tenant, taxId: digitsOnly(tenant.taxId || ''), phone: digitsOnly(tenant.phone || ''), postalCode: digitsOnly(tenant.postalCode || '') } })).unwrap()
       navigate('/tenants')
     } catch (cause) {
       setError(String(cause || t('genericError')))
@@ -123,97 +101,29 @@ export function TenantEditorPage() {
     <>
       <PageHeader title={id ? t('editTenant') : t('newTenant')} />
       <section className="page-form-card">
-        <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
-          <div className="tenant-form-row tenant-business-row">
-            <label>{t('businessName')}<input required {...register('businessName')} /></label>
-          </div>
-          <div className="tenant-form-row tenant-tax-row">
-            <label>
-              {countryCode === 'US' ? t('taxIdEin') : t('taxIdCnpj')}
-              <Controller control={control} name="taxId" render={({ field }) => <input id="tenant-tax-id" required inputMode="numeric" autoComplete="off" maxLength={countryCode === 'BR' ? 18 : 10} value={maskTaxId(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskTaxId(event.target.value, countryCode))} ref={field.ref} />} />
-              {validationErrors.taxId?.message && <small className="field-error" role="alert">{validationErrors.taxId.message}</small>}
-            </label>
-            <label>{t('companyName')}<input required {...register('companyName')} /></label>
-          </div>
-          <div className="tenant-form-row tenant-contact-row">
-            <label>{t('phone')}<Controller control={control} name="phone" render={({ field }) => <input type="tel" autoComplete="tel" value={maskPhone(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskPhone(event.target.value, countryCode))} ref={field.ref} />} /></label>
-            <label>{t('email')}<input type="email" autoComplete="email" {...register('email')} /></label>
-            <label>{t('website')}<input type="url" {...register('website')} /></label>
-          </div>
-          <div className="tenant-form-row tenant-address-row">
-            <label>{t('address')}<input autoComplete="address-line1" {...register('addressLine1')} /></label>
-          </div>
-          <div className="tenant-form-row tenant-complement-row">
-            <label>{t('address2')}<input autoComplete="address-line2" {...register('addressLine2')} /></label>
-            <label>{t('postalCode')}<Controller control={control} name="postalCode" render={({ field }) => <input autoComplete="postal-code" inputMode="numeric" maxLength={countryCode === 'BR' ? 9 : 10} value={maskPostalCode(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskPostalCode(event.target.value, countryCode))} ref={field.ref} />} /></label>
-          </div>
-          <div className="tenant-form-row tenant-location-row">
-            <div className="tenant-country-field">
-              <span className="tenant-field-label">{t('country')}</span>
-              <div className="radio-group" role="radiogroup" aria-label={t('country')}>
-                <label className="radio-option"><input type="radio" value="BR" aria-label={t('countryBrazil')} {...register('countryCode', { onChange: (event) => handleCountryChange(event.target.value) })} /><span aria-hidden="true">🇧🇷</span><span>{t('countryBrazil')}</span></label>
-                <label className="radio-option"><input type="radio" value="US" aria-label={t('countryUnitedStates')} {...register('countryCode', { onChange: (event) => handleCountryChange(event.target.value) })} /><span aria-hidden="true">🇺🇸</span><span>{t('countryUnitedStates')}</span></label>
-              </div>
+        <FormProvider {...form}>
+          <Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/tenants')}>
+            <div className="form-row tenant-business-row">
+              <label>{t('businessName')}<input required {...register('businessName')} /></label>
             </div>
-            <label>{t('province')}<Controller control={control} name="administrativeArea" render={({ field }) => <Combobox filterable disabled={!countryCode || !provinces.length} ariaLabel={t('province')} value={field.value || null} options={provinces.map((province) => ({ value: province.acronym, label: `${province.name} (${province.acronym})` }))} onChange={(value) => { field.onChange(value || ''); setValue('locality', ''); if (!value) dispatch(clearCities()) }} />} /></label>
-            <label>{t('city')}<Controller control={control} name="locality" render={({ field }) => <Combobox filterable disabled={!administrativeArea || !cities.length} ariaLabel={t('city')} value={field.value || null} options={cities.map((city) => ({ value: city.name, label: city.name }))} onChange={(value) => field.onChange(value || '')} />} /></label>
-          </div>
-        </Form>
+            <div className="form-row tenant-tax-row">
+              <TaxIdField control={control} name="taxId" id="tenant-tax-id" required kind="company" countryCode={countryCode} label={countryCode === 'US' ? t('taxIdEin') : t('taxIdCnpj')} error={validationErrors.taxId?.message} />
+              <label>{t('companyName')}<input required {...register('companyName')} /></label>
+            </div>
+            <div className="form-row tenant-contact-row">
+              <label>{t('phone')}<Controller control={control} name="phone" render={({ field }) => <input type="tel" autoComplete="tel" value={maskPhone(field.value || '', countryCode)} onBlur={field.onBlur} onChange={(event) => field.onChange(maskPhone(event.target.value, countryCode))} ref={field.ref} />} /></label>
+              <label>{t('email')}<input type="email" autoComplete="email" {...register('email')} /></label>
+              <label>{t('website')}<input type="url" {...register('website')} /></label>
+            </div>
+            <AddressFields />
+          </Form>
+        </FormProvider>
       </section>
     </>
   )
 }
 
-const digitsOnly = (value: string) => value.replace(/\D/g, '')
-
-export const maskCnpj = (value: string) => {
-  const digits = digitsOnly(value).slice(0, 14)
-  return digits
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2')
-}
-
-export const isValidCnpj = (value: string) => {
-  const digits = digitsOnly(value)
-  if (digits.length !== 14 || /^([0-9])\1+$/.test(digits)) return false
-  const checkDigit = (base: string, weights: number[]) => {
-    const sum = [...base].reduce((total, digit, index) => total + Number(digit) * weights[index], 0)
-    const remainder = sum % 11
-    return remainder < 2 ? 0 : 11 - remainder
-  }
-  const first = checkDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-  const second = checkDigit(digits.slice(0, 12) + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-  return digits.endsWith(`${first}${second}`)
-}
-
-export const maskTaxId = (value: string, countryCode: string) => {
-  const digits = digitsOnly(value).slice(0, countryCode === 'BR' ? 14 : 9)
-  return countryCode === 'BR' ? maskCnpj(digits) : digits.replace(/^(\d{2})(\d)/, '$1-$2')
-}
-
-export const maskPhone = (value: string, countryCode: string) => {
-  let digits = digitsOnly(value)
-  if (countryCode === 'US') {
-    if (digits.length > 10 && digits.startsWith('1')) digits = digits.slice(1)
-    digits = digits.slice(0, 10)
-    if (digits.length <= 3) return digits ? `(${digits}` : ''
-    if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
-    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-  }
-  digits = digits.slice(0, 11)
-  if (digits.length <= 2) return digits ? `(${digits}` : ''
-  const subscriber = digits.slice(2)
-  if (subscriber.length <= 4) return `(${digits.slice(0, 2)}) ${subscriber}`
-  const split = subscriber.length > 8 ? 5 : 4
-  return `(${digits.slice(0, 2)}) ${subscriber.slice(0, split)}-${subscriber.slice(split)}`
-}
-
-export const maskPostalCode = (value: string, countryCode: string) => {
-  const digits = digitsOnly(value).slice(0, countryCode === 'BR' ? 8 : 9)
-  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
-}
+export { isValidCnpj, maskCnpj, maskPhone, maskPostalCode, maskTaxId } from '../features/masks'
 export function SubscriptionPage() {
   // DEF-BO-03: `/business-plan` returns PD-028's page envelope, not a bare
   // array. Reading it as an array made `plans.flatMap` throw and -- with no
@@ -263,30 +173,46 @@ export function UsersPage() {
   const toggle = async () => { if (!confirming?.uuid) return; if (confirming.id === session.userId) { setError(t('selfDeactivate')); setConfirming(null); return } try { await dispatch(toggleUser({ user: confirming, enabled: !confirming.enabled })).unwrap(); setConfirming(null); reload() } catch (cause) { setError(String(cause || t('genericError'))) } }
   const columns = useMemo<ColumnDef<User, unknown>[]>(() => [
     { header: () => t('name'), accessorKey: 'name', cell: ({ row }) => <><b>{row.original.name || '—'}</b><small>{row.original.email}</small></> },
-    { header: () => t('role'), accessorKey: 'role', cell: ({ row }) => <span className="badge blue">{t(`role${row.original.role}`)}</span> },
+    { header: () => t('profile'), accessorKey: 'profileName', cell: ({ row }) => <><span className="badge blue">{row.original.profileKey ? t(`profile${row.original.profileKey}`) : row.original.profileName || '—'}</span>{row.original.extraPermissions?.length > 0 && <small>{t('extraPermissionsCount', { count: row.original.extraPermissions.length })}</small>}</> },
     { id: 'tenant', header: () => t('tenant'), cell: ({ row }) => getTenantName(row.original.tenantId) },
     { header: () => t('status'), accessorKey: 'enabled', cell: ({ row }) => <span className={`badge ${row.original.enabled ? 'green' : 'gray'}`}>{row.original.enabled ? <CheckCircle2 size={13} /> : <CircleOff size={13} />}{row.original.enabled ? t('active') : t('inactive')}</span> },
     { id: 'actions', header: () => t('actions'), cell: ({ row }) => <div className="row-actions">{row.original.uuid && <Link to={`/users/${row.original.uuid}/edit`}><Pencil size={16} /></Link>}<button className={row.original.enabled ? 'danger-text' : 'success-text'} disabled={row.original.id === session.userId} onClick={() => setConfirming(row.original)}>{row.original.enabled ? <CircleOff size={16} /> : <CheckCircle2 size={16} />}</button></div> },
   ], [t, tenants, session.userId])
-  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{canCreateUsers(session.role) && <Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={users} loading={loading} onPageChange={onPageChange} />{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
+  return <><PageHeader title={t('users')} actions={<><button className="btn secondary" onClick={reload}><RefreshCw size={16} />{t('refresh')}</button>{canCreateUsers(session) && <Link className="btn primary" to="/users/new"><Plus size={17} />{t('newUser')}</Link>}</>} /><div className="toolbar"><SearchBox value={search} onChange={setSearch} />{error && <span className="inline-error">{error}</span>}</div><DataTable columns={columns} page={users} loading={loading} onPageChange={onPageChange} />{confirming && <Confirm title={t('deactivateTitle')} text={t('deactivateText')} onCancel={() => setConfirming(null)} onConfirm={toggle} />}</>
 }
 
 export function UserEditorPage() {
   const { uuid } = useParams(); const navigate = useNavigate(); const dispatch = useDispatch<AppDispatch>(); const { t } = useTranslation(); const tenants = useSelector((s: RootState) => s.data.tenants); const session = useSelector((s: RootState) => s.auth.session)!
-  // PD-019: a tenant owner creates tenant users in their own tenant only --
-  // a platform administrator creates tenants and tenant owners, never a
-  // tenant user directly (EPIC-IA-04).
-  const [loading, setLoading] = useState(Boolean(uuid)); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  // C-035: a user is created with an access profile. The platform hands out Platform profiles (the user gets no
+  // tenant) and Tenant profiles (the platform names the tenant); a tenant caller hands out Tenant profiles inside
+  // their own tenant only -- so the tenant picker is the platform's alone.
+  const platform = isPlatform(session)
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
   const [inviting, setInviting] = useState(false); const [invited, setInvited] = useState(false)
-  const schema = yup.object({ name: yup.string().required(t('genericError')), email: yup.string().email(t('genericError')).required(t('genericError')), role: yup.mixed<User['role']>().oneOf(['SysAdmin', 'TenantOwner', 'TenantUser', 'Driver', 'Mechanic']).required(t('genericError')), enabled: yup.boolean().required(), tenantId: yup.number().nullable().optional(), cpf: yup.string().optional(), principalFunction: yup.string().optional() })
-  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<User>({ resolver: yupResolver(schema) as never, defaultValues: { name: '', email: '', enabled: true, role: session.role === 'TenantOwner' ? 'TenantUser' : 'TenantOwner', tenantId: session.role === 'TenantOwner' ? session.tenantId : null } })
-  const role = watch('role')
+  const [profiles, setProfiles] = useState<AccessProfile[]>([]); const [catalogue, setCatalogue] = useState<Permission[]>([])
+  const schema = yup.object({ name: yup.string().required(t('genericError')), email: yup.string().email(t('genericError')).required(t('genericError')), enabled: yup.boolean().required(), tenantId: yup.number().nullable().optional(), cpf: yup.string().nullable().optional(),
+    profileUuid: uuid ? yup.string().optional() : yup.string().required(t('profileRequired')), extraPermissions: yup.array().of(yup.string().required()).required() })
+  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<User>({ resolver: yupResolver(schema) as never, defaultValues: { name: '', email: '', enabled: true, tenantId: platform ? null : session.tenantId, extraPermissions: [] } })
+  const profileUuid = watch('profileUuid') ?? null
+  const extraPermissions = watch('extraPermissions') ?? []
   const selectedTenantId = watch('tenantId')
+  const selectedProfile = profiles.find((p) => p.uuid === profileUuid)
+  const tenantless = selectedProfile?.scope === 'Platform'
   // O seletor de tenant precisa das opções, não de uma página: pede um lote
   // grande em vez de paginar um <select>.
-  useEffect(() => { dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch])
-  useEffect(() => { if (!uuid) return; dispatch(fetchUser(uuid)).unwrap().then((user) => reset(user)).catch(() => setError(t('loadError'))).finally(() => setLoading(false)) }, [dispatch, reset, uuid, t])
-  useEffect(() => { if (!uuid && session.role === 'SysAdmin' && role === 'TenantOwner' && !selectedTenantId && tenants.items[0]?.id) setValue('tenantId', tenants.items[0].id) }, [role, selectedTenantId, setValue, uuid, session.role, tenants])
+  useEffect(() => { if (platform) dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch, platform])
+  useEffect(() => {
+    const load = uuid
+      ? dispatch(fetchUser(uuid)).unwrap().then((user) => reset(user))
+      : dispatch(fetchAccessOptions()).unwrap().then(({ profiles: available, catalogue: permissions }) => { setProfiles(available); setCatalogue(permissions) })
+    load.catch(() => setError(t('loadError'))).finally(() => setLoading(false))
+  }, [dispatch, reset, uuid, t])
+  // A Tenant profile handed out by the platform needs a tenant; the first one stands in until the operator picks.
+  useEffect(() => { if (!uuid && platform && selectedProfile && !tenantless && !selectedTenantId && tenants.items[0]?.id) setValue('tenantId', tenants.items[0].id) }, [platform, selectedProfile, tenantless, selectedTenantId, setValue, uuid, tenants])
+  const chooseProfile = (value: string | null, profile: AccessProfile | undefined) => {
+    setValue('profileUuid', value ?? undefined, { shouldDirty: true, shouldValidate: true }); setValue('extraPermissions', [], { shouldDirty: true })
+    if (platform) setValue('tenantId', profile?.scope === 'Platform' ? null : selectedTenantId || tenants.items[0]?.id || null)
+  }
   // EPIC-IA-07/D-07: `PUT /user/uuid/{uuid}` discards any password it is sent,
   // so the old "new password" field promised a reset that silently did nothing.
   // Re-issuing the invitation is the action the API actually offers, so that
@@ -299,5 +225,14 @@ export function UserEditorPage() {
   // password field on this form would offer a control the API no longer
   // honours (exactly what PD-015/EPIC-BO-06 warns against), on creation and
   // on edit alike, so neither has one.
-  return <><PageHeader title={uuid ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}><label className="span-2">{t('name')}<input required {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label><label className="span-2">{t('email')}<input type="email" required {...register('email')} />{validationErrors.email?.message && <small className="form-error">{validationErrors.email.message}</small>}</label>{uuid ? <div className="span-2 form-hint invite-hint"><span>{invited ? t('inviteSent') : t('resendInviteHint')}</span><button type="button" className="btn tertiary" disabled={inviting} onClick={resendInvite}><RefreshCw size={15} />{inviting ? t('sending') : t('resendInvite')}</button></div> : <p className="span-2 form-hint">{t('inviteNotice')}</p>}{session.role === 'SysAdmin' && <><label>{t('role')}<Controller control={control} name="role" render={({ field }) => <Combobox value={field.value} options={[{ value: 'TenantOwner', label: t('roleTenantOwner') }, { value: 'SysAdmin', label: t('roleSysAdmin') }]} onChange={(value) => { if (!value) return; field.onChange(value); setValue('tenantId', value === 'SysAdmin' ? null : selectedTenantId || tenants.items[0]?.id || null) }} />} /></label><label>{t('tenant')}<Controller control={control} name="tenantId" render={({ field }) => <Combobox filterable disabled={role === 'SysAdmin'} value={field.value || null} options={tenants.items.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={field.onChange} />} /></label></>}{session.role === 'TenantOwner' && !uuid && <label className="span-2">{t('role')}<Controller control={control} name="role" render={({ field }) => <Combobox value={field.value} options={tenantOwnerCreatableRoles.map((availableRole) => ({ value: availableRole, label: t(`role${availableRole}`) }))} onChange={field.onChange} />} /></label>}{session.role === 'TenantOwner' && <><label>{t('cpf')}<input inputMode="numeric" {...register('cpf')} /></label><label>{t('principalFunction')}<input {...register('principalFunction')} /></label></>}<label className="checkbox span-2"><Controller control={control} name="enabled" render={({ field }) => <input type="checkbox" checked={field.value} onChange={field.onChange} />} />{t('active')}</label>{uuid && session.role === 'TenantOwner' && <UserProfilePicker userUuid={uuid} role={role} />}</Form></section></>
+  return <><PageHeader title={uuid ? t('editUser') : t('newUser')} /><section className="page-form-card narrow"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/users')}>
+    <label className="span-2">{t('name')}<input required {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label>
+    <label className="span-2">{t('email')}<input type="email" required {...register('email')} />{validationErrors.email?.message && <small className="form-error">{validationErrors.email.message}</small>}</label>
+    {uuid ? <div className="span-2 form-hint invite-hint"><span>{invited ? t('inviteSent') : t('resendInviteHint')}</span><button type="button" className="btn tertiary" disabled={inviting} onClick={resendInvite}><RefreshCw size={15} />{inviting ? t('sending') : t('resendInvite')}</button></div> : <p className="span-2 form-hint">{t('inviteNotice')}</p>}
+    {platform && <label className="span-2">{t('tenant')}<Controller control={control} name="tenantId" render={({ field }) => <Combobox filterable ariaLabel={t('tenant')} disabled={tenantless} value={field.value || null} options={tenants.items.flatMap((tenant) => tenant.id ? [{ value: tenant.id, label: tenantName(tenant) }] : [])} onChange={field.onChange} />} />{tenantless && <small className="form-hint">{t('platformProfileNoTenant')}</small>}</label>}
+    {!platform && <label>{t('cpf')}<input inputMode="numeric" {...register('cpf')} /></label>}
+    <label className="checkbox span-2"><Controller control={control} name="enabled" render={({ field }) => <input type="checkbox" checked={field.value} onChange={field.onChange} />} />{t('active')}</label>
+    {!uuid && <UserAccessFields profiles={profiles} catalogue={catalogue} profileUuid={profileUuid} extraPermissions={extraPermissions} onProfileChange={chooseProfile} onExtrasChange={(grants) => setValue('extraPermissions', grants, { shouldDirty: true })} error={validationErrors.profileUuid?.message} />}
+    {uuid && has(session, 'profile.read') && <UserProfilePicker userUuid={uuid} />}
+  </Form></section></>
 }

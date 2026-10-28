@@ -12,7 +12,7 @@ use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
-use business::domain::authorization::{can_access_tenant, can_manage_business_plan_catalogue, can_read_tenant_configuration};
+use business::domain::authorization::{can_access_tenant, can_manage_business_plan_catalogue, can_read_billing};
 use business::domain::billing::{BillingCharge, TenantBilling};
 use business::domain::user::User;
 use business::gateway::billing_gateway::BillingGateway;
@@ -102,7 +102,7 @@ pub async fn charges(
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<BillingChargeJson>>> {
-    if !can_read_tenant_configuration(&user) {
+    if !can_read_billing(&user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::BillingForbidden));
     }
     let page = query.page();
@@ -171,7 +171,7 @@ pub async fn get_settings(
     Extension(user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<BillingSettingsJson>> {
-    if !can_read_tenant_configuration(&user) {
+    if !can_read_billing(&user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::BillingForbidden));
     }
     let tenant = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()))

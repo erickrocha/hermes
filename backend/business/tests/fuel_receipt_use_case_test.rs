@@ -1,9 +1,10 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{FuelEntryOrigin, Role, VehicleStatus};
+use business::domain::enums::{FuelEntryOrigin, VehicleStatus};
 use business::domain::fuel_entry::FuelEntry;
 use business::domain::km_evolution::KmEvolution;
 use business::domain::tenant_rule_setting::TenantRuleSetting;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER};
 use business::domain::vehicle::Vehicle;
 use business::gateway::fuel_entry_gateway::FuelEntryStore;
 use business::gateway::km_evolution_gateway::KmEvolutionStore;
@@ -263,9 +264,10 @@ fn driver() -> User {
         password: "hash".into(),
         enabled: true,
         tenant_id: Some(42),
-        role: Role::Driver,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(DRIVER).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,

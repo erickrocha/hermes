@@ -1,7 +1,7 @@
 use business::domain::business_error::BusinessError;
 use business::domain::daily_schedule::DailySchedule;
-use business::domain::enums::Role;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER, TENANT_USER};
 use business::domain::vehicle::Vehicle;
 use business::gateway::daily_schedule_gateway::{DailyScheduleStore, DailyScheduleStoreError};
 use business::gateway::user_gateway::UserLookupStore;
@@ -131,7 +131,7 @@ fn store(duplicate: bool, existing: Option<DailySchedule>) -> MemoryScheduleStor
     }
 }
 
-fn user(role: Role) -> User {
+fn user(profile_key: &str) -> User {
     User {
         id: Some(5),
         uuid: Some("driver-5".into()),
@@ -140,9 +140,10 @@ fn user(role: Role) -> User {
         password: String::new(),
         enabled: true,
         tenant_id: Some(42),
-        role,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(profile_key).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -175,7 +176,7 @@ async fn a_non_driver_is_rejected_before_vehicle_lookup_or_write() {
     let use_case = DailyScheduleUseCase::new(
         schedules,
         MemoryUsers {
-            user: Some(user(Role::TenantUser)),
+            user: Some(user(TENANT_USER)),
         },
         NoVehicles,
     );
@@ -194,7 +195,7 @@ async fn a_driver_with_no_tenant_vehicle_is_rejected_before_write() {
     let use_case = DailyScheduleUseCase::new(
         schedules,
         MemoryUsers {
-            user: Some(user(Role::Driver)),
+            user: Some(user(DRIVER)),
         },
         NoVehicles,
     );
@@ -213,7 +214,7 @@ async fn a_valid_driver_and_vehicle_create_the_schedule_entry() {
     let use_case = DailyScheduleUseCase::new(
         schedules,
         MemoryUsers {
-            user: Some(user(Role::Driver)),
+            user: Some(user(DRIVER)),
         },
         MemoryVehicles(Some(vehicle())),
     );
@@ -231,7 +232,7 @@ async fn duplicate_schedule_entries_are_mapped_to_a_domain_error() {
     let use_case = DailyScheduleUseCase::new(
         store(true, None),
         MemoryUsers {
-            user: Some(user(Role::Driver)),
+            user: Some(user(DRIVER)),
         },
         MemoryVehicles(Some(vehicle())),
     );

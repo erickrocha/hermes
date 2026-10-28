@@ -30,6 +30,22 @@ describe('resource screens', () => {
     expect(screen.queryByRole('link', { name: /new customer|novo cliente|nuevo cliente/i })).toBeNull()
   })
 
+  it('lists customers with the legal name and the document masked by the row country', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(page([
+      { uuid: 'c1', name: 'Acme', legalName: 'Acme Ltda', taxId: '11222333000181', countryCode: 'BR', status: 'Active' },
+      { uuid: 'c2', name: 'Jo', taxId: '52998224725', status: 'Active' },
+      { uuid: 'c3', name: 'US Co', taxId: '123456789', countryCode: 'US', status: 'Active' },
+    ]))
+    signIn('TenantOwner')
+    renderPage(<ResourceListRoute config={config('customers')} />)
+    expect(await screen.findByText('Acme Ltda')).toBeInTheDocument()
+    expect(screen.getByText('11.222.333/0001-81')).toBeInTheDocument()
+    expect(screen.getByText('529.982.247-25')).toBeInTheDocument()
+    expect(screen.getByText('12-3456789')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /trade name|nome fantasia|nombre de fantasía/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /new customer|novo cliente|nuevo cliente/i })).toHaveAttribute('href', '/customers/new')
+  })
+
   it('removes a holiday only after the confirmation', async () => {
     vi.spyOn(api, 'get').mockResolvedValue(page([{ uuid: 'h1', date: '2026-12-25', name: 'Christmas' }]))
     const del = vi.spyOn(api, 'delete').mockResolvedValue({ data: {} } as never)

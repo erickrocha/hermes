@@ -62,7 +62,12 @@ LATER = [("PUT", "/checklist-template/uuid/{uuid}/default", "checklist-template.
          ("GET", "/non-execution/work-order/uuid/{uuid}", "non-execution.read"),
          ("PUT", "/non-execution/occurrence/uuid/{uuid}/justify", "non-execution.justify"),
          ("POST", "/non-execution/manual", "non-execution.record-manual"),
-         ("POST", "/non-execution/evaluate", "non-execution.evaluate")]
+         ("POST", "/non-execution/evaluate", "non-execution.evaluate"),
+         # C-033: the garage monitors' device credentials (HRMS-418), formerly owner-only by role.
+         ("GET", "/garage-device", "garage.device.manage"),
+         ("POST", "/garage-device/pairing-code", "garage.device.manage"),
+         ("POST", "/garage-device/uuid/{uuid}/pairing-code", "garage.device.manage"),
+         ("DELETE", "/garage-device/uuid/{uuid}", "garage.device.manage")]
 table = list(PROFILE) + COST + BILLING + GARAGE + LATER
 for line in open(os.path.join(ROOT, "access-model_permission_inventory.md"), encoding="utf-8"):
     m = re.match(r"\| `([^`]+)` \| (.+?) \| ", line)

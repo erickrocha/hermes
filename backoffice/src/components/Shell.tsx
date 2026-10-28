@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../store'
+import type { Session } from '../types'
 import { loadCurrentTenant, loadPermissions, logout } from '../store'
 import { Breadcrumbs } from './UI'
 import { LanguagePicker } from './LanguagePicker'
@@ -11,7 +12,12 @@ import { ThemePicker } from './ThemePicker'
 import { applyThemeByName, getStoredTheme } from '../theme'
 import { NotificationBell } from './molecules/NotificationBell'
 import { operationNav } from '../features/navigation'
-import { canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from '../features/routeAccess'
+import { canSeeBilling, canSeeCosts, canSeePlans, canSeeProfiles, canSeeReferenceData, canSeeTenants, canSeeUsers } from '../features/routeAccess'
+import { isPlatform } from '../features/access'
+
+/// The topbar names the held profile: a system profile is translated by key, a custom one shows its own name.
+export const profileLabel = (session: Session, t: (key: string) => string) =>
+  session.profileKey ? t(`profile${session.profileKey}`) : session.profileName || t(`scope${session.scope}`)
 
 const Logo = () => <div className="brand"><span className="brand-mark"><ShieldCheck size={21} /></span><span><b>hermes</b><small>BACKOFFICE</small></span></div>
 
@@ -29,7 +35,7 @@ export function Shell({ children }: { children: ReactNode }) {
   // theme. DEF-BO-02: the tenant is fetched here for its own sake instead of
   // being picked out of whatever tenant list some other screen happened to
   // load -- that made the identity appear only by accident, and not at all
-  // once the dashboard stopped listing tenants (DEF-BO-07). A SysAdmin has no
+  // once the dashboard stopped listing tenants (DEF-BO-07). A platform actor has no
   // tenant of their own, so they keep the vendor's default identity.
   useEffect(() => { if (session.tenantUuid) dispatch(loadCurrentTenant(session.tenantUuid)) }, [dispatch, session.tenantUuid])
   useEffect(() => { applyThemeByName(getStoredTheme()) }, [])
@@ -38,15 +44,15 @@ export function Shell({ children }: { children: ReactNode }) {
   const links: { to: string; label: string; icon: LucideIcon; group?: string }[] = [
     { to: '/home', label: t('dashboard'), icon: Gauge },
     ...(canSeeTenants(session) ? [{ to: '/tenants', label: t('tenants'), icon: Building2 }] : []),
-    ...(session.role === 'SysAdmin' ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
+    ...(canSeePlans(session) ? [{ to: '/plans', label: t('plans'), icon: CreditCard }] : []),
     ...(canSeeUsers(session) ? [{ to: '/users', label: t('users'), icon: Users }] : []),
     ...operationNav.filter((item) => item.visible(session)).map((item) => ({ to: item.to, label: t(item.labelKey), icon: item.icon, group: item.groupKey })),
     ...(canSeeCosts(session) ? [{ to: '/costs', label: t('costs'), icon: Coins }] : []),
     ...(canSeeBilling(session) ? [{ to: '/billing', label: t('billing'), icon: Receipt }] : []),
     ...(canSeeProfiles(session) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
-    // de planos -- só o SysAdmin desacoplado de tenant administra.
-    ...(session.role === 'SysAdmin' ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),
+    // de planos -- só quem tem alcance de plataforma administra.
+    ...(canSeeReferenceData(session) ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),
   ]
   const leave = () => { dispatch(logout()); navigate('/login') }
   return <div className="app-shell">
@@ -73,7 +79,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="app-main">
       <header className="topbar">
         <button className="menu-button" onClick={() => setMobile(true)} aria-label={t('menu')}><Menu /></button>
-        <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (session.role === 'SysAdmin' ? 'SysAdmin' : 'Hermes')}</span><small>{t(`role${session.role}`)}</small></div>
+        <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (isPlatform(session) ? t('platform') : 'Hermes')}</span><small>{profileLabel(session, t)}</small></div>
         <div className="topbar-actions">
           <NotificationBell session={session} />
           <ThemePicker />

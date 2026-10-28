@@ -7,12 +7,12 @@ import '../i18n'
 import { api } from '../api'
 import { emptyPage } from '../types'
 import type { BillingCharge, Session, Tenant } from '../types'
+import { sessionAs, type SystemProfileKey } from '../test/session'
 import { billingReducer } from '../features/billingSlice'
 import { BillingPage, canSeeBilling } from './BillingPage'
 
-const session = (role: Session['role'], tenantUuid: string | null = null): Session => ({
-  accessToken: 'token', tokenType: 'Bearer', expireIn: 3600, email: `${role.toLowerCase()}@hermes.test`,
-  uuid: `${role}-uuid`, name: role, userId: 1, role, tenantId: tenantUuid ? 42 : null, tenantUuid,
+const session = (profile: SystemProfileKey, tenantUuid: string | null = null): Session => sessionAs(profile, {
+  email: `${profile.toLowerCase()}@hermes.test`, uuid: `${profile}-uuid`, name: profile, userId: 1, tenantId: tenantUuid ? 42 : null, tenantUuid,
 })
 
 const pendingCharge: BillingCharge = {

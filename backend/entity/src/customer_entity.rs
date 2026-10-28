@@ -12,7 +12,18 @@ pub struct Model {
     #[sea_orm(unique)]
     pub uuid: Vec<u8>,
     pub tenant_id: Option<i64>,
+    /// The trade name -- what the office calls the customer.
     pub name: String,
+    /// `EPIC-SC-01-S04`: the registered legal name; a person has none.
+    pub legal_name: Option<String>,
+    /// `EPIC-SC-01-S04`: CPF or CNPJ, digits only, validated by `country_code`'s rule; unique per tenant.
+    pub tax_id: Option<String>,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub locality: Option<String>,
+    pub administrative_area: Option<String>,
+    pub postal_code: Option<String>,
+    pub country_code: Option<String>,
     /// Free text, like `vehicle.vehicle_type` (`C-023`): operacao-trm's
     /// `entity-inventory.md` names this field but states no vocabulary for
     /// it, so nothing here invents one.

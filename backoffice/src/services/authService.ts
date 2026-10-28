@@ -1,5 +1,5 @@
 import { api, normalizeSession, publicApi } from '../api'
-import type { Session } from '../types'
+import type { EffectiveProfile, Session } from '../types'
 
 export const login = async (credentials: { email: string; password: string }): Promise<Session> => {
   const body = new URLSearchParams(credentials)
@@ -7,8 +7,9 @@ export const login = async (credentials: { email: string; password: string }): P
   return normalizeSession(data) as Session
 }
 
-export const loadPermissions = async (): Promise<string[]> =>
-  (await api.get<{ permissions: string[] }>('/access-profile/mine')).data.permissions
+/// `GET /access-profile/mine`: the effective grants, refreshed after a profile or extras change took effect server-side.
+export const loadPermissions = async (): Promise<EffectiveProfile> =>
+  (await api.get<EffectiveProfile>('/access-profile/mine')).data
 
 export const changePassword = async (payload: { currentPassword: string; newPassword: string }): Promise<void> => {
   await api.put('/user/change-password', payload)

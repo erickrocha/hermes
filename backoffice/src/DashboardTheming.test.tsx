@@ -9,8 +9,9 @@ import { store } from './store'
 import { applyTheme } from './theme'
 import { emptyPage } from './types'
 import type { Session, Tenant } from './types'
+import { sessionAs } from './test/session'
 
-const owner: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42, tenantUuid: 'tenant-42-uuid' }
+const owner: Session = sessionAs('TenantOwner', { email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, tenantId: 42, tenantUuid: 'tenant-42-uuid' })
 const transmega: Tenant = { id: 42, uuid: 'tenant-42-uuid', businessName: 'Transmega Logística', companyName: 'Transmega', taxId: '11222333000181', email: '', phone: '', website: '', addressLine1: '', addressLine2: '', locality: '', administrativeArea: '', postalCode: '', countryCode: 'BR' }
 
 const renderDashboard = () => render(

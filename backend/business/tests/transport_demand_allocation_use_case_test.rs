@@ -1,7 +1,8 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{Role, VehicleStatus};
+use business::domain::enums::{VehicleStatus};
 use business::domain::transport_demand_allocation::TransportDemandAllocation;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER, TENANT_USER};
 use business::domain::vehicle::Vehicle;
 use business::gateway::transport_demand_allocation_gateway::TransportDemandAllocationStore;
 use business::gateway::user_gateway::UserLookupStore;
@@ -143,7 +144,7 @@ fn allocation() -> TransportDemandAllocation {
     }
 }
 
-fn driver(tenant_id: Option<i64>, role: Role) -> User {
+fn driver(tenant_id: Option<i64>, profile_key: &str) -> User {
     User {
         id: Some(7),
         uuid: Some("driver-7".into()),
@@ -152,9 +153,10 @@ fn driver(tenant_id: Option<i64>, role: Role) -> User {
         password: "hash".into(),
         enabled: true,
         tenant_id,
-        role,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(profile_key).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -207,7 +209,7 @@ fn use_case_with_store(
 
 #[tokio::test]
 async fn allocation_validates_and_stores_a_same_tenant_driver_and_vehicle() {
-    let created = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)))
+    let created = use_case(Some(driver(Some(42), DRIVER)), Some(vehicle(42)))
         .create(allocation())
         .await
         .expect("valid allocation is stored");
@@ -219,7 +221,7 @@ async fn allocation_validates_and_stores_a_same_tenant_driver_and_vehicle() {
 
 #[tokio::test]
 async fn allocation_rejects_a_user_who_is_not_an_active_same_tenant_driver() {
-    let error = use_case(Some(driver(Some(99), Role::TenantOwner)), Some(vehicle(42)))
+    let error = use_case(Some(driver(Some(99), TENANT_USER)), Some(vehicle(42)))
         .create(allocation())
         .await
         .expect_err("invalid driver is refused");
@@ -229,7 +231,7 @@ async fn allocation_rejects_a_user_who_is_not_an_active_same_tenant_driver() {
 
 #[tokio::test]
 async fn allocation_rejects_a_vehicle_from_another_tenant() {
-    let error = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(99)))
+    let error = use_case(Some(driver(Some(42), DRIVER)), Some(vehicle(99)))
         .create(allocation())
         .await
         .expect_err("cross-tenant vehicle is refused");
@@ -240,7 +242,7 @@ async fn allocation_rejects_a_vehicle_from_another_tenant() {
 #[tokio::test]
 async fn allocation_rejects_an_end_date_before_its_start_date_and_accepts_the_boundary_and_open_ended()
  {
-    let uc = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)));
+    let uc = use_case(Some(driver(Some(42), DRIVER)), Some(vehicle(42)));
 
     let mut inverted = allocation();
     inverted.end_date = NaiveDate::from_ymd_opt(2026, 9, 30);
@@ -272,7 +274,7 @@ async fn allocations_can_be_found_updated_and_paged() {
     let store = MemoryAllocationStore::default();
     let use_case = use_case_with_store(
         store,
-        Some(driver(Some(42), Role::Driver)),
+        Some(driver(Some(42), DRIVER)),
         Some(vehicle(42)),
     );
     let created = use_case.create(allocation()).await.unwrap();
@@ -297,7 +299,7 @@ async fn allocations_can_be_found_updated_and_paged() {
 
 #[tokio::test]
 async fn allocations_reject_unreadable_days_and_report_missing_rows() {
-    let use_case = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)));
+    let use_case = use_case(Some(driver(Some(42), DRIVER)), Some(vehicle(42)));
     let mut invalid = allocation();
     invalid.days_of_week = Some("Funday".into());
     assert_eq!(

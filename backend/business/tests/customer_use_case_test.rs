@@ -1,7 +1,7 @@
 use business::domain::business_error::BusinessError;
 use business::domain::customer::Customer;
 use business::gateway::customer_gateway::CustomerStore;
-use business::use_cases::customer_use_case::CustomerUseCase;
+use business::use_cases::customer_use_case::{CustomerUseCase, DUPLICATE_TAX_ID, INVALID_TAX_ID};
 use sea_orm::prelude::async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -57,6 +57,17 @@ impl CustomerStore for MemoryCustomerStore {
             .cloned())
     }
 
+    async fn get_by_tax_id(&self, tenant_id: Option<i64>, tax_id: &str) -> Result<Option<Customer>, BusinessError> {
+        let customers = self
+            .customers
+            .lock()
+            .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
+        Ok(customers
+            .iter()
+            .find(|customer| customer.tenant_id == tenant_id && customer.tax_id.as_deref() == Some(tax_id))
+            .cloned())
+    }
+
     async fn list_page(
         &self,
         page: u64,
@@ -91,6 +102,14 @@ fn new_customer(name: &str, tenant_id: Option<i64>) -> Customer {
         uuid: None,
         tenant_id,
         name: name.into(),
+        legal_name: None,
+        tax_id: None,
+        address_line1: None,
+        address_line2: None,
+        locality: None,
+        administrative_area: None,
+        postal_code: None,
+        country_code: None,
         status: " Active ".into(),
         notes: None,
         created_at: None,
@@ -200,4 +219,81 @@ async fn customer_use_case_rejects_blank_status_and_reports_missing_records() {
             .message,
         "Customer not found"
     );
+}
+
+/// `EPIC-SC-01-S04`: a legal person -- document checked and normalised by its country, legal name and
+/// address kept, blanks stored as absent.
+#[tokio::test]
+async fn customer_identity_is_normalised_and_blank_fields_are_absent() {
+    let use_case = CustomerUseCase::new(MemoryCustomerStore::default());
+    let created = use_case
+        .create(Customer {
+            legal_name: Some("  Northwind Traders Ltda  ".into()),
+            tax_id: Some("11.222.333/0001-81".into()),
+            address_line1: Some("Rua A, 10".into()),
+            address_line2: Some("   ".into()),
+            locality: Some("Curitiba".into()),
+            administrative_area: Some("PR".into()),
+            postal_code: Some("80000-000".into()),
+            country_code: Some("br".into()),
+            ..new_customer("Northwind", Some(42))
+        })
+        .await
+        .expect("a valid CNPJ is accepted");
+    assert_eq!(created.legal_name.as_deref(), Some("Northwind Traders Ltda"));
+    assert_eq!(created.tax_id.as_deref(), Some("11222333000181"));
+    assert_eq!(created.address_line2, None);
+    assert_eq!(created.postal_code.as_deref(), Some("80000000"), "the postal code is stored digits only");
+    assert_eq!(created.country_code.as_deref(), Some("BR"));
+    assert_eq!(created.locality.as_deref(), Some("Curitiba"));
+
+    let person = use_case
+        .create(Customer { tax_id: Some("529.982.247-25".into()), ..new_customer("Maria", Some(42)) })
+        .await
+        .expect("a valid CPF is accepted and the country defaults to BR");
+    assert_eq!(person.tax_id.as_deref(), Some("52998224725"));
+    assert_eq!(person.legal_name, None);
+}
+
+#[tokio::test]
+async fn customer_tax_id_is_checked_by_country_and_unique_per_tenant() {
+    let use_case = CustomerUseCase::new(MemoryCustomerStore::default());
+    let invalid = use_case
+        .create(Customer { tax_id: Some("11.222.333/0001-00".into()), ..new_customer("Bad", Some(42)) })
+        .await
+        .expect_err("a CNPJ with wrong check digits is refused");
+    assert_eq!(invalid.message, INVALID_TAX_ID);
+
+    let abroad = use_case
+        .create(Customer { tax_id: Some("12-3456789".into()), country_code: Some("US".into()), ..new_customer("Acme", Some(42)) })
+        .await
+        .expect("a country with no validator keeps the document as typed");
+    assert_eq!(abroad.tax_id.as_deref(), Some("12-3456789"));
+
+    let first = use_case
+        .create(Customer { tax_id: Some("11222333000181".into()), ..new_customer("First", Some(42)) })
+        .await
+        .expect("stored");
+    let duplicate = use_case
+        .create(Customer { tax_id: Some("11.222.333/0001-81".into()), ..new_customer("Second", Some(42)) })
+        .await
+        .expect_err("the same document twice in a tenant is refused");
+    assert_eq!(duplicate.message, DUPLICATE_TAX_ID);
+    use_case
+        .create(Customer { tax_id: Some("11.222.333/0001-81".into()), ..new_customer("Other tenant", Some(7)) })
+        .await
+        .expect("another tenant may hold the same document");
+
+    // Editing the holder keeps its own document; moving it onto another customer's is refused.
+    let id = first.id.expect("id");
+    use_case
+        .update(id, Customer { tax_id: Some("11222333000181".into()), ..new_customer("First renamed", Some(42)) })
+        .await
+        .expect("the holder keeps its document on edit");
+    let second = use_case.create(new_customer("Second", Some(42))).await.expect("stored");
+    let clash = use_case
+        .update(second.id.expect("id"), Customer { tax_id: Some("11222333000181".into()), ..new_customer("Second", Some(42)) })
+        .await
+        .expect_err("another customer cannot take the document");
+    assert_eq!(clash.message, DUPLICATE_TAX_ID);
 }

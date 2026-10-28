@@ -17,7 +17,7 @@ internal class DriverSessionStore(context: Context) {
 
     fun save(session: DriverSession) = secrets.save(session.encode())
 
-    /** Null when absent or unreadable; an unreadable session is discarded. */
+    /** Null when absent or unreadable; an unreadable session (including one saved before `C-035`, without grants) is discarded. */
     fun load(): DriverSession? {
         val raw = secrets.load() ?: return null
         return decodeDriverSession(raw) ?: run {

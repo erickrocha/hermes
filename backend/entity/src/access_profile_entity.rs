@@ -1,6 +1,7 @@
 use sea_orm::entity::prelude::*;
 
-/// `C-032` (`HRMS-851`): a tenant's access profile -- a named set of permissions for one role.
+/// `C-032`/`C-035` (`HRMS-851`): an access profile -- a named set of grants. `tenant_id` is NULL for the
+/// system profiles, which every tenant sees.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "access_profile")]
 pub struct Model {
@@ -12,10 +13,14 @@ pub struct Model {
     pub name: String,
     /// The normalised name, unique per tenant.
     pub name_key: String,
-    /// The role this profile is for: `TenantUser`, `Driver` or `Mechanic`.
-    pub base_role: String,
+    /// `Platform` or `Tenant`: where the profile -- and its holders -- live.
+    pub scope: String,
+    /// Seeded by the platform, read-only, permissions re-derived from the catalogue at boot.
+    pub system: bool,
+    /// The system profile's key (`SysAdmin`, `TenantOwner`, `TenantUser`, `Driver`, `Mechanic`); NULL otherwise.
+    pub key: Option<String>,
     pub active: bool,
-    /// A JSON array of permission codes from the platform catalogue.
+    /// A JSON array of grants (`code` or `code@own`) from the platform catalogue.
     pub permissions: String,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,

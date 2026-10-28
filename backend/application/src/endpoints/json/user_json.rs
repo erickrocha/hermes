@@ -14,12 +14,26 @@ pub struct UserJson {
     #[serde(default, skip_serializing)]
     pub password: Option<String>,
     pub enabled: bool,
+    /// `C-035`: the access profile held -- required on create; on update, omitted keeps the current one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_uuid: Option<String>,
+    /// Read-only: the held profile's name and, for a system profile, its key (`SysAdmin`, `Driver`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_key: Option<String>,
+    /// Read-only: `Platform` or `Tenant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// `C-035`: grants held on top of the profile's (`code` or `code@own`).
     #[serde(default)]
-    pub role: String,
+    pub extra_permissions: Vec<String>,
+    /// Read-only: the effective grants (profile, extras and baseline), so a list can tell who may act as a
+    /// driver (`driver.act`) whatever profile grants it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpf: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub principal_function: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

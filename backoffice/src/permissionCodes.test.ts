@@ -17,8 +17,9 @@ describe('permission codes used by the console', () => {
   it('all exist in the backend', () => {
     const used = new Map<string, string>()
     for (const file of sources(__dirname)) {
-      for (const m of readFileSync(file, 'utf8').matchAll(/\bcan\(\s*\w+,\s*'([a-z0-9.-]+)'/g)) used.set(m[1], file)
-      for (const m of readFileSync(file, 'utf8').matchAll(/\b(?:read|create|edit|remove): \(s\) => can\(s, '([a-z0-9.-]+)'/g)) used.set(m[1], file)
+      // C-035: `can`, `canPlatform`, `has`, `hasFull`, `onlyOwn` -- every helper that names a permission code.
+      for (const m of readFileSync(file, 'utf8').matchAll(/\b(?:can|canPlatform|has|hasFull|onlyOwn)\(\s*[\w.!]+,\s*'([a-z0-9.-]+)'/g)) used.set(m[1], file)
+      for (const m of readFileSync(file, 'utf8').matchAll(/USER_LIST_HOLDERS = \[([^\]]+)\]/g)) for (const code of m[1].matchAll(/'([a-z0-9.-]+)'/g)) used.set(code[1], file)
     }
     const unknown = [...used].filter(([code]) => !known.has(code))
     expect(unknown, `unknown codes: ${JSON.stringify(unknown)}`).toEqual([])

@@ -18,6 +18,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.ComposeView
 import com.erocha.hermes.client.shared.AccessTokenResponse
+import com.erocha.hermes.client.shared.AppAccess
 import com.erocha.hermes.client.shared.AuthApi
 import com.erocha.hermes.client.shared.DriverSession
 import com.erocha.hermes.client.shared.FleetApi
@@ -25,10 +26,9 @@ import com.erocha.hermes.client.shared.GarageApi
 import com.erocha.hermes.client.shared.WorkshopApi
 import com.erocha.hermes.client.shared.HermesTheme
 import com.erocha.hermes.client.shared.ThemeStore
+import com.erocha.hermes.client.shared.access
 import com.erocha.hermes.client.shared.apiError
 import com.erocha.hermes.client.shared.createHermesHttpClient
-import com.erocha.hermes.client.shared.isFieldRole
-import com.erocha.hermes.client.shared.isMechanicRole
 import com.erocha.hermes.client.shared.secondsUntilRefresh
 import com.erocha.hermes.client.shared.themeColor
 import io.ktor.client.HttpClient
@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity(), FleetHost {
 
     override val context: Context get() = this
     override val userUuid: String get() = session?.uuid.orEmpty()
+    override val access: AppAccess get() = session?.access ?: AppAccess.NONE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         themeStore = ThemeStore(this)
@@ -122,17 +123,21 @@ class MainActivity : ComponentActivity(), FleetHost {
         setContentView(content)
     }
 
-    /** The signed-in home, laid out by Compose: the garage for a mechanic, the driver's own information otherwise. */
+    /**
+     * The signed-in home, laid out by Compose: the garage services for whoever may perform them, the driver's own
+     * information otherwise (`C-035`: decided by the session's grants, no longer by a role).
+     */
     private fun showAuthenticated(current: DriverSession) {
         setContentView(
             ComposeView(this).apply {
                 setContent {
                     val themeText = getString(R.string.theme_button, themeLabel(themeStore.load()))
                     val switchTheme = { themeStore.save(themeStore.load().next()); recreate() }
-                    if (isMechanicRole(current.role)) {
+                    if (current.access.mechanic) {
                         MechanicApp(this@MainActivity, current.name, themeText, switchTheme) { signOut() }
                     } else {
-                        DriverApp(this@MainActivity, current.name, themeText, switchTheme) { signOut() }
+                        val profile = current.profileName ?: getString(R.string.profile_driver)
+                        DriverApp(this@MainActivity, current.name, getString(R.string.authenticated_profile, profile), themeText, switchTheme) { signOut() }
                     }
                 }
             },
@@ -165,9 +170,9 @@ class MainActivity : ComponentActivity(), FleetHost {
 
     private fun acceptLogin(response: AccessTokenResponse, email: String) {
         val next = response.toSession()
-        if (next == null || !isFieldRole(response.role)) {
+        if (next == null || !next.access.admitted) {
             // Interface courtesy only: nothing is stored; the server remains the authority.
-            val message = if (isFieldRole(response.role)) R.string.login_failed else R.string.not_a_driver
+            val message = if (next != null) R.string.not_a_driver else R.string.login_failed
             showLogin(getString(message), email)
             return
         }
@@ -206,9 +211,9 @@ class MainActivity : ComponentActivity(), FleetHost {
             throw failure
         }
         val next = response.toSession()
-        if (next == null || !isFieldRole(response.role)) {
-            // A driver role without usable tokens is a bad response, not a role change.
-            throw SessionEnded(if (isFieldRole(response.role)) R.string.session_expired else R.string.not_a_driver)
+        if (next == null || !next.access.admitted) {
+            // Usable tokens without the grants this app needs is a withdrawn access; no tokens is a bad response.
+            throw SessionEnded(if (next != null) R.string.not_a_driver else R.string.session_expired)
         }
         store.save(next) // the backend issues a new refresh token on every refresh: replace what is stored
         session = next
@@ -272,7 +277,7 @@ class MainActivity : ComponentActivity(), FleetHost {
     }
 
     private fun AccessTokenResponse.toSession(): DriverSession? =
-        refreshToken?.let { DriverSession(accessToken, it, expireIn, name, role, uuid) }
+        refreshToken?.let { DriverSession(accessToken, it, expireIn, name, permissions, uuid, profileName) }
 
     private fun alive() = !isFinishing && !isDestroyed
 

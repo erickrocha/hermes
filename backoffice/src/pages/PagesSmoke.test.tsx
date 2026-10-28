@@ -5,6 +5,7 @@ import { api } from '../api'
 import { renderPage, signIn } from '../test/render'
 import { LoginPage, PasswordPage } from './AuthPages'
 import { ChecklistRunNewPage, ChecklistTemplateDetailPage, TechnicalInspectionNewPage } from './ChecklistPages'
+import { CustomerFormPage } from './CustomerPages'
 import { DashboardPage } from './DashboardPage'
 import { CustomerDayOffPage, CustomerDetailPage, DemandDetailPage, VehicleAssignPage, VehicleDetailPage, VehicleOdometerPage } from './FleetPages'
 import { GarageCallCancelPage, GarageCallPage, GarageMonitorPage, GarageOpenPage, GaragePage, GarageTriagePage } from './GaragePages'
@@ -18,7 +19,7 @@ const screens: [string, ComponentType][] = [
   ['LoginPage', LoginPage], ['PasswordPage', PasswordPage], ['DashboardPage', DashboardPage], ['SettingsPage', SettingsPage],
   ['ChecklistTemplateDetailPage', ChecklistTemplateDetailPage], ['ChecklistRunNewPage', ChecklistRunNewPage], ['TechnicalInspectionNewPage', TechnicalInspectionNewPage],
   ['VehicleDetailPage', VehicleDetailPage], ['VehicleOdometerPage', VehicleOdometerPage], ['VehicleAssignPage', VehicleAssignPage],
-  ['CustomerDetailPage', CustomerDetailPage], ['CustomerDayOffPage', CustomerDayOffPage], ['DemandDetailPage', DemandDetailPage],
+  ['CustomerDetailPage', CustomerDetailPage], ['CustomerFormPage', CustomerFormPage], ['CustomerDayOffPage', CustomerDayOffPage], ['DemandDetailPage', DemandDetailPage],
   ['GaragePage', GaragePage], ['GarageOpenPage', GarageOpenPage], ['GarageCallPage', GarageCallPage], ['GarageCallCancelPage', GarageCallCancelPage],
   ['GarageTriagePage', GarageTriagePage], ['GarageMonitorPage', GarageMonitorPage],
   ['PreventivePlanDetailPage', PreventivePlanDetailPage], ['PreventiveExtensionPage', PreventiveExtensionPage], ['PreventiveAlertPage', PreventiveAlertPage],

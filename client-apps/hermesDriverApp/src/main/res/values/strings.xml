@@ -9,10 +9,11 @@
     <string name="credentials_required">Informe o e-mail ou CPF e a senha.</string>
     <string name="credentials_invalid">E-mail, CPF ou senha inválidos, ou conta desabilitada.</string>
     <string name="login_failed">Não foi possível entrar. Verifique a conexão e tente de novo.</string>
-    <string name="not_a_driver">Esta conta não é de motorista nem de mecânico. Use uma conta com um desses papéis.</string>
+    <string name="not_a_driver">Esta conta não é de motorista nem de mecânico. Use uma conta com um desses perfis.</string>
     <string name="session_expired">Sua sessão terminou. Entre novamente.</string>
     <string name="authenticated_title">Olá, %1$s</string>
-    <string name="authenticated_role">Papel: motorista</string>
+    <string name="authenticated_profile">Perfil: %1$s</string>
+    <string name="profile_driver">Motorista</string>
     <string name="refresh_unavailable">Sem conexão para renovar a sessão. Tentaremos de novo.</string>
     <string name="sign_out_button">Sair</string>
     <string name="loading">Carregando…</string>

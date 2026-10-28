@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
-import { can, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useAction, useResourceForm, useResourceState } from '../features/hooks'
 import { preventivePlans, type Row } from '../features/resources'
@@ -34,13 +34,13 @@ export function PreventivePlanDetailPage() {
     if (preventivePlans.act.fulfilled.match(result)) { const order = result.payload as Row; if (order.workOrderUuid) navigate(`/work-orders/${order.workOrderUuid}`); else setOpened(String(order.number ?? '')) }
   }
   const discharge = async () => { const row = discharging; setDischarging(null); if (row && await run('post', `/preventive-plan/alert/${row.uuid}/discharge`)) setRefresh((n) => n + 1) }
-  const mayAct = can(session, 'preventive-plan.open-work-order', [...OWNER_MECHANIC])
+  const mayAct = can(session, 'preventive-plan.open-work-order')
   return <>
     <PageHeader title={plan ? String(plan.planName) : t('preventivePlans')} actions={<>
       <Link className="btn secondary" to="/preventive-plans">{t('back')}</Link>
-      {can(session, 'preventive-plan.update', [...OWNER_MECHANIC]) && <Link className="btn secondary" to={`/preventive-plans/${uuid}/edit`}>{t('edit')}</Link>}
+      {can(session, 'preventive-plan.update') && <Link className="btn secondary" to={`/preventive-plans/${uuid}/edit`}>{t('edit')}</Link>}
       {plan && status !== 'Ok' && mayAct && <button className="btn primary" disabled={state.saving} onClick={openOrder}>{t('openPreventiveOrder')}</button>}
-      {plan && can(session, 'preventive-plan.extend', [...OWNER_MECHANIC]) && <Link className="btn secondary" to={`/preventive-plans/${uuid}/extension`}>{t('extendPlan')}</Link>}</>} />
+      {plan && can(session, 'preventive-plan.extend') && <Link className="btn secondary" to={`/preventive-plans/${uuid}/extension`}>{t('extendPlan')}</Link>}</>} />
     {state.error && plan && <p className="form-error" role="alert">{t(state.error, { defaultValue: state.error })}</p>}
     {opened && <p className="form-hint" role="status">{opened}</p>}
     <StateView loading={state.loading} error={plan ? '' : state.error}>
@@ -52,8 +52,8 @@ export function PreventivePlanDetailPage() {
       ]} />}
     </StateView>
     <ChildList refresh={refresh} titleKey="pendingAlerts" path={`/preventive-plan/uuid/${uuid}/alert`} columns={[{ key: 'atKm', labelKey: 'atKm', kind: 'number' }, { key: 'title', labelKey: 'title' }, { key: 'inspectionModel', labelKey: 'inspectionModel' }]}
-      addTo={can(session, 'preventive-plan.alert.read', [...OWNER_MECHANIC]) && session?.role !== 'TenantUser' ? `/preventive-plans/${uuid}/alerts/new` : undefined} addKey="newAlert" actionKey="dischargeAlert"
-      onDelete={can(session, 'preventive-plan.alert.discharge', [...OWNER_MECHANIC]) ? setDischarging : undefined} />
+      addTo={can(session, 'preventive-plan.alert.read') ? `/preventive-plans/${uuid}/alerts/new` : undefined} addKey="newAlert" actionKey="dischargeAlert"
+      onDelete={can(session, 'preventive-plan.alert.discharge') ? setDischarging : undefined} />
     {discharging && <Confirm title={t('dischargeAlert')} text={t('dischargeAlertText')} onCancel={() => setDischarging(null)} onConfirm={discharge} />}</>
 }
 

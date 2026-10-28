@@ -72,7 +72,7 @@ impl BillingStore for BillingGateway {
         let count = tenant_select(UserQuery::find(), user_entity::Column::TenantId)
             .filter(user_entity::Column::TenantId.eq(tenant_id))
             .filter(user_entity::Column::Enabled.eq(true))
-            .filter(user_entity::Column::Role.is_in(["TenantOwner", "TenantUser", "Driver", "Mechanic"]))
+            // `C-035`: a tenant's humans are its tenant-bound accounts; platform accounts carry no tenant.
             .count(&self.db)
             .await
             .map_err(database_error)?;

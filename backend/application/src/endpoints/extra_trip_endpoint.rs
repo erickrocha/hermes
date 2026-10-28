@@ -21,7 +21,7 @@ use axum::http::StatusCode;
 use business::domain::authorization::{
     can_administer_extra_trip, can_create_extra_trip, can_read_extra_trip,
 };
-use business::domain::enums::{Role, TripStatus};
+use business::domain::enums::TripStatus;
 use business::domain::extra_trip::{ExtraTrip, ExtraTripEntityMapper};
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::user::User;
@@ -236,8 +236,8 @@ pub async fn list_all(
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<ExtraTripJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
-    // `C-031` (`HRMS-860`): a driver's list is the trips that name them.
-    if current_user.role == Role::Driver {
+    // `C-031` (`HRMS-860`): an own-records holder's list (`extra-trip.read@own`) is the trips that name them.
+    if current_user.only_own("extra-trip.read") {
         // A driver with no id (never from the database) sees nothing rather than the tenant's trips.
         let Some(user_id) = current_user.id else {
             return Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)));
@@ -434,7 +434,7 @@ async fn find_visible(
         ));
     }
     // `C-031` (`HRMS-860`): another driver's trip is answered like an unknown one.
-    if current_user.role == Role::Driver && !trip.names_driver(current_user.id) {
+    if current_user.only_own("extra-trip.read") && !trip.names_driver(current_user.id) {
         return Err(ExceptionResponse::NotFound(locale.clone(), ErrorKey::ExtraTripNotFound));
     }
     Ok(trip)

@@ -1,5 +1,6 @@
+use crate::domain::authorization::is_active_driver_of;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::{FuelEntryOrigin, Role};
+use crate::domain::enums::FuelEntryOrigin;
 use crate::domain::fuel_entry::FuelEntry;
 use crate::gateway::fuel_entry_gateway::FuelEntryStore;
 use crate::gateway::km_evolution_gateway::KmEvolutionStore;
@@ -74,7 +75,7 @@ impl FuelReceiptUseCase {
         // `TRM-535`: only an active driver of this tenant.
         let driver = self.users.get_by_id(receipt.driver_id).await?;
         if !driver.is_some_and(|user| {
-            user.role == Role::Driver && user.enabled && user.tenant_id == receipt.tenant_id
+            is_active_driver_of(&user, receipt.tenant_id)
         }) {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));
         }

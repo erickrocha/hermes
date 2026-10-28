@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
 import { renderPage, signIn } from '../test/render'
-import { CustomerDayOffPage, DemandExceptionPage, VehicleDetailPage } from './FleetPages'
+import { CustomerDayOffPage, CustomerDetailPage, DemandExceptionPage, VehicleDetailPage } from './FleetPages'
 import { PartDetailPage, PartEntryPage, PurchaseOrderDetailPage } from './StockPages'
 
 const page = (items: unknown[]) => ({ data: { items, page: 0, pageSize: 50, totalItems: items.length, totalPages: 1 } }) as never
@@ -60,6 +60,23 @@ describe('stock (C-030) and fleet detail pages', () => {
     expect(await screen.findByRole('link', { name: /assign driver|atribuir motorista|asignar conductor/i })).toBeInTheDocument()
     expect((await screen.findAllByText('1500')).length).toBe(2)
     expect(screen.getByText(/tracking unavailable|rastreamento indisponível|rastreo no disponible/i)).toBeInTheDocument()
+  })
+
+  it('shows a customer with its legal name, masked document and the address as one block', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+      if (url === '/customer/uuid/c1') return { data: { uuid: 'c1', name: 'Acme', legalName: 'Acme Ltda', taxId: '11222333000181', countryCode: 'BR', status: 'Active', addressLine1: 'Rua A, 10', addressLine2: 'Sala 2', locality: 'Campinas', administrativeArea: 'SP', postalCode: '13000-000' } } as never
+      return page([])
+    })
+    signIn('TenantOwner')
+    renderPage(<CustomerDetailPage />, '/customers/c1', '/customers/:uuid')
+    expect(await screen.findByRole('heading', { name: 'Acme' })).toBeInTheDocument()
+    expect(screen.getByText('Acme Ltda')).toBeInTheDocument()
+    expect(screen.getByText('11.222.333/0001-81')).toBeInTheDocument()
+    const address = screen.getByText('Rua A, 10').closest('address')!
+    expect(address).toHaveTextContent('Sala 2')
+    expect(address).toHaveTextContent('Campinas · SP')
+    expect(address).toHaveTextContent(/13000-000 · (Brazil|Brasil)/)
+    expect(screen.getByRole('link', { name: /^edit$|^editar$/i })).toHaveAttribute('href', '/customers/c1/edit')
   })
 
   it('records a customer day off', async () => {

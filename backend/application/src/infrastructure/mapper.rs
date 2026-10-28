@@ -15,7 +15,7 @@ use business::domain::city::City;
 use business::domain::customer::Customer;
 use business::domain::holiday::Holiday;
 use business::domain::enums::{
-    AnswerStatus, ChecklistType, GarageTagOrigin, KmOrigin, Role, ScheduleExceptionType, TripStatus,
+    AnswerStatus, ChecklistType, GarageTagOrigin, KmOrigin, ScheduleExceptionType, TripStatus,
     VehicleStatus, WorkOrderItemStatus,
 };
 use business::domain::province::Province;
@@ -46,7 +46,10 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             uuid: access_token.uuid,
             name: access_token.name,
             user_id: access_token.user_id,
-            role: access_token.role,
+            scope: access_token.scope.to_string(),
+            profile_key: access_token.profile_key,
+            profile_name: access_token.profile_name,
+            permissions: access_token.permissions,
             tenant_id: access_token.tenant_id,
             tenant_uuid: access_token.tenant_uuid,
         }
@@ -62,7 +65,10 @@ impl Mapper<AccessToken, AccessTokenJson> for AccessTokenMapper {
             uuid: u.uuid,
             name: u.name,
             user_id: u.user_id,
-            role: u.role,
+            scope: std::str::FromStr::from_str(&u.scope).unwrap_or_default(),
+            profile_key: u.profile_key,
+            profile_name: u.profile_name,
+            permissions: u.permissions,
             tenant_id: u.tenant_id,
             tenant_uuid: u.tenant_uuid,
         }
@@ -80,9 +86,13 @@ impl Mapper<User, UserJson> for UserMapper {
             email: user.email,
             password: None,
             enabled: user.enabled,
-            role: user.role.to_string(),
+            profile_uuid: user.access.profile_uuid.clone(),
+            profile_name: user.access.profile_name.clone(),
+            profile_key: user.access.profile_key.clone(),
+            scope: Some(user.access.scope.to_string()),
+            extra_permissions: user.extra_permissions,
+            permissions: user.access.grants.codes(),
             cpf: user.cpf,
-            principal_function: user.principal_function,
             tenant_id: user.tenant_id,
             created_at: user.created_at,
             created_by: user.created_by,
@@ -99,16 +109,16 @@ impl Mapper<User, UserJson> for UserMapper {
             name: u.name,
             password: u.password.unwrap_or_default(),
             enabled: u.enabled,
-            // Endpoints call `reject_unknown_role` first (DEF-XF-06); this
-            // default is never reached with an unknown value.
-            role: Role::from_str(&u.role).unwrap_or_default(),
+            // The endpoint resolves `profile_uuid` to the profile and sets `profile_id` (`C-035`).
+            profile_id: None,
+            extra_permissions: u.extra_permissions,
             cpf: optional_text(u.cpf),
-            principal_function: optional_text(u.principal_function),
             tenant_id: u.tenant_id,
             created_at: u.created_at,
             created_by: u.created_by,
             updated_at: u.updated_at,
             updated_by: u.updated_by,
+            access: Default::default(),
         }
     }
 }
@@ -311,6 +321,14 @@ impl Mapper<Customer, CustomerJson> for CustomerMapper {
             uuid: t.uuid,
             tenant_id: t.tenant_id,
             name: t.name,
+            legal_name: t.legal_name,
+            tax_id: t.tax_id,
+            address_line1: t.address_line1,
+            address_line2: t.address_line2,
+            locality: t.locality,
+            administrative_area: t.administrative_area,
+            postal_code: t.postal_code,
+            country_code: t.country_code,
             status: t.status,
             notes: t.notes,
             created_at: t.created_at,
@@ -326,6 +344,14 @@ impl Mapper<Customer, CustomerJson> for CustomerMapper {
             uuid: u.uuid,
             tenant_id: u.tenant_id,
             name: u.name,
+            legal_name: u.legal_name,
+            tax_id: u.tax_id,
+            address_line1: u.address_line1,
+            address_line2: u.address_line2,
+            locality: u.locality,
+            administrative_area: u.administrative_area,
+            postal_code: u.postal_code,
+            country_code: u.country_code,
             status: u.status,
             notes: u.notes,
             created_at: u.created_at,
@@ -365,21 +391,12 @@ impl Mapper<Holiday, HolidayJson> for HolidayMapper {
     }
 }
 
-/// DEF-XF-06 (owner, 2026-09-18): a role the platform doesn't know is refused
-/// with 403 Forbidden -- never silently defaulted, never a panic.
-pub fn reject_unknown_role(role: &str, locale: &Locale) -> Result<(), ExceptionResponse> {
-    Role::from_str(role)
-        .map(|_| ())
-        .map_err(|_| ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidParameterValue))
-}
-
 /// EPIC-FO-01-S03 (HRMS-922, D-23(b)): a status outside the stated vocabulary
-/// is refused, which is the whole point of stating one -- `Role`'s
-/// `unwrap_or_default` behaviour would quietly file every misspelling as
-/// `Active`, and two depots would go on using two spellings anyway.
+/// is refused, which is the whole point of stating one -- an `unwrap_or_default`
+/// would quietly file every misspelling as `Active`, and two depots would go on
+/// using two spellings anyway.
 ///
-/// 400 rather than `reject_unknown_role`'s 403: an unknown status is a
-/// malformed field, not a permission the caller lacks. An empty status is
+/// 400: an unknown status is a malformed field, not a permission the caller lacks. An empty status is
 /// included -- registering a vehicle states its status (HRMS-920).
 pub fn reject_unknown_vehicle_status(
     status: &str,
@@ -493,33 +510,6 @@ mod address_mapping_tests {
     }
 }
 
-#[cfg(test)]
-mod role_guard_tests {
-    use super::reject_unknown_role;
-    use crate::commons::exception_response::ExceptionResponse;
-    use crate::commons::i18n::Locale;
-
-    #[test]
-    fn known_roles_pass_and_unknown_ones_are_forbidden() {
-        let locale = Locale::from_accept_language(None);
-        // Driver and Mechanic since EPIC-IA-09 (PD-026, D-22).
-        for role in ["SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic"] {
-            assert!(
-                reject_unknown_role(role, &locale).is_ok(),
-                "{role} must be accepted"
-            );
-        }
-        for role in ["Wizard", "", "sysadmin", "driver", "Admin"] {
-            assert!(
-                matches!(
-                    reject_unknown_role(role, &locale),
-                    Err(ExceptionResponse::Forbidden(..))
-                ),
-                "{role:?} must be refused with 403"
-            );
-        }
-    }
-}
 
 /// EPIC-FO-01-S03 (HRMS-922, D-23(b)).
 #[cfg(test)]

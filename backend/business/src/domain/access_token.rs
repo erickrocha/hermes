@@ -1,4 +1,4 @@
-use crate::domain::enums::Role;
+use crate::domain::enums::ProfileScope;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,7 +11,12 @@ pub struct AccessToken {
     pub uuid: String,
     pub name: String,
     pub user_id: i64,
-    pub role: Role,
+    /// `C-035`: the session's reach and what it may do, so a client draws its menus from the login
+    /// answer. The permissions are advisory to the client; the server resolves them again on every call.
+    pub scope: ProfileScope,
+    pub profile_key: Option<String>,
+    pub profile_name: Option<String>,
+    pub permissions: Vec<String>,
     pub tenant_id: Option<i64>,
     /// HRMS-204/OBS-TP-05: the session tenant's public identifier. Resolved by
     /// the endpoint after the token is minted; it is deliberately not a JWT
@@ -27,11 +32,10 @@ pub struct Claims {
     pub uuid: String,
     pub name: String,
     pub user_id: i64,
-    pub role: Role,
     pub tenant_id: Option<i64>,
 }
 
-/// A wall-display credential is a device principal, never a user `Role`.
+/// A wall-display credential is a device principal, never a user account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalType {
@@ -59,7 +63,6 @@ pub struct ClaimsBuilder {
     uuid: Option<String>,
     name: Option<String>,
     user_id: Option<i64>,
-    role: Option<Role>,
     tenant_id: Option<i64>,
 }
 
@@ -93,11 +96,6 @@ impl ClaimsBuilder {
         self
     }
 
-    pub fn role(mut self, role: Role) -> Self {
-        self.role = Some(role);
-        self
-    }
-
     pub fn tenant_id(mut self, tenant_id: Option<i64>) -> Self {
         self.tenant_id = tenant_id;
         self
@@ -110,7 +108,6 @@ impl ClaimsBuilder {
             uuid: self.uuid.ok_or("uuid is required")?,
             name: self.name.ok_or("name is required")?,
             user_id: self.user_id.ok_or("user_id is required")?,
-            role: self.role.ok_or("role is required")?,
             tenant_id: self.tenant_id, // optional, defaults to None
         })
     }

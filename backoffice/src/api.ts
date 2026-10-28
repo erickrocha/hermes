@@ -44,7 +44,13 @@ export const normalizeSession = (data: Record<string, unknown>) => ({
   accessToken: String(data.accessToken ?? data.access_token ?? ''), refreshToken: data.refreshToken ?? data.refresh_token,
   tokenType: String(data.tokenType ?? data.token_type ?? 'Bearer'), expireIn: Number(data.expireIn ?? data.expire_in ?? 0),
   email: String(data.email ?? ''), uuid: String(data.uuid ?? ''), name: String(data.name ?? ''), userId: Number(data.userId ?? data.user_id),
-  role: data.role, tenantId: data.tenantId ?? data.tenant_id ?? null,
+  // C-035: the session's reach and effective grants travel with the token; a stored session from before
+  // the change has neither and is treated as a tenant session with no grants until it re-logs.
+  scope: data.scope === 'Platform' ? 'Platform' : 'Tenant',
+  profileKey: typeof data.profileKey === 'string' ? data.profileKey : undefined,
+  profileName: typeof data.profileName === 'string' ? data.profileName : undefined,
+  permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+  tenantId: data.tenantId ?? data.tenant_id ?? null,
   // HRMS-204/OBS-TP-05: the session tenant's public identifier. This whitelist
   // is the only thing that survives into the stored session, so a field missing
   // here is silently dropped on reload.
@@ -54,4 +60,10 @@ export const normalizeSession = (data: Record<string, unknown>) => ({
 export const apiMessage = (error: unknown, fallback: string) => {
   if (axios.isAxiosError(error)) return error.response?.data?.message || fallback
   return fallback
+}
+
+/// The server's stable `errorKey` (`DuplicateCustomerTaxId`…), for a page that maps a failure to a field.
+export const apiErrorKey = (error: unknown): string | undefined => {
+  if (axios.isAxiosError(error)) { const key = error.response?.data?.errorKey; return typeof key === 'string' ? key : undefined }
+  return undefined
 }

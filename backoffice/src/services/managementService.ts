@@ -44,8 +44,11 @@ export const loadUser = async (uuid: string): Promise<User> => (await api.get<Us
 export const resendUserInvite = async (uuid: string): Promise<void> => { await api.post(`/user/uuid/${uuid}/invite`) }
 
 export const saveUser = async ({ uuid, user }: { uuid?: string; user: User }): Promise<void> => {
-  const payload = { ...user }
+  const payload: Partial<User> = { ...user }
   delete payload.password
-  if (uuid) await api.put(`/user/uuid/${uuid}`, payload)
+  // Read-only echoes never go back; on an existing user the access is changed through the assign flow
+  // (`PUT /access-profile/user/uuid/{uuid}`), so the profile and extras are left out here (= keep).
+  delete payload.profileName; delete payload.profileKey; delete payload.scope
+  if (uuid) { delete payload.profileUuid; delete payload.extraPermissions; await api.put(`/user/uuid/${uuid}`, payload) }
   else await api.post('/user', payload)
 }

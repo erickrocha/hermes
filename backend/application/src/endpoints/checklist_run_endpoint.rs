@@ -242,7 +242,7 @@ pub async fn add(
         .await?
         .ok_or_else(|| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::NotADriver))?;
     // `C-032` (`D-27` 5): a driver submits as themselves, never on another driver's behalf.
-    if current_user.role == business::domain::enums::Role::Driver && current_user.id != Some(driver_id) {
+    if current_user.only_own("checklist-run.create") && current_user.id != Some(driver_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::ChecklistRunForbidden));
     }
     let opening_checklist_id =
@@ -353,7 +353,7 @@ pub async fn get_by_uuid(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::ChecklistRunNotFound))?;
     // `C-032` (`HRMS-860`): a driver reads their own runs only.
-    let foreign_to_driver = current_user.role == business::domain::enums::Role::Driver && current_user.id != Some(run.driver_id);
+    let foreign_to_driver = current_user.only_own("checklist-run.read") && current_user.id != Some(run.driver_id);
     if !can_read_checklist_run(&current_user, run.tenant_id) || foreign_to_driver {
         return Err(ExceptionResponse::NotFound(
             locale,

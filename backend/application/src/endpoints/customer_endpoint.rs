@@ -17,10 +17,36 @@ use business::domain::authorization::{
 use business::domain::customer::Customer;
 use business::domain::user::User;
 use business::gateway::customer_gateway::CustomerGateway;
-use business::use_cases::customer_use_case::CustomerUseCase;
+use business::gateway::tenant_gateway::TenantGateway;
+use business::use_cases::customer_use_case::{CustomerUseCase, DUPLICATE_TAX_ID, INVALID_TAX_ID};
+use business::use_cases::tenant_use_case::TenantUseCase;
 
 fn use_case(state: &AppState) -> CustomerUseCase<CustomerGateway> {
     CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()))
+}
+
+fn error(locale: Locale, message: &str) -> ExceptionResponse {
+    match message {
+        DUPLICATE_TAX_ID => ExceptionResponse::Conflict(locale, ErrorKey::DuplicateCustomerTaxId),
+        INVALID_TAX_ID => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidCustomerTaxId),
+        _ => ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+    }
+}
+
+/// `EPIC-SC-01-S04`: a customer with no country of its own is in the tenant's country -- the rule its
+/// document is checked by (`PD-022`), same as a person's CPF (`HRMS-861`).
+async fn default_country(state: &AppState, domain: &mut Customer) {
+    if domain.country_code.as_deref().is_some_and(|c| !c.trim().is_empty()) {
+        return;
+    }
+    let Some(tenant_id) = domain.tenant_id else {
+        return;
+    };
+    domain.country_code = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()))
+        .find_by_id(tenant_id)
+        .await
+        .ok()
+        .and_then(|tenant| tenant.country_code);
 }
 
 #[utoipa::path(
@@ -29,8 +55,9 @@ fn use_case(state: &AppState) -> CustomerUseCase<CustomerGateway> {
     path = "/customer",
     request_body = CustomerJson,
     responses(
-        (status = 201, description = "Customer registered. **Roles:** SysAdmin (unbound; names the owning tenant); TenantOwner (own tenant only).", body = CustomerJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 201, description = "Customer registered -- trade name, status, and optionally the legal name, CPF/CNPJ (checked by the customer's country, the tenant's when omitted) and address. **Roles:** SysAdmin (unbound; names the owning tenant); TenantOwner (own tenant only).", body = CustomerJson),
+        (status = 400, description = "Bad request; `InvalidCustomerTaxId` when the document fails its country's check", body = BadRequestErrorJson),
+        (status = 409, description = "`DuplicateCustomerTaxId`: the tenant already has a customer with this document", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller's role may not register customers", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -58,9 +85,11 @@ pub async fn add(
         domain.tenant_id = current_user.tenant_id;
     }
 
+    default_country(&state, &mut domain).await;
+
     match use_case(&state).create(domain).await {
         Ok(customer) => Ok((StatusCode::CREATED, Json(CustomerMapper::json(customer)))),
-        Err(_) => Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)),
+        Err(e) => Err(error(locale, &e.message)),
     }
 }
 
@@ -139,7 +168,8 @@ pub async fn get_by_uuid(
     request_body = CustomerJson,
     responses(
         (status = 200, description = "Customer updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = CustomerJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 400, description = "Bad request; `InvalidCustomerTaxId` when the document fails its country's check", body = BadRequestErrorJson),
+        (status = 409, description = "`DuplicateCustomerTaxId`: the tenant already has a customer with this document", body = BadRequestErrorJson),
         (status = 404, description = "Customer not found, **or it exists and belongs to another tenant** (PD-034)", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller may read this customer but not change it", body = ForbiddenErrorJson),
@@ -164,11 +194,13 @@ pub async fn update(
     }
 
     let id = existing.id.unwrap_or_default();
-    let domain = CustomerMapper::domain(payload);
+    let mut domain = CustomerMapper::domain(payload);
+    domain.tenant_id = existing.tenant_id;
+    default_country(&state, &mut domain).await;
 
     match use_case(&state).update(id, domain).await {
         Ok(customer) => Ok(Json(CustomerMapper::json(customer))),
-        Err(_) => Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)),
+        Err(e) => Err(error(locale, &e.message)),
     }
 }
 

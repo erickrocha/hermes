@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { canSeeMaintenanceNotifications } from '../components/molecules/NotificationBell'
 import { PageHeader } from '../components/UI'
-import { can, OFFICE } from '../features/access'
+import { can, isPlatform } from '../features/access'
 import { canSeeBilling, canSeeNonExecutions, canSeeUsers, canSeeWorkOrders } from '../features/routeAccess'
 import { emptyTenantDashboard, type TenantDashboard } from '../services/dataService'
 import type { AppDispatch, RootState } from '../store'
@@ -18,10 +18,10 @@ export function DashboardPage() {
   const { t } = useTranslation()
   const dispatch = useDispatch<AppDispatch>()
   const counts = useSelector((s: RootState) => s.data.counts)
-  // The role-surface tests stub the data reducer, so this slice may be absent.
+  // The access-surface tests stub the data reducer, so this slice may be absent.
   const dashboard = useSelector((s: RootState) => s.data.tenantDashboard) ?? emptyTenantDashboard()
   const session = useSelector((s: RootState) => s.auth.session)!
-  const platform = session.role === 'SysAdmin'
+  const platform = isPlatform(session)
   // DEF-BO-07: platform counts live in `data.counts`, never in the list pages.
   // A tenant member never asks for those totals — `/tenant` is already scoped
   // to their own row, so "registered tenants" was always 1 and not useful.
@@ -54,14 +54,14 @@ function Metric({ card }: { card: Card }) {
 }
 
 function tenantCards(t: (key: string) => string, session: Session, dashboard: TenantDashboard): Card[] {
-  const vehicles = can(session, 'vehicle.read', OFFICE) ? '/vehicles' : undefined
+  const vehicles = can(session, 'vehicle.read') ? '/vehicles' : undefined
   const workOrders = canSeeWorkOrders(session) ? '/work-orders' : undefined
   const cards: Card[] = [
     { label: t('dashActiveVehicles'), value: dashboard.activeVehicles ?? 0, icon: Bus, color: 'blue', to: vehicles },
     { label: t('dashInMaintenance'), value: dashboard.vehiclesInMaintenance ?? 0, icon: Wrench, color: 'yellow', to: vehicles },
     { label: t('dashOpenWorkOrders'), value: dashboard.openWorkOrders ?? 0, icon: Wrench, color: 'green', to: workOrders },
     { label: t('dashAwaitingParts'), value: dashboard.workOrdersAwaitingParts ?? 0, icon: Package, color: 'yellow', to: workOrders },
-    { label: t('yardQueue'), value: dashboard.yardQueue ?? 0, icon: Siren, color: 'blue', to: can(session, 'garage.queue.read', ['TenantOwner', 'TenantUser', 'Mechanic']) ? '/garage' : undefined },
+    { label: t('yardQueue'), value: dashboard.yardQueue ?? 0, icon: Siren, color: 'blue', to: can(session, 'garage.queue.read') ? '/garage' : undefined },
     { label: t('dashUnreadNotices'), value: dashboard.unreadMaintenanceNotices ?? 0, icon: Bell, color: 'yellow', to: canSeeMaintenanceNotifications(session) ? '/maintenance-notifications' : undefined },
     { label: t('dashUnjustified'), value: dashboard.unjustifiedNonExecutions ?? 0, icon: AlertTriangle, color: 'yellow', to: canSeeNonExecutions(session) ? '/non-executions' : undefined },
     { label: t('dashEnabledUsers'), value: dashboard.enabledUsers ?? 0, icon: Users, color: 'green', to: canSeeUsers(session) ? '/users' : undefined },
