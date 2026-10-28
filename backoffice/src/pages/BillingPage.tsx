@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next'
 import type { ColumnDef } from '@tanstack/react-table'
 import type { AppDispatch, RootState } from '../store'
 import { loadTenants } from '../store'
+import { isPlatform } from '../features/access'
+import { canAdministerBilling } from '../features/routeAccess'
 import { confirmBillingCharge, fetchBillingCharges, fetchBillingSettings, saveBillingSettings, setBillingSuspension } from '../features/billingSlice'
 import type { BillingCharge, PageRequest, Tenant } from '../types'
 
@@ -30,8 +32,9 @@ export function BillingPage() {
   const session = useSelector((state: RootState) => state.auth.session)!
   const tenants = useSelector((state: RootState) => state.data.tenants.items)
   const billing = useSelector((state: RootState) => state.billing)
-  const isPlatformAdmin = session.role === 'SysAdmin'
-  const [tenantUuid, setTenantUuid] = useState(session.role === 'TenantOwner' ? session.tenantUuid ?? '' : '')
+  // C-035: billing administration (confirming payments, grace days, suspension) is the platform's; an owner reads their own tenant's charges.
+  const isPlatformAdmin = canAdministerBilling(session)
+  const [tenantUuid, setTenantUuid] = useState(isPlatform(session) ? '' : session.tenantUuid ?? '')
   const [pageRequest, setPageRequest] = useState<PageRequest>({ page: 0, pageSize: 25 })
   const [chargeToConfirm, setChargeToConfirm] = useState<BillingCharge | null>(null)
   const [suspensionToConfirm, setSuspensionToConfirm] = useState<boolean | null>(null)

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { openBilling, signIn, testValue } from './auth'
 
-test('SysAdmin confirms a pending charge from billing history', async ({ page }) => {
+test('Platform administrator (SysAdmin profile) confirms a pending charge from billing history', async ({ page }) => {
   await signIn(page, testValue('BILLING_TEST_ADMIN'), testValue('BILLING_TEST_ADMIN_PASSWORD'))
   await openBilling(page)
 

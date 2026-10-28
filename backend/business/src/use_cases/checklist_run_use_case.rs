@@ -1,8 +1,9 @@
+use crate::domain::authorization::is_active_driver_of;
 use crate::domain::business_error::BusinessError;
 use crate::domain::checklist_answer::ChecklistAnswer;
 use crate::domain::checklist_run::ChecklistRun;
 use crate::domain::enums::{
-    AnswerStatus, ChecklistType, KmOrigin, Role, WorkOrderItemStatus, WorkOrderOrigin,
+    AnswerStatus, ChecklistType, KmOrigin, WorkOrderItemStatus, WorkOrderOrigin,
     WorkOrderStatus,
 };
 use crate::domain::km_evolution::KmEvolution;
@@ -260,7 +261,7 @@ impl ChecklistRunUseCase {
 
         let driver = self.store.find_driver(run.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {
-            user.role == Role::Driver && user.enabled && user.tenant_id == run.tenant_id
+            is_active_driver_of(&user, run.tenant_id)
         });
         if !is_valid_driver {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));

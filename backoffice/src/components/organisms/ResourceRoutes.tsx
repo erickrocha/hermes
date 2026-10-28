@@ -7,6 +7,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import type { ResourceConfig, Row, ColumnSpec } from '../../features/resources'
 import { useResourceForm } from '../../features/hooks'
 import type { AppDispatch, RootState } from '../../store'
+import { maskDocument } from '../../features/masks'
 import { Confirm } from '../UI'
 import { ResourceFormPage } from './ResourceFormPage'
 import { ResourceListPage } from './ResourceListPage'
@@ -16,13 +17,14 @@ export function useMoney() {
   return (cents: number) => (cents / 100).toLocaleString(i18n.resolvedLanguage || i18n.language, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-/// Uma célula conforme o tipo da coluna; valor ausente vira travessão.
+/// Uma célula conforme o tipo da coluna; valor ausente vira travessão. A linha inteira entra para os tipos que dependem de outra coluna (o documento, do país).
 export function useCell() {
   const { t } = useTranslation(); const money = useMoney()
-  return (spec: ColumnSpec, value: unknown) => {
+  return (spec: ColumnSpec, value: unknown, row?: Row) => {
     if (value === undefined || value === null || value === '') return '—'
     switch (spec.kind) {
       case 'money': return money(Number(value))
+      case 'taxId': return maskDocument(String(value), String(row?.countryCode ?? 'BR'))
       case 'date': return String(value).slice(0, 10)
       case 'datetime': return String(value).replace('T', ' ').slice(0, 16)
       case 'bool': return value ? t('yes') : t('no')
@@ -38,7 +40,7 @@ export function ResourceListRoute({ config }: { config: ResourceConfig }) {
   const [removing, setRemoving] = useState<string | null>(null)
   const canEdit = config.edit?.(session) ?? false; const canRemove = config.remove?.(session) ?? false
   const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
-    ...config.columns.map((spec, index): ColumnDef<Row, unknown> => ({ id: spec.key, header: () => t(spec.labelKey), cell: ({ row }) => (config.detail && index === 0 && row.original.uuid ? <Link to={`/${config.route}/${row.original.uuid}`}><b>{cell(spec, row.original[spec.key])}</b></Link> : cell(spec, row.original[spec.key])) })),
+    ...config.columns.map((spec, index): ColumnDef<Row, unknown> => ({ id: spec.key, header: () => t(spec.labelKey), cell: ({ row }) => (config.detail && index === 0 && row.original.uuid ? <Link to={`/${config.route}/${row.original.uuid}`}><b>{cell(spec, row.original[spec.key], row.original)}</b></Link> : cell(spec, row.original[spec.key], row.original)) })),
     ...(canEdit || canRemove ? [{ id: 'actions', header: () => t('actions'), cell: ({ row }: { row: { original: Row } }) => <div className="row-actions">
       {canEdit && row.original.uuid && <Link to={`/${config.route}/${row.original.uuid}/edit`} aria-label={t('edit')}><Pencil size={16} /></Link>}
       {canRemove && row.original.uuid && <button className="danger-text" aria-label={t('delete')} onClick={() => setRemoving(row.original.uuid ?? null)}><Trash2 size={16} /></button>}</div> } as ColumnDef<Row, unknown>] : []),

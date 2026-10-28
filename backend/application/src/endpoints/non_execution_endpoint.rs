@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
 use business::domain::authorization::{
-    can_administer_purchase_order, can_evaluate_non_execution, can_read_non_execution,
+    can_work_maintenance, can_evaluate_non_execution, can_read_non_execution,
 };
 use business::domain::non_execution::{NonExecutionOccurrence, NonExecutionView};
 use business::domain::user::User;
@@ -39,9 +39,10 @@ fn ensure(allowed: bool, locale: &Locale) -> Result<(), ExceptionResponse> {
     }
 }
 
-/// Justifying and recording by hand are the maintenance side's acts: platform, owner, mechanic.
+/// Justifying and recording by hand are the maintenance side's acts (`non-execution.justify`,
+/// `non-execution.record-manual`).
 fn may_act(user: &User) -> bool {
-    can_administer_purchase_order(user, user.tenant_id)
+    can_work_maintenance(user, user.tenant_id)
 }
 
 fn error(locale: Locale, message: &str) -> ExceptionResponse {

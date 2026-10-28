@@ -30,7 +30,7 @@ use business::domain::enums::GarageTagOrigin;
 use business::domain::enums::KmOrigin;
 use business::domain::enums::MaintenancePlanStatus;
 use business::domain::enums::PurchaseOrderStatus;
-use business::domain::enums::Role;
+use business::domain::enums::ProfileScope;
 use business::domain::enums::ScheduleExceptionType;
 use business::domain::enums::StockMovementType;
 use business::domain::enums::TripStatus;
@@ -82,7 +82,7 @@ use business::domain::transport_demand::{TransportDemand, TransportDemandEntityM
 use business::domain::transport_demand_allocation::{
     TransportDemandAllocation, TransportDemandAllocationEntityMapper,
 };
-use business::domain::user::{User, UserEntityMapper};
+use business::domain::user::{Access, User, UserEntityMapper};
 use business::domain::vehicle::{Vehicle, VehicleEntityMapper};
 use business::domain::vehicle_assignment::{VehicleAssignment, VehicleAssignmentEntityMapper};
 use business::domain::work_order::{WorkOrder, WorkOrderEntityMapper};
@@ -286,16 +286,17 @@ fn malformed_uuids_degrade_instead_of_panicking() {
     assert_eq!(bytes_para_string(vec![1, 2, 3]), "");
 }
 
-// ---------------------------------------------------------------- Role
+// ---------------------------------------------------------------- ProfileScope
 
 #[test]
-fn roles_round_trip_through_their_names() {
-    for role in [Role::SysAdmin, Role::TenantOwner, Role::TenantUser] {
-        assert_eq!(Role::from_str(&role.to_string()), Ok(role));
+fn profile_scopes_round_trip_through_their_names() {
+    for scope in [ProfileScope::Platform, ProfileScope::Tenant] {
+        assert_eq!(ProfileScope::from_str(&scope.to_string()), Ok(scope));
     }
-    assert_eq!(Role::from_str(" TenantOwner "), Ok(Role::TenantOwner));
-    assert!(Role::from_str("Wizard").is_err());
-    assert_eq!(Role::default(), Role::TenantUser);
+    assert_eq!(ProfileScope::from_str(" Platform "), Ok(ProfileScope::Platform));
+    assert!(ProfileScope::from_str("Wizard").is_err());
+    assert!(ProfileScope::from_str("SysAdmin").is_err());
+    assert_eq!(ProfileScope::default(), ProfileScope::Tenant);
 }
 
 // ---------------------------------------------------------------- User
@@ -310,10 +311,9 @@ fn user_model() -> user_entity::Model {
         enabled: true,
         blocked_reason: Some("billing".into()),
         tenant_id: Some(42),
-        role: "TenantOwner".into(),
-        profile_id: None,
+        profile_id: 3,
+        extra_permissions: r#"["vehicle.read@own","fuel-entry.read"]"#.into(),
         cpf: Some("52998224725".into()),
-        principal_function: Some("Driver".into()),
         created_at: at(),
         created_by: Some("admin".into()),
         updated_at: at(),
@@ -327,18 +327,21 @@ fn user_from_model_carries_every_field() {
     assert_eq!(user.id, Some(7));
     assert_eq!(user.uuid.as_deref(), Some(UUID));
     assert_eq!(user.email, "owner@example.com");
-    assert_eq!(user.role, Role::TenantOwner);
+    assert_eq!(user.profile_id, Some(3));
+    assert_eq!(user.extra_permissions, ["vehicle.read@own", "fuel-entry.read"]);
     assert_eq!(user.tenant_id, Some(42));
     assert_eq!(user.cpf.as_deref(), Some("52998224725"));
+    // access is resolved by the gateway, never by the mapper
+    assert_eq!(user.access, Access::default());
     assert_eq!(user.created_at, Some(at().naive_utc()));
     assert_eq!(user.updated_by.as_deref(), Some("admin"));
 }
 
 #[test]
-fn an_unknown_stored_role_degrades_to_the_least_privileged_one() {
+fn malformed_stored_extra_permissions_degrade_to_none() {
     let mut model = user_model();
-    model.role = "Wizard".into();
-    assert_eq!(UserEntityMapper::from_model(model).role, Role::TenantUser);
+    model.extra_permissions = "not json".into();
+    assert!(UserEntityMapper::from_model(model).extra_permissions.is_empty());
 }
 
 #[test]
@@ -349,7 +352,16 @@ fn user_active_model_never_touches_blocked_reason_or_audit_fields() {
     assert!(matches!(active.created_at, ActiveValue::NotSet));
     assert!(matches!(active.created_by, ActiveValue::NotSet));
     assert_eq!(active.id, ActiveValue::Set(7));
-    assert_eq!(active.role, ActiveValue::Set("TenantOwner".into()));
+    assert_eq!(active.profile_id, ActiveValue::Set(3));
+    assert_eq!(active.extra_permissions, ActiveValue::Set(r#"["vehicle.read@own","fuel-entry.read"]"#.into()));
+}
+
+#[test]
+fn a_user_without_a_resolved_profile_leaves_the_column_for_the_database() {
+    let mut user = UserEntityMapper::from_model(user_model());
+    user.profile_id = None;
+    let active = UserEntityMapper::build_active_model(user);
+    assert!(matches!(active.profile_id, ActiveValue::NotSet));
 }
 
 #[test]
@@ -372,14 +384,17 @@ fn user_from_active_model_handles_complete_and_partial_models() {
     let partial = UserEntityMapper::build_active_model(UserEntityMapper::from_model(user_model()));
     let user = UserEntityMapper::from_active_model(partial);
     assert_eq!(user.email, "owner@example.com");
-    assert_eq!(user.role, Role::TenantOwner);
+    assert_eq!(user.profile_id, Some(3));
+    assert_eq!(user.extra_permissions, ["vehicle.read@own", "fuel-entry.read"]);
     assert_eq!(user.created_at, None);
 }
 
 #[test]
-fn an_active_user_model_without_a_role_degrades_to_the_least_privileged_role() {
+fn an_empty_active_user_model_has_no_profile_and_no_extras() {
     let user = UserEntityMapper::from_active_model(user_entity::ActiveModel::default());
-    assert_eq!(user.role, Role::TenantUser);
+    assert_eq!(user.profile_id, None);
+    assert!(user.extra_permissions.is_empty());
+    assert_eq!(user.access, Access::default());
 }
 
 #[test]
@@ -915,6 +930,14 @@ fn customer_model() -> customer_entity::Model {
         uuid: string_to_bytes(UUID),
         tenant_id: Some(42),
         name: "Acme Logistics".into(),
+        legal_name: Some("Acme Logistics Ltda".into()),
+        tax_id: Some("11222333000181".into()),
+        address_line1: Some("Rua A, 10".into()),
+        address_line2: None,
+        locality: Some("Curitiba".into()),
+        administrative_area: Some("PR".into()),
+        postal_code: Some("80000000".into()),
+        country_code: Some("BR".into()),
         status: "Active".into(),
         notes: Some("Net 30".into()),
         created_at: at(),
@@ -934,11 +957,17 @@ fn customer_round_trips_through_the_mapper() {
     assert_eq!(customer.uuid.as_deref(), Some(UUID));
     assert_eq!(customer.tenant_id, Some(42));
     assert_eq!(customer.name, "Acme Logistics");
+    assert_eq!(customer.legal_name.as_deref(), Some("Acme Logistics Ltda"));
+    assert_eq!(customer.tax_id.as_deref(), Some("11222333000181"));
+    assert_eq!(customer.locality.as_deref(), Some("Curitiba"));
+    assert_eq!(customer.country_code.as_deref(), Some("BR"));
     assert_eq!(customer.notes.as_deref(), Some("Net 30"));
     assert_eq!(customer.created_at, Some(at().naive_utc()));
 
     let active = CustomerEntityMapper::build_active_model(customer.clone());
     assert_eq!(active.name, ActiveValue::Set("Acme Logistics".into()));
+    assert_eq!(active.tax_id, ActiveValue::Set(Some("11222333000181".into())));
+    assert_eq!(active.administrative_area, ActiveValue::Set(Some("PR".into())));
     assert!(matches!(active.created_at, ActiveValue::NotSet));
     assert!(matches!(active.updated_at, ActiveValue::NotSet));
 
@@ -946,6 +975,30 @@ fn customer_round_trips_through_the_mapper() {
         CustomerEntityMapper::from_active_model(customer_model().into_active_model()),
         customer
     );
+}
+
+/// `EPIC-SC-01-S04` mapper fallback: a partial `ActiveModel` (the shape a failed `try_into_model`
+/// produces) still recovers the identity and address fields it carries, and leaves the rest absent.
+#[test]
+fn a_partial_customer_active_model_recovers_what_it_carries() {
+    let partial = customer_entity::ActiveModel {
+        name: ActiveValue::Set("Acme".into()),
+        legal_name: ActiveValue::Set(Some("Acme Ltda".into())),
+        tax_id: ActiveValue::Set(Some("11222333000181".into())),
+        locality: ActiveValue::Set(Some("Campinas".into())),
+        country_code: ActiveValue::Set(Some("BR".into())),
+        status: ActiveValue::Set("Active".into()),
+        ..Default::default()
+    };
+    let customer = CustomerEntityMapper::from_active_model(partial);
+    assert_eq!(customer.id, None);
+    assert_eq!(customer.name, "Acme");
+    assert_eq!(customer.legal_name.as_deref(), Some("Acme Ltda"));
+    assert_eq!(customer.tax_id.as_deref(), Some("11222333000181"));
+    assert_eq!(customer.locality.as_deref(), Some("Campinas"));
+    assert_eq!(customer.country_code.as_deref(), Some("BR"));
+    assert_eq!(customer.address_line1, None);
+    assert_eq!(customer.postal_code, None);
 }
 
 #[test]
@@ -1926,12 +1979,11 @@ fn claims_builder_requires_its_fields() {
         .uuid(UUID)
         .name("Owner")
         .user_id(7)
-        .role(Role::TenantOwner)
         .tenant_id(Some(42))
         .build()
         .expect("complete claims build");
     assert_eq!(claims.sub, "owner@example.com");
-    assert_eq!(claims.role, Role::TenantOwner);
+    assert_eq!(claims.user_id, 7);
     assert_eq!(claims.tenant_id, Some(42));
 
     assert!(
@@ -1962,7 +2014,9 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         tenant_id: Some(42),
         name: "Dispatcher".into(),
         name_key: "dispatcher".into(),
-        base_role: Role::TenantOwner,
+        scope: ProfileScope::Tenant,
+        system: false,
+        key: None,
         active: false,
         permissions: vec!["work-orders.read".into(), "work-orders.update".into()],
         created_at: None,
@@ -1976,12 +2030,40 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
     active.updated_at = ActiveValue::Set(at());
     active.updated_by = ActiveValue::Set(Some("owner@example.com".into()));
     let mapped = AccessProfileEntityMapper::from_active_model(active);
-    assert_eq!(mapped.base_role, Role::TenantOwner);
+    assert_eq!(mapped.scope, ProfileScope::Tenant);
+    assert!(!mapped.system);
+    assert_eq!(mapped.key, None);
+    assert_eq!(mapped.tenant_id, Some(42));
     assert_eq!(
         mapped.permissions,
         ["work-orders.read", "work-orders.update"]
     );
     assert_eq!(mapped.created_at, Some(at().naive_utc()));
+
+    let system = AccessProfileEntityMapper::build_active_model(AccessProfile {
+        id: Some(903),
+        uuid: Some(UUID.into()),
+        tenant_id: None,
+        name: "Platform administrator".into(),
+        name_key: "platform administrator".into(),
+        scope: ProfileScope::Platform,
+        system: true,
+        key: Some("SysAdmin".into()),
+        active: true,
+        permissions: vec!["tenant.create".into()],
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    });
+    assert_eq!(system.scope, ActiveValue::Set("Platform".into()));
+    assert_eq!(system.system, ActiveValue::Set(true));
+    assert_eq!(system.key, ActiveValue::Set(Some("SysAdmin".into())));
+    assert_eq!(system.tenant_id, ActiveValue::Set(None));
+    let mapped = AccessProfileEntityMapper::from_active_model(system);
+    assert_eq!(mapped.scope, ProfileScope::Platform);
+    assert!(mapped.system);
+    assert_eq!(mapped.key.as_deref(), Some("SysAdmin"));
 
     let mut malformed = AccessProfileEntityMapper::build_active_model(AccessProfile {
         id: Some(902),
@@ -1989,7 +2071,9 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         tenant_id: Some(42),
         name: "Invalid".into(),
         name_key: "invalid".into(),
-        base_role: Role::TenantOwner,
+        scope: ProfileScope::Tenant,
+        system: false,
+        key: None,
         active: true,
         permissions: vec![],
         created_at: None,
@@ -1997,16 +2081,18 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         updated_at: None,
         updated_by: None,
     });
-    malformed.base_role = ActiveValue::Set("Unknown".into());
+    malformed.scope = ActiveValue::Set("Unknown".into());
     malformed.permissions = ActiveValue::Set("{".into());
     malformed.created_at = ActiveValue::Set(at());
     malformed.updated_at = ActiveValue::Set(at());
     let mapped = AccessProfileEntityMapper::from_active_model(malformed);
-    assert_eq!(mapped.base_role, Role::TenantUser);
+    assert_eq!(mapped.scope, ProfileScope::Tenant);
     assert!(mapped.permissions.is_empty());
 
     let partial = AccessProfileEntityMapper::from_active_model(Default::default());
-    assert_eq!(partial.base_role, Role::TenantUser);
+    assert_eq!(partial.scope, ProfileScope::Tenant);
+    assert!(!partial.system);
+    assert_eq!(partial.key, None);
     assert!(partial.active);
     assert!(partial.permissions.is_empty());
 }

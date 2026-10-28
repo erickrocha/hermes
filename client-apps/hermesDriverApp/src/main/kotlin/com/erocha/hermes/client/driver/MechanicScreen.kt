@@ -52,6 +52,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.erocha.hermes.client.shared.AppAccess
 import com.erocha.hermes.client.shared.GarageAttendance
 import com.erocha.hermes.client.shared.GarageQueueEntry
 import com.erocha.hermes.client.shared.GarageService
@@ -67,6 +68,7 @@ private const val POLL_MILLIS = 20_000L
 
 /** The mechanic's screen state; every call goes through the host, which renews the session and reports refusals. */
 internal class MechanicState(private val host: FleetHost) {
+    val access get() = host.access
     var queue by mutableStateOf<List<GarageQueueEntry>?>(null)
     var refreshing by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
@@ -145,27 +147,42 @@ internal fun MechanicApp(host: FleetHost, userName: String, themeLabel: String, 
     HermesMaterialTheme { MechanicBody(host, userName, themeLabel, onTheme, onSignOut) }
 }
 
+/** The mechanic's tabs; each appears only for whoever holds the permission its screen writes with (`C-035`). */
+private enum class MechanicTab(val title: Int, val label: Int, val icon: String) {
+    GARAGE(R.string.garage_title, R.string.tab_garage, "🔧"),
+    VALETA(R.string.valeta_title, R.string.tab_valeta, "🔍"),
+    ORDERS(R.string.orders_title, R.string.tab_maintenance, "🛠"),
+}
+
+private fun mechanicTabs(access: AppAccess): List<MechanicTab> = buildList {
+    if (access.garage) add(MechanicTab.GARAGE)
+    if (access.valeta) add(MechanicTab.VALETA)
+    if (access.orders) add(MechanicTab.ORDERS)
+}
+
 @Composable
 private fun MechanicBody(host: FleetHost, userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
     val garage = remember { MechanicState(host) }
     val valeta = remember { ValetaState(host) }
     val orders = remember { MaintenanceState(host) }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val tabs = remember(host.access) { mechanicTabs(host.access) }
+    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val tab = tabs[tabIndex.coerceIn(0, tabs.lastIndex)]
     LaunchedEffect(Unit) {
-        garage.refresh()
+        if (MechanicTab.GARAGE in tabs) garage.refresh()
         while (true) {
             delay(POLL_MILLIS)
-            if (garage.saving == null) garage.refresh(silent = true)
-            if (tab == 2 && orders.busy == null) orders.refresh(silent = true)
+            if (MechanicTab.GARAGE in tabs && garage.saving == null) garage.refresh(silent = true)
+            if (tab == MechanicTab.ORDERS && orders.busy == null) orders.refresh(silent = true)
         }
     }
     LaunchedEffect(tab) {
-        if (tab == 1) valeta.start()
-        if (tab == 2) orders.refresh()
+        if (tab == MechanicTab.VALETA) valeta.start()
+        if (tab == MechanicTab.ORDERS) orders.refresh()
     }
-    BackHandler(enabled = tab == 0 && garage.open != null) { garage.close() }
-    BackHandler(enabled = tab == 1 && valeta.canGoBack) { valeta.back() }
-    BackHandler(enabled = tab == 2 && orders.open != null) { orders.close() }
+    BackHandler(enabled = tab == MechanicTab.GARAGE && garage.open != null) { garage.close() }
+    BackHandler(enabled = tab == MechanicTab.VALETA && valeta.canGoBack) { valeta.back() }
+    BackHandler(enabled = tab == MechanicTab.ORDERS && orders.open != null) { orders.close() }
 
     Column(
         modifier = Modifier
@@ -175,28 +192,20 @@ private fun MechanicBody(host: FleetHost, userName: String, themeLabel: String, 
             .navigationBarsPadding(),
     ) {
         val attendance = garage.open
-        if (tab == 0 && attendance != null) {
+        if (tab == MechanicTab.GARAGE && attendance != null) {
             VehicleScreen(garage, attendance)
-        } else if (tab == 2 && orders.open != null) {
+        } else if (tab == MechanicTab.ORDERS && orders.open != null) {
             OrderScreen(orders)
         } else {
-            val title = when (tab) {
-                0 -> R.string.garage_title
-                1 -> R.string.valeta_title
-                else -> R.string.orders_title
-            }
-            AppHeader(stringResource(title), userName, themeLabel, onTheme, onSignOut)
+            AppHeader(stringResource(tab.title), userName, themeLabel, onTheme, onSignOut)
             Box(modifier = Modifier.weight(1f)) {
                 when (tab) {
-                    0 -> GarageTab(garage)
-                    1 -> ValetaTab(valeta)
-                    else -> OrdersTab(orders)
+                    MechanicTab.GARAGE -> GarageTab(garage)
+                    MechanicTab.VALETA -> ValetaTab(valeta)
+                    MechanicTab.ORDERS -> OrdersTab(orders)
                 }
             }
-            BottomNav(
-                listOf(R.string.tab_garage to "🔧", R.string.tab_valeta to "🔍", R.string.tab_maintenance to "🛠"),
-                tab,
-            ) { tab = it }
+            if (tabs.size > 1) BottomNav(tabs.map { it.label to it.icon }, tabs.indexOf(tab)) { tabIndex = it }
         }
     }
     if (garage.picking) VehiclePicker(garage)
@@ -250,12 +259,14 @@ private fun QueueList(state: MechanicState) {
                 }
                 items(queue.orEmpty(), key = { it.vehicleUuid }) { entry -> QueueCard(entry) { state.show(entry) } }
             }
-            Button(
-                onClick = { state.startPicking() },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = token(R.attr.hermesAccent), contentColor = Color.White),
-            ) { Text(stringResource(R.string.garage_open_triage), fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
+            if (state.access.openTriage) {
+                Button(
+                    onClick = { state.startPicking() },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = token(R.attr.hermesAccent), contentColor = Color.White),
+                ) { Text(stringResource(R.string.garage_open_triage), fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
+            }
         }
     }
 }
@@ -325,13 +336,13 @@ internal fun VehicleScreen(state: MechanicState, attendance: GarageAttendance) {
     ) {
         if (services.isEmpty()) item { Text(stringResource(R.string.garage_no_services), color = token(R.attr.hermesTextSecondary)) }
         items(services, key = { it.uuid ?: it.name }) { service ->
-            ServiceCard(service, busy = state.saving == service.uuid) { state.mark(service, it) }
+            ServiceCard(service, busy = state.saving == service.uuid, canMark = state.access.markService) { state.mark(service, it) }
         }
     }
 }
 
 @Composable
-private fun ServiceCard(service: GarageService, busy: Boolean, onMark: (String) -> Unit) {
+private fun ServiceCard(service: GarageService, busy: Boolean, canMark: Boolean, onMark: (String) -> Unit) {
     val current = service.effectiveState
     val color = when (current) {
         STATE_PERFORMED -> token(R.attr.hermesOk)
@@ -351,6 +362,7 @@ private fun ServiceCard(service: GarageService, busy: Boolean, onMark: (String) 
             if (service.requiredForDeparture) Pill(stringResource(R.string.garage_required), token(R.attr.hermesWarning))
             Pill(stateLabel(current), color)
         }
+        if (!canMark) return@Column
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(STATE_PERFORMED, STATE_NOT_NEEDED, STATE_NOT_DONE).forEach { target ->

@@ -7,9 +7,10 @@ import { api } from '../api'
 import { store } from '../store'
 import { CostReportsPage, canSeeCosts } from './CostPages'
 import type { Session } from '../types'
+import { sessionAs, sessionWith, type SystemProfileKey } from '../test/session'
 
-const session = (role: Session['role'], permissions?: string[]): Session =>
-  ({ accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'a@b.c', uuid: 'u', name: 'n', userId: 1, role, tenantId: 42, tenantUuid: 't-42', permissions })
+const session = (profile: SystemProfileKey, permissions?: string[]): Session =>
+  permissions ? sessionWith(permissions) : sessionAs(profile)
 
 const cost = {
   plate: 'ABC1D23', bySource: { workOrderPostingsCents: 12500, externalServicesCents: 45000, fuelCents: 10000, expensesCents: 7000 }, totalCostCents: 74500,

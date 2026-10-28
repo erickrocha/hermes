@@ -1,11 +1,13 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
 use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::domain::access_profile::{AccessProfile, AccessProfileEntityMapper};
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
-use crate::domain::user::{User, UserEntityMapper};
-use entity::prelude::UserEntity as UserQuery;
+use crate::domain::user::{Access, User, UserEntityMapper};
+use entity::access_profile_entity;
+use entity::prelude::{AccessProfileEntity as AccessProfileQuery, UserEntity as UserQuery};
 use entity::user_entity;
+use std::collections::HashMap;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait,
@@ -37,7 +39,11 @@ pub trait UserStore: UserLookupStore {
     async fn get_by_cpf(&self, _cpf: String) -> Result<Vec<User>, BusinessError> {
         Ok(Vec::new())
     }
-    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError>;
+    /// The one account holding the system profile `key` (`SysAdmin` at boot). `None` by default for
+    /// in-memory stores.
+    async fn get_by_profile_key(&self, _key: &str) -> Result<Option<User>, BusinessError> {
+        Ok(None)
+    }
     async fn list_page(
         &self,
         page: u64,
@@ -68,14 +74,52 @@ impl UserLookupStore for UserGateway {
         let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_id(self, id)
             .await
             .map_err(lookup_database_error)?;
-        Ok(model.map(UserEntityMapper::from_model))
+        self.resolve_one(model.map(UserEntityMapper::from_model)).await
     }
 
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<User>, BusinessError> {
         let model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_by_uuid(self, uuid)
             .await
             .map_err(lookup_database_error)?;
-        Ok(model.map(UserEntityMapper::from_model))
+        self.resolve_one(model.map(UserEntityMapper::from_model)).await
+    }
+}
+
+impl UserGateway {
+    /// `C-035`: every user read from the store carries their resolved [`Access`]. The profile is read by
+    /// primary key and outside any tenant scope: it is the user's own, already reached through the user
+    /// row, and authentication resolves it before a scope exists.
+    async fn resolve_one(&self, user: Option<User>) -> Result<Option<User>, BusinessError> {
+        match user {
+            None => Ok(None),
+            Some(user) => Ok(self.resolve_all(vec![user]).await?.pop()),
+        }
+    }
+
+    async fn resolve_all(&self, users: Vec<User>) -> Result<Vec<User>, BusinessError> {
+        let mut ids: Vec<i64> = users.iter().filter_map(|u| u.profile_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(users);
+        }
+        let profiles: HashMap<i64, AccessProfile> = AccessProfileQuery::find()
+            .filter(access_profile_entity::Column::Id.is_in(ids))
+            .all(&self.db)
+            .await
+            .map_err(lookup_database_error)?
+            .into_iter()
+            .map(|m| (m.id, AccessProfileEntityMapper::from_model(m)))
+            .collect();
+        Ok(users
+            .into_iter()
+            .map(|mut user| {
+                if let Some(profile) = user.profile_id.and_then(|id| profiles.get(&id)) {
+                    user.access = Access::resolve(profile, &user.extra_permissions);
+                }
+                user
+            })
+            .collect())
     }
 }
 
@@ -85,35 +129,36 @@ impl UserStore for UserGateway {
         let model = Self::find_by_user_id(&self.db, id)
             .await
             .map_err(lookup_database_error)?;
-        Ok(model.map(UserEntityMapper::from_model))
+        self.resolve_one(model.map(UserEntityMapper::from_model)).await
     }
 
     async fn save(&self, user: User) -> Result<User, BusinessError> {
         let active_model = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::persist(self, user)
             .await
             .map_err(database_error)?;
-        Ok(UserEntityMapper::from_active_model(active_model))
+        let saved = self.resolve_one(Some(UserEntityMapper::from_active_model(active_model))).await?;
+        saved.ok_or_else(|| BusinessError::new("User was not saved".to_string()))
     }
 
     async fn get_by_email(&self, email: String) -> Result<Option<User>, BusinessError> {
         let model = UserGateway::find_by_email(&self.db, email)
             .await
             .map_err(database_error)?;
-        Ok(model.map(UserEntityMapper::from_model))
+        self.resolve_one(model.map(UserEntityMapper::from_model)).await
     }
 
     async fn get_by_cpf(&self, cpf: String) -> Result<Vec<User>, BusinessError> {
         let models = UserGateway::find_all_by_cpf(&self.db, cpf)
             .await
             .map_err(database_error)?;
-        Ok(models.into_iter().map(UserEntityMapper::from_model).collect())
+        self.resolve_all(models.into_iter().map(UserEntityMapper::from_model).collect()).await
     }
 
-    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError> {
-        let model = UserGateway::find_by_role(&self.db, role.to_string())
+    async fn get_by_profile_key(&self, key: &str) -> Result<Option<User>, BusinessError> {
+        let model = UserGateway::find_by_profile_key(&self.db, key)
             .await
             .map_err(database_error)?;
-        Ok(model.map(UserEntityMapper::from_model))
+        self.resolve_one(model.map(UserEntityMapper::from_model)).await
     }
 
     async fn list_page(
@@ -125,21 +170,21 @@ impl UserStore for UserGateway {
         let (models, total) = UserGateway::find_page(self, page, page_size, search)
             .await
             .map_err(database_error)?;
-        Ok((UserEntityMapper::from_models(models), total))
+        Ok((self.resolve_all(UserEntityMapper::from_models(models)).await?, total))
     }
 
     async fn list_all(&self) -> Result<Vec<User>, BusinessError> {
         let models = <Self as Gateway<User, user_entity::Model, user_entity::ActiveModel>>::find_all(self)
             .await
             .map_err(database_error)?;
-        Ok(UserEntityMapper::from_models(models))
+        self.resolve_all(UserEntityMapper::from_models(models)).await
     }
 
     async fn list_by_tenant(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
         let models = UserGateway::find_all_by_tenant_id(self, tenant_id)
             .await
             .map_err(database_error)?;
-        Ok(UserEntityMapper::from_models(models))
+        self.resolve_all(UserEntityMapper::from_models(models)).await
     }
 }
 
@@ -253,12 +298,20 @@ impl UserGateway {
             .await
     }
 
-    pub async fn find_by_role(
+    /// The account holding the system profile `key`; unscoped, like every boot-time lookup.
+    pub async fn find_by_profile_key(
         db: &DbConn,
-        role: String,
+        key: &str,
     ) -> Result<Option<user_entity::Model>, DbErr> {
+        let Some(profile) = AccessProfileQuery::find()
+            .filter(access_profile_entity::Column::Key.eq(key))
+            .one(db)
+            .await?
+        else {
+            return Ok(None);
+        };
         UserQuery::find()
-            .filter(user_entity::Column::Role.eq(role))
+            .filter(user_entity::Column::ProfileId.eq(profile.id))
             .one(db)
             .await
     }

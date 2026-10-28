@@ -1,10 +1,10 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { apiMessage } from '../api'
+import { apiErrorKey, apiMessage } from '../api'
 import { listPage, read, send, type Method, type Params } from '../services/resourceService'
 import { emptyPage, type Page } from '../types'
 
 export interface ListRequest { page: number; pageSize: number; extra?: Params }
-export interface ResourceState<T> { list: Page<T>; current: T | null; loading: boolean; saving: boolean; error: string; saved: boolean }
+export interface ResourceState<T> { list: Page<T>; current: T | null; loading: boolean; saving: boolean; error: string; errorKey?: string; saved: boolean }
 export interface SaveRequest { uuid?: string; body: unknown; suffix?: string; method?: Method }
 export interface ActionRequest { method: Method; path: string; body?: unknown }
 
@@ -18,8 +18,9 @@ export function createResourceSlice<T>(name: string, path: string) {
   const fetchOne = createAsyncThunk<T, string, { rejectValue: string }>(`${name}/fetchOne`, async (uuid, { rejectWithValue }) => {
     try { return await read<T>(`${path}/uuid/${uuid}`) } catch (cause) { return rejectWithValue(failure(cause)) }
   })
-  const save = createAsyncThunk<T, SaveRequest, { rejectValue: string }>(`${name}/save`, async ({ uuid, body, suffix = '', method }, { rejectWithValue }) => {
-    try { return await send<T>(method ?? (uuid ? 'put' : 'post'), `${path}${uuid ? `/uuid/${uuid}` : ''}${suffix}`, body) } catch (cause) { return rejectWithValue(failure(cause)) }
+  // The save keeps the server's `errorKey` next to the message so a form can point the failure at its field.
+  const save = createAsyncThunk<T, SaveRequest, { rejectValue: string; rejectedMeta: { errorKey?: string } }>(`${name}/save`, async ({ uuid, body, suffix = '', method }, { rejectWithValue }) => {
+    try { return await send<T>(method ?? (uuid ? 'put' : 'post'), `${path}${uuid ? `/uuid/${uuid}` : ''}${suffix}`, body) } catch (cause) { return rejectWithValue(failure(cause), { errorKey: apiErrorKey(cause) }) }
   })
   const remove = createAsyncThunk<void, string, { rejectValue: string }>(`${name}/remove`, async (uuid, { rejectWithValue }) => {
     try { await send('delete', `${path}/uuid/${uuid}`) } catch (cause) { return rejectWithValue(failure(cause)) }
@@ -31,7 +32,7 @@ export function createResourceSlice<T>(name: string, path: string) {
   const initialState: ResourceState<T> = { list: emptyPage<T>(), current: null, loading: false, saving: false, error: '', saved: false }
   const slice = createSlice({
     name, initialState,
-    reducers: { reset: (state) => { state.error = ''; state.saved = false; state.current = null } },
+    reducers: { reset: (state) => { state.error = ''; state.errorKey = undefined; state.saved = false; state.current = null } },
     extraReducers: (builder) => {
       builder
         .addCase(fetchList.pending, (s) => { s.loading = true; s.error = '' })
@@ -42,9 +43,9 @@ export function createResourceSlice<T>(name: string, path: string) {
         .addCase(fetchOne.rejected, (s, a) => { s.loading = false; s.error = a.payload || 'loadError' })
       for (const thunk of [save, remove, act]) {
         builder
-          .addCase(thunk.pending, (s) => { s.saving = true; s.error = ''; s.saved = false })
+          .addCase(thunk.pending, (s) => { s.saving = true; s.error = ''; s.errorKey = undefined; s.saved = false })
           .addCase(thunk.fulfilled, (s) => { s.saving = false; s.saved = true })
-          .addCase(thunk.rejected, (s, a) => { s.saving = false; s.error = (a.payload as string | undefined) || 'genericError' })
+          .addCase(thunk.rejected, (s, a) => { s.saving = false; s.error = (a.payload as string | undefined) || 'genericError'; s.errorKey = (a.meta as { errorKey?: string }).errorKey })
       }
     },
   })

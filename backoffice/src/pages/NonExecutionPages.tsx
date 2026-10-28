@@ -15,7 +15,6 @@ import type { AppDispatch, RootState } from '../store'
 export { canSeeNonExecutions } from '../features/routeAccess'
 
 const PAGE_SIZE = 25
-const ACTORS = ['TenantOwner', 'Mechanic'] as const
 
 const when = (value?: string | null) => (value ? new Date(value).toLocaleString() : '—')
 
@@ -40,12 +39,12 @@ export function NonExecutionsPage() {
   const [index, setIndex] = useState(0)
   useEffect(() => { void dispatch(resetForm()) }, [dispatch])
   useEffect(() => { void dispatch(fetchInbox({ page: index, pageSize: PAGE_SIZE })) }, [dispatch, index])
-  const mayJustify = can(session, 'non-execution.justify', [...ACTORS])
+  const mayJustify = can(session, 'non-execution.justify')
 
   return <>
     <PageHeader title={t('nonExecutions')} subtitle={t('nonExecutionsText')} actions={<>
-      {can(session, 'non-execution.record-manual', [...ACTORS]) && <Link className="btn secondary" to="/non-executions/manual">{t('recordManualNonExecution')}</Link>}
-      {can(session, 'non-execution.evaluate', ['TenantOwner']) && <button type="button" className="btn primary" disabled={evaluating} onClick={() => void dispatch(evaluateNow())}><Play size={16} />{evaluating ? t('evaluating') : t('evaluateNow')}</button>}
+      {can(session, 'non-execution.record-manual') && <Link className="btn secondary" to="/non-executions/manual">{t('recordManualNonExecution')}</Link>}
+      {can(session, 'non-execution.evaluate') && <button type="button" className="btn primary" disabled={evaluating} onClick={() => void dispatch(evaluateNow())}><Play size={16} />{evaluating ? t('evaluating') : t('evaluateNow')}</button>}
     </>} />
     {evaluation && <p className="form-hint" role="status">{t('nonExecutionEvaluated', { occurrences: evaluation.occurrencesRecorded, concluded: evaluation.plansConcluded })}</p>}
     <StateView loading={loading && !page.items.length} error={error} empty={!loading && !error && !page.items.length}>

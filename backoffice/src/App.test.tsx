@@ -8,10 +8,11 @@ import { api } from './api'
 import { App } from './App'
 import { emptyPage } from './types'
 import type { Session } from './types'
+import { sessionAs } from './test/session'
 
-const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null }
-const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42 }
-const tenantUserSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'driver.coord@transmega.com', uuid: 'user-uuid', name: 'Coordinator', userId: 3, role: 'TenantUser', tenantId: 42 }
+const sysAdminSession: Session = sessionAs('SysAdmin', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
+const tenantOwnerSession: Session = sessionAs('TenantOwner', { email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2 })
+const tenantUserSession: Session = sessionAs('TenantUser', { email: 'driver.coord@transmega.com', uuid: 'user-uuid', name: 'Coordinator', userId: 3 })
 
 function sessionStore(session: Session | null) {
   return configureStore({

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
-import { can, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useAction, useResourceForm, useResourceState } from '../features/hooks'
 import { parts, purchaseOrders } from '../features/resources'
@@ -30,8 +30,8 @@ export function PartDetailPage() {
   return <>
     <PageHeader title={part ? `${part.code} — ${part.name}` : t('parts')} actions={<>
       <Link className="btn secondary" to="/parts">{t('back')}</Link>
-      {can(session, 'part.stock-entry', [...OWNER_MECHANIC]) && <Link className="btn primary" to={`/parts/${uuid}/entry`}>{t('stockEntry')}</Link>}
-      {can(session, 'part.stock-adjust', [...OWNER_MECHANIC]) && <Link className="btn secondary" to={`/parts/${uuid}/adjustment`}>{t('stockAdjust')}</Link>}</>} />
+      {can(session, 'part.stock-entry') && <Link className="btn primary" to={`/parts/${uuid}/entry`}>{t('stockEntry')}</Link>}
+      {can(session, 'part.stock-adjust') && <Link className="btn secondary" to={`/parts/${uuid}/adjustment`}>{t('stockAdjust')}</Link>}</>} />
     <StateView loading={state.loading} error={state.error}>
       {part && <DetailCard rows={[
         { label: t('currentStock'), value: `${String(part.currentStock ?? 0)} ${String(part.unit)}` }, { label: t('minimumStock'), value: String(part.minimumStock) },
@@ -57,13 +57,13 @@ export function PurchaseOrderDetailPage() {
   useEffect(() => { if (uuid) dispatch(purchaseOrders.fetchOne(uuid)) }, [dispatch, uuid])
   const status = String(order?.status ?? '')
   const apply = async () => { const action = confirming; setConfirming(null); if (action && uuid && await run('put', `/purchase-order/uuid/${uuid}/${action}`)) dispatch(purchaseOrders.fetchOne(uuid)) }
-  const mayMove = can(session, 'purchase-order.mark-ordered', [...OWNER_MECHANIC])
+  const mayMove = can(session, 'purchase-order.mark-ordered')
   return <>
     <PageHeader title={order ? String(order.number) : t('purchaseOrders')} actions={<>
       <Link className="btn secondary" to="/purchase-orders">{t('back')}</Link>
       {order && status === 'Requested' && mayMove && <Link className="btn primary" to={`/purchase-orders/${uuid}/ordered`}>{t('markOrdered')}</Link>}
-      {order && status === 'Ordered' && can(session, 'purchase-order.mark-purchased', [...OWNER_MECHANIC]) && <button className="btn primary" onClick={() => setConfirming('mark-purchased')}>{t('markPurchased')}</button>}
-      {order && status !== 'Cancelled' && status !== 'Purchased' && can(session, 'purchase-order.cancel', [...OWNER_MECHANIC]) && <button className="btn secondary danger-text" onClick={() => setConfirming('cancel')}>{t('cancelOrder')}</button>}</>} />
+      {order && status === 'Ordered' && can(session, 'purchase-order.mark-purchased') && <button className="btn primary" onClick={() => setConfirming('mark-purchased')}>{t('markPurchased')}</button>}
+      {order && status !== 'Cancelled' && status !== 'Purchased' && can(session, 'purchase-order.cancel') && <button className="btn secondary danger-text" onClick={() => setConfirming('cancel')}>{t('cancelOrder')}</button>}</>} />
     <StateView loading={state.loading} error={order ? '' : state.error}>
       {order && <DetailCard rows={[
         { label: t('status'), value: <span className="badge blue">{t(`poStatus${status}`)}</span> }, { label: t('quantity'), value: String(order.quantity) },

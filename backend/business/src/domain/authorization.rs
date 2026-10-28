@@ -1,741 +1,615 @@
-//! EPIC-XF-02 (HRMS-012...017): the one shared authorization module AD-016
-//! calls for. Before this, "a real SysAdmin has no tenant" (PD-013) was
-//! written out verbatim in five places (`business_plan_endpoint::authorize`,
-//! `tenant_endpoint::can_access_tenant` and its two inline call sites in
-//! `add`/`add_plan`, and `authentication_middleware`'s `enforce_tenant` flag)
-//! with nothing to stop them drifting apart.
+//! EPIC-XF-02 (HRMS-012...017): the one shared authorization module AD-016 calls for.
 //!
-//! PD-020 bounds this deliberately: these are named **capabilities**, not a
-//! permission/policy store. Call sites ask "can this actor do X", never "is
-//! this actor role Y" -- so if a role-to-permission mapping is added later
-//! (PD-020 anticipates but does not build it), only the bodies of these
-//! functions change, not their call sites (HRMS-015).
+//! `C-035` rebuilt it on permissions. Before, every capability here was a role test (`actor.role ==
+//! Role::TenantOwner && ...`) and the profile a user held was consulted only by the middleware, only for
+//! the three roles below the owner. Now a capability is two questions and nothing else:
 //!
-//! EPIC-IA-04 (HRMS-113...116, HRMS-118, PD-019) added the creation
-//! hierarchy below: who may create a user of which role, and who may
-//! reassign an existing one. `user_endpoint`'s current code is not an
-//! unfinished version of that rule -- it implemented a *different* one
-//! (every tenant-owner-created user forced to `TenantOwner`, and no path
-//! could ever produce a `TenantUser` at all, U-007). Read PD-019's citation
-//! in `02-system_requirements/hermes/identity-access_implementation_plan.md`
-//! before changing anything below this point.
+//! 1. **Does the actor hold the permission?** -- `User::access`, resolved by `UserGateway` from the
+//!    actor's profile, their own extra grants and the baseline (`domain::permission`).
+//! 2. **Does the actor's tenant reach the record?** -- a platform actor (a `ProfileScope::Platform`
+//!    profile, no tenant; PD-013's "unbound administrator" by another name) reaches every tenant; a
+//!    tenant actor reaches their own tenant only (HRM-090...096).
 //!
-//! `S05` (whether a tenant-bound administrator is even representable) is
-//! left alone: it is an open decision (U-019, decision-register.md D-08),
-//! not a refactor.
+//! The named `can_*` functions stay, so a call site reads as a business rule and a test can pin one
+//! down; each is a one-line composition of [`may_act_on`] / [`may_create_in`] / [`may`] over the
+//! catalogue code the operation asks for (`operation_permission::OPERATIONS`). The middleware asks the
+//! same question for every operation before the handler runs (`HRMS-856`); the handler asks it again
+//! with the record's tenant in hand.
+//!
+//! Own-records scope (`code@own`, `AC-04`) is not decided here: a handler that narrows a listing to the
+//! caller's own records asks `User::only_own(code)`.
 
-use crate::domain::enums::Role;
+use crate::domain::access_profile::AccessProfile;
+use crate::domain::enums::ProfileScope;
+use crate::domain::permission::{Grants, DRIVER_ACT};
 use crate::domain::user::User;
 
-/// The one place PD-013's definition lives: an unbound platform
-/// administrator is a `SysAdmin` with no tenant. Every other capability in
-/// this module is built on it (or, per PD-020, could be replaced
-/// independently of it later).
-pub fn is_unbound_sys_admin(user: &User) -> bool {
-    user.role == Role::SysAdmin && user.tenant_id.is_none()
+/// PD-013, restated for `C-035`: the platform actor holds a platform profile and belongs to no tenant.
+pub fn is_platform_actor(user: &User) -> bool {
+    user.access.scope == ProfileScope::Platform && user.tenant_id.is_none()
 }
 
-/// HRMS-111/HRMS-133: every role but the platform administrator is
-/// tenant-bound, the operational roles included (EPIC-IA-09-S05). An account
-/// that breaks that is refused outright rather than treated as unscoped.
+/// HRMS-111/HRMS-133: a tenant profile is held inside a tenant. An account that breaks that -- or a
+/// platform profile stamped with a tenant -- is refused outright rather than treated as unscoped.
 pub fn lacks_required_tenant(user: &User) -> bool {
-    user.role != Role::SysAdmin && user.tenant_id.is_none()
-}
-
-/// Whether `user` may read or act on the given tenant's own data: an
-/// unbound platform administrator (any tenant), or a member of that exact
-/// tenant (HRM-090...096).
-pub fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
-    user.tenant_id == Some(tenant_id) || is_unbound_sys_admin(user)
-}
-
-/// `PUT /tenant/uuid/{uuid}` -- editing the tenant's own record is the tenant
-/// owner's alone (`D-27` 4, 8; `C-032`). A tenant user, a driver and a mechanic
-/// are refused even inside their own tenant. (Before `D-27` a plain `TenantUser`
-/// could edit it -- the open owner question the tenancy suite carried.)
-pub fn can_update_tenant(user: &User, tenant_id: i64) -> bool {
-    is_unbound_sys_admin(user) || (user.role == Role::TenantOwner && user.tenant_id == Some(tenant_id))
-}
-
-/// `C-032` (`HRMS-855`, `D-27` 3, 8): profiles and who holds them belong to the tenant owner of the
-/// tenant, or to the platform administrator naming a tenant. Never to any profile.
-pub fn can_manage_access_profiles(actor: &User, tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return tenant_id.is_some();
+    match user.access.scope {
+        ProfileScope::Tenant => user.tenant_id.is_none(),
+        ProfileScope::Platform => user.tenant_id.is_some(),
     }
-    actor.role == Role::TenantOwner && actor.tenant_id.is_some() && (tenant_id.is_none() || tenant_id == actor.tenant_id)
 }
 
-/// `C-032` (`HRMS-860`): recording the odometer of a vehicle -- the administrator's, and the driver's on their
-/// own vehicle (reached only through `find_visible`, which scopes a driver to their assignment).
-pub fn can_record_odometer(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
-    can_administer_vehicle(actor, vehicle_tenant_id)
-        || (actor.role == Role::Driver && actor.tenant_id.is_some() && actor.tenant_id == vehicle_tenant_id)
+/// Whether `user` may read or act on the given tenant's own data: a platform actor (any tenant), or a
+/// member of that exact tenant (HRM-090...096).
+pub fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
+    user.tenant_id == Some(tenant_id) || is_platform_actor(user)
 }
 
-/// `D-27` 8 (`HRMS-857`): the tenant's full record and its configuration (rule and gauge settings) are read by the
-/// tenant owner and the platform administrator alone; everyone else gets the summary the console themes itself from.
+/// The actor's tenant reaches a record stamped with `record_tenant_id`.
+pub fn reaches(actor: &User, record_tenant_id: Option<i64>) -> bool {
+    is_platform_actor(actor) || (actor.tenant_id.is_some() && actor.tenant_id == record_tenant_id)
+}
+
+/// Holds `code` and reaches the record's tenant.
+pub fn may_act_on(actor: &User, code: &str, record_tenant_id: Option<i64>) -> bool {
+    actor.allows(code) && reaches(actor, record_tenant_id)
+}
+
+/// Holds any of `codes` and reaches the record's tenant -- for a handler that guards a family of
+/// operations the middleware already told apart one by one.
+pub fn may_act_on_any(actor: &User, codes: &[&str], record_tenant_id: Option<i64>) -> bool {
+    codes.iter().any(|code| actor.allows(code)) && reaches(actor, record_tenant_id)
+}
+
+/// Holds `code`, for an operation with no record to compare tenants against. A tenant actor without a
+/// tenant holds nothing.
+pub fn may(actor: &User, code: &str) -> bool {
+    actor.allows(code) && (is_platform_actor(actor) || actor.tenant_id.is_some())
+}
+
+/// Holds `code` and may create inside `target_tenant_id`: a platform actor names the owning tenant; a
+/// tenant actor creates in their own tenant only (an omitted target defaults to it).
+pub fn may_create_in(actor: &User, code: &str, target_tenant_id: Option<i64>) -> bool {
+    if !actor.allows(code) {
+        return false;
+    }
+    if is_platform_actor(actor) {
+        return target_tenant_id.is_some();
+    }
+    actor.tenant_id.is_some() && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+}
+
+/// `C-035`: nobody grants what they do not hold -- a profile's grants, or a user's extras, must be
+/// covered by the actor's own effective grants, at least as widely (`@own` does not cover full).
+pub fn can_grant(actor: &User, grants: &Grants) -> bool {
+    actor.access.grants.covers(grants)
+}
+
+/// Whether a profile may be held by an account in `tenant_id`: a platform profile by an account with no
+/// tenant; a tenant profile inside the tenant that owns it, or inside any tenant for a system profile.
+pub fn profile_fits(profile: &AccessProfile, tenant_id: Option<i64>) -> bool {
+    profile.active
+        && match profile.scope {
+            ProfileScope::Platform => tenant_id.is_none(),
+            ProfileScope::Tenant => tenant_id.is_some() && (profile.system || profile.tenant_id == tenant_id),
+        }
+}
+
+/// `C-035`: whether `user` may be named as a driver -- of a vehicle, a trip, a checklist, a fuelling --
+/// inside `tenant_id`. The former `role == Driver` test, now the `driver.act` permission.
+pub fn is_active_driver_of(user: &User, tenant_id: Option<i64>) -> bool {
+    user.enabled && user.tenant_id.is_some() && user.tenant_id == tenant_id && user.allows(DRIVER_ACT)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tenant record and configuration
+// ---------------------------------------------------------------------------------------------------
+
+/// `PUT /tenant/uuid/{uuid}` (`D-27` 4, 8; `C-032`).
+pub fn can_update_tenant(user: &User, tenant_id: i64) -> bool {
+    may_act_on(user, "tenant.update", Some(tenant_id))
+}
+
+/// `D-27` 8 (`HRMS-857`): the tenant's full record and its configuration (rule and gauge settings) are
+/// read by whoever holds the configuration permission; everyone else gets the summary the console themes
+/// itself from.
 pub fn can_read_tenant_configuration(user: &User) -> bool {
-    is_unbound_sys_admin(user) || (user.role == Role::TenantOwner && user.tenant_id.is_some())
+    may(user, "tenant-rule-settings.read")
 }
 
-/// `C-030` `HRMS-804…810`: what a vehicle costs and earns is the office's to read -- the platform administrator,
-/// the tenant owner and the tenant user -- never a driver's or a mechanic's.
-pub fn can_read_cost_reports(user: &User) -> bool {
-    is_unbound_sys_admin(user) || (user.tenant_id.is_some() && matches!(user.role, Role::TenantOwner | Role::TenantUser))
+/// Billing: the tenant's charges and settings are read by whoever holds `billing.read`; the platform
+/// configures, suspends and confirms (platform permissions).
+pub fn can_read_billing(user: &User) -> bool {
+    may(user, "billing.read")
 }
 
-/// `POST /tenant` -- only an unbound platform administrator may create a
-/// tenant (PD-019).
+/// `POST /tenant` -- the platform's alone (PD-019).
 pub fn can_create_tenant(user: &User) -> bool {
-    is_unbound_sys_admin(user)
+    is_platform_actor(user) && user.allows("tenant.create")
 }
 
-/// The business-plan catalogue is platform-global (PD-014); only an
-/// unbound platform administrator may read or write it.
-pub fn can_manage_business_plan_catalogue(user: &User) -> bool {
-    is_unbound_sys_admin(user)
-}
-
-/// PD-027: reference data (provinces, cities) is platform-global, exactly like
-/// the business-plan catalogue, so the same rule governs it -- only an unbound
-/// platform administrator may write it. A tenant editing the country's city
-/// list would be editing every other tenant's address options.
-pub fn can_manage_reference_data(user: &User) -> bool {
-    is_unbound_sys_admin(user)
-}
-
-/// `POST /tenant/{id}/plan` -- only an unbound platform administrator may
-/// set a tenant's plan (HRMS-224, PD-019, PD-021).
+/// `POST /tenant/{id}/plan` (HRMS-224, PD-019, PD-021).
 pub fn can_set_tenant_plan(user: &User) -> bool {
-    is_unbound_sys_admin(user)
+    is_platform_actor(user) && user.allows("tenant.plan")
 }
 
-/// Where a newly created user's tenant comes from, once
-/// [`can_create_user_with_role`] has decided the creation is allowed at all.
+/// The business-plan catalogue is platform-global (PD-014).
+pub fn can_manage_business_plan_catalogue(user: &User) -> bool {
+    is_platform_actor(user)
+        && may_act_on_any(
+            user,
+            &["business-plan.create", "business-plan.update", "business-plan.delete", "business-plan.read"],
+            None,
+        )
+}
+
+/// PD-027: reference data (provinces, cities) is platform-global, exactly like the business-plan catalogue.
+pub fn can_manage_reference_data(user: &User) -> bool {
+    is_platform_actor(user)
+        && [
+            "reference-data.province.create",
+            "reference-data.province.import",
+            "reference-data.city.create",
+            "reference-data.city.import",
+            "reference-data.province.manage-read",
+        ]
+        .iter()
+        .any(|code| user.allows(code))
+}
+
+/// `C-030` `HRMS-804…810`: what a vehicle costs and earns is the office's to read.
+pub fn can_read_cost_reports(user: &User) -> bool {
+    ["cost-report.vehicle.read", "cost-report.supplier.read", "cost-report.work-order.read"]
+        .iter()
+        .any(|code| may(user, code))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Access profiles and users
+// ---------------------------------------------------------------------------------------------------
+
+pub const PROFILE_ADMIN: &[&str] = &["profile.read", "profile.create", "profile.update", "profile.assign"];
+pub const USER_ADMIN: &[&str] = &["user.create", "user.update", "user.invite", "profile.assign"];
+
+/// `C-032` (`HRMS-855`): profiles and who holds them. `tenant_id` is the profile's owner -- `None` for a
+/// system or platform profile, which every tenant reads and only the platform edits (the use case keeps
+/// system profiles read-only).
+pub fn can_manage_access_profiles(actor: &User, tenant_id: Option<i64>) -> bool {
+    PROFILE_ADMIN.iter().any(|code| actor.allows(code))
+        && (is_platform_actor(actor) || (actor.tenant_id.is_some() && (tenant_id.is_none() || tenant_id == actor.tenant_id)))
+}
+
+/// Where a newly created user's tenant comes from, once [`can_assign_profile`] has decided the
+/// placement is allowed at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreationTenant {
-    /// Fixed by the hierarchy, not the caller's choice: `None` for a new
-    /// platform administrator, `Some(id)` for a tenant owner creating a
-    /// tenant user in their own tenant (HRMS-115, HRMS-118).
+    /// Fixed by the profile and the actor, not the caller's choice: `None` for a platform profile,
+    /// `Some(id)` for a tenant actor placing someone in their own tenant (HRMS-115, HRMS-118).
     Fixed(Option<i64>),
-    /// The caller names the tenant (a platform administrator creating a
-    /// tenant owner, HRMS-114). The caller of this function is responsible
-    /// for validating that the named tenant actually exists -- this module
-    /// has no I/O and cannot do that itself.
+    /// The caller names the tenant (a platform actor giving out a tenant profile, HRMS-114). The caller
+    /// of this function is responsible for validating that the named tenant actually exists -- this
+    /// module has no I/O and cannot do that itself.
     CallerChosen,
 }
 
-/// PD-019's creation hierarchy (EPIC-IA-04): an unbound platform
-/// administrator creates platform administrators and tenant owners; a
-/// tenant owner creates tenant users, drivers and mechanics in their own
-/// tenant only (EPIC-IA-09-S03, HRMS-131, D-22). Every
-/// other combination -- including a platform administrator creating a
-/// tenant user directly, which is the tenant owner's job -- is rejected
-/// (`None`), per S05's "every combination outside the hierarchy is
-/// rejected."
-pub fn can_create_user_with_role(actor: &User, target_role: &Role) -> Option<CreationTenant> {
-    if is_unbound_sys_admin(actor) {
-        match target_role {
-            Role::SysAdmin => Some(CreationTenant::Fixed(None)),
-            Role::TenantOwner => Some(CreationTenant::CallerChosen),
-            Role::TenantUser | Role::Driver | Role::Mechanic => None,
-        }
-    } else if actor.role == Role::TenantOwner {
-        match target_role {
-            Role::TenantUser | Role::Driver | Role::Mechanic => {
-                actor.tenant_id.map(|id| CreationTenant::Fixed(Some(id)))
-            }
-            _ => None,
-        }
-    } else {
-        None
+/// PD-019's hierarchy, restated for profiles (`C-035`): a platform actor hands out platform profiles
+/// (to accounts with no tenant) and tenant profiles (naming the tenant); a tenant actor hands out
+/// tenant profiles -- the system ones or their own tenant's -- inside their own tenant only. Holding the
+/// permission for the operation (`user.create`, `user.update`, `profile.assign`) is the middleware's
+/// question; covering the profile's grants is [`can_grant`]'s.
+pub fn can_assign_profile(actor: &User, profile: &AccessProfile) -> Option<CreationTenant> {
+    if !profile.active {
+        return None;
     }
+    if is_platform_actor(actor) {
+        return Some(match profile.scope {
+            ProfileScope::Platform => CreationTenant::Fixed(None),
+            ProfileScope::Tenant => CreationTenant::CallerChosen,
+        });
+    }
+    let tenant_id = actor.tenant_id?;
+    (profile.scope == ProfileScope::Tenant && (profile.system || profile.tenant_id == Some(tenant_id)))
+        .then_some(CreationTenant::Fixed(Some(tenant_id)))
 }
 
-/// Whether `actor` may set an *existing* user's role and tenant to exactly
-/// this combination while editing them (PD-019). Reassigning the hierarchy
-/// is an unbound platform administrator's decision alone, and even then
-/// never assigns `TenantUser` -- that role is only ever created by a
-/// tenant owner ([`can_create_user_with_role`]), never reassigned onto an
-/// existing account by an edit. When this returns `false`, the caller
-/// keeps the account's existing role and tenant rather than reject the
-/// whole edit -- that is what lets a platform administrator (or the
-/// account's own owner) update an existing tenant user's other fields
-/// without being forced to also re-decide their place in the hierarchy.
-pub fn can_reassign_role(
-    actor: &User,
-    requested_role: &Role,
-    requested_tenant_id: Option<i64>,
-) -> bool {
-    is_unbound_sys_admin(actor)
-        && match requested_role {
-            Role::SysAdmin => requested_tenant_id.is_none(),
-            Role::TenantOwner => requested_tenant_id.is_some(),
-            // Like `TenantUser`, the operational roles are only ever
-            // created by a tenant owner (D-22), never reassigned onto an
-            // existing account by an edit.
-            Role::TenantUser | Role::Driver | Role::Mechanic => false,
-        }
+/// Whether `actor` may move an *existing* account to another tenant while editing it (PD-019): the
+/// platform's decision alone, and only onto a tenant that fits the account's profile.
+pub fn can_move_user_to_tenant(actor: &User, profile: &AccessProfile, requested_tenant_id: Option<i64>) -> bool {
+    is_platform_actor(actor) && profile_fits(profile, requested_tenant_id)
 }
 
-/// Whether `actor` may *read* `target`'s record (EPIC-IA-05-S01): the target
-/// themselves, an unbound platform administrator (any target), or a tenant
-/// owner whose tenant matches the target's exactly.
-///
-/// Reading your own record is self-service, not administration -- see
-/// [`can_administer_user`] for the write side, which is a strictly smaller
-/// set.
-pub fn can_read_user_record(
-    actor: &User,
-    target_id: Option<i64>,
-    target_tenant_id: Option<i64>,
-) -> bool {
-    (actor.id.is_some() && actor.id == target_id)
-        || can_administer_user(actor, target_id, target_tenant_id)
+/// Whether `actor` may *read* `target`'s record (EPIC-IA-05-S01): the target themselves, or whoever
+/// administers users in the target's tenant.
+pub fn can_read_user_record(actor: &User, target_id: Option<i64>, target_tenant_id: Option<i64>) -> bool {
+    (actor.id.is_some() && actor.id == target_id) || can_administer_user(actor, target_id, target_tenant_id)
 }
 
-/// Whether `actor` may administer `target`'s record -- edit it, not read it
-/// (EPIC-IA-05-S01, HRMS-117, HRMS-118): an unbound platform administrator
-/// (any target), or a tenant owner whose tenant matches the target's exactly.
-///
-/// DEF-IA-03: "the target themselves" used to be an arm of this rule, which
-/// made `PUT /user/{own id}` a user-administration path open to every role --
-/// HRMS-117 says a tenant user has no user-administration rights at all, and
-/// their own record is not an exception to that. What a user may do to their
-/// own account without administering it (change their password, knowing the
-/// current one) has its own route.
-pub fn can_administer_user(
-    actor: &User,
-    _target_id: Option<i64>,
-    target_tenant_id: Option<i64>,
-) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner && actor.tenant_id == target_tenant_id)
+/// Whether `actor` may administer `target`'s record -- edit it, invite them, change their profile
+/// (EPIC-IA-05-S01, HRMS-117, HRMS-118). DEF-IA-03: being the target is not enough; what a user may do
+/// to their own account without administering it has its own route.
+pub fn can_administer_user(actor: &User, _target_id: Option<i64>, target_tenant_id: Option<i64>) -> bool {
+    may_act_on_any(actor, USER_ADMIN, target_tenant_id)
 }
 
-/// EPIC-FO-01-S04 (HRMS-923, PD-019): who may register, edit or retire a
-/// vehicle. Deliberately *not* a new hierarchy -- it is the one the platform
-/// already enforces for users, read one level down: an unbound platform
-/// administrator acts across tenants, a tenant owner administers their own
-/// tenant, and a `TenantUser` administers nothing (HRMS-117's rule, applied
-/// to fleet records rather than to accounts).
-///
-/// PD-026's Driver and Mechanic roles do not exist yet (`Role` has three
-/// variants), so nothing here anticipates them: when they arrive they change
-/// the body of this function and not its call sites, which is the whole point
-/// of PD-020.
+/// `GET /user`: who sees the user list at all -- whoever administers users; everyone else an empty page.
+pub fn can_list_users(actor: &User) -> bool {
+    USER_ADMIN.iter().any(|code| may(actor, code))
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Fleet
+// ---------------------------------------------------------------------------------------------------
+
+/// EPIC-FO-01-S04 (HRMS-923, PD-019): who may register, edit or retire a vehicle, assign and end a driver.
 pub fn can_administer_vehicle(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == vehicle_tenant_id)
+    may_act_on_any(actor, &["vehicle.update", "vehicle.assign-driver", "vehicle.end-assignment"], vehicle_tenant_id)
 }
 
-/// `POST /vehicle` -- the create side of [`can_administer_vehicle`], asked
-/// before any vehicle exists to compare tenants against. An unbound platform
-/// administrator names the owning tenant; a tenant owner may only ever create
-/// inside their own, so one without a tenant creates nothing.
 pub fn can_create_vehicle(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "vehicle.create", target_tenant_id)
 }
 
-/// EPIC-FO-01-S04/S05 (HRMS-923, HRMS-924): reading a vehicle is wider than
-/// administering it -- a `TenantUser` is a member of the fleet's tenant and
-/// needs to see it (a driver looking up their own vehicle is this case), they
-/// simply may not change it. Cross-tenant is not a narrower permission but no
-/// visibility at all, which is why `vehicle_endpoint` answers 404 there and
-/// not 403 (PD-034).
+/// EPIC-FO-01-S04/S05 (HRMS-923, HRMS-924): reading a vehicle is wider than administering it. Cross-tenant
+/// is no visibility at all, which is why `vehicle_endpoint` answers 404 there and not 403 (PD-034).
 pub fn can_read_vehicle(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == vehicle_tenant_id)
+    may_act_on(actor, "vehicle.read", vehicle_tenant_id)
 }
 
-/// EPIC-FO-02-S01/S02 (HRMS-926, HRMS-927): linking a tracking device is
-/// the platform administrator's act. The provider account is the platform's,
-/// so a tenant that could name any device id could read another customer's
-/// vehicle position through its own vehicle record.
+/// EPIC-FO-02-S01/S02 (HRMS-926, HRMS-927): linking a tracking device is the platform's act -- the
+/// provider account is the platform's.
 pub fn can_link_tracker_device(actor: &User) -> bool {
-    is_unbound_sys_admin(actor)
+    is_platform_actor(actor) && actor.allows("vehicle.update")
 }
 
-/// `EPIC-SC-01-S01` (`HRMS-600`, `C-024`): who may administer a customer
-/// record -- the same hierarchy `can_administer_vehicle` already enforces,
-/// applied to another tenant-owned registry rather than to fleet records.
-/// Named rather than reused (`PD-020`): a role-to-permission mapping added
-/// later changes this function's body, not `customer_endpoint`'s call site.
+/// `C-032` (`HRMS-860`): recording the odometer; a driver holds it over their own vehicle (reached only
+/// through `find_visible`, which scopes an own-records holder to their assignment).
+pub fn can_record_odometer(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "vehicle.odometer.record", vehicle_tenant_id)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------------------------------
+
 pub fn can_administer_customer(actor: &User, customer_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == customer_tenant_id)
+    may_act_on_any(actor, &["customer.update", "customer.day-off.create", "customer.day-off.delete"], customer_tenant_id)
 }
 
-/// `POST /customer` -- the create side of [`can_administer_customer`], asked
-/// before any customer exists to compare tenants against.
 pub fn can_create_customer(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "customer.create", target_tenant_id)
 }
 
-/// Reading a customer is wider than administering one -- every role in the
-/// owning tenant may see it, the same relationship `can_read_vehicle` has to
-/// `can_administer_vehicle`.
 pub fn can_read_customer(actor: &User, customer_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == customer_tenant_id)
+    may_act_on(actor, "customer.read", customer_tenant_id)
 }
 
-/// `EPIC-SC-01-S03` (`HRMS-602`, `C-024`): the same hierarchy every other
-/// tenant-owned registry uses. Named rather than reused (`PD-020`).
 pub fn can_administer_holiday(actor: &User, holiday_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == holiday_tenant_id)
+    may_act_on(actor, "holiday.delete", holiday_tenant_id)
 }
 
 pub fn can_create_holiday(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "holiday.create", target_tenant_id)
 }
 
 pub fn can_read_holiday(actor: &User, holiday_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == holiday_tenant_id)
+    may_act_on(actor, "holiday.read", holiday_tenant_id)
 }
 
-/// `EPIC-SC-02-S01` (`HRMS-603`, `C-024`): the same hierarchy every other
-/// tenant-owned registry uses. Named rather than reused (`PD-020`).
+/// `EPIC-SC-02-S01` (`HRMS-603`, `C-024`): editing a demand and everything hung off it -- allocations,
+/// daily schedules, exceptions.
 pub fn can_administer_transport_demand(actor: &User, demand_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == demand_tenant_id)
+    may_act_on_any(
+        actor,
+        &[
+            "transport-demand.update",
+            "transport-demand.allocation.create",
+            "transport-demand.allocation.update",
+            "transport-demand.daily-schedule.create",
+            "transport-demand.daily-schedule.delete",
+            "transport-demand.exception.create",
+            "transport-demand.exception.delete",
+        ],
+        demand_tenant_id,
+    )
 }
 
 pub fn can_create_transport_demand(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "transport-demand.create", target_tenant_id)
 }
 
 pub fn can_read_transport_demand(actor: &User, demand_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == demand_tenant_id)
+    may_act_on(actor, "transport-demand.read", demand_tenant_id)
 }
 
-/// `EPIC-SC-03-S01` (`HRMS-607`, `C-024`): the same hierarchy every other
-/// tenant-owned registry uses. Named rather than reused (`PD-020`).
 pub fn can_administer_extra_trip(actor: &User, trip_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == trip_tenant_id)
+    may_act_on(actor, "extra-trip.update", trip_tenant_id)
 }
 
 pub fn can_create_extra_trip(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "extra-trip.create", target_tenant_id)
 }
 
 pub fn can_read_extra_trip(actor: &User, trip_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == trip_tenant_id)
+    may_act_on(actor, "extra-trip.read", trip_tenant_id)
 }
 
-/// `EPIC-CK-02-S01` (`HRMS-651`, `C-025`): the same hierarchy every other
-/// tenant-owned registry uses. Named rather than reused (`PD-020`).
+// ---------------------------------------------------------------------------------------------------
+// Checklists
+// ---------------------------------------------------------------------------------------------------
+
 pub fn can_administer_checklist_template(actor: &User, template_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == template_tenant_id)
+    may_act_on(actor, "checklist-template.create", template_tenant_id)
 }
 
 pub fn can_create_checklist_template(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "checklist-template.create", target_tenant_id)
 }
 
 pub fn can_read_checklist_template(actor: &User, template_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == template_tenant_id)
+    may_act_on(actor, "checklist-template.read", template_tenant_id)
 }
 
-/// `EPIC-CK-03-S01` (`HRMS-652`, `C-025`): the same hierarchy every other
-/// tenant-owned registry uses. Named rather than reused (`PD-020`). No
-/// self-service Driver create yet -- `C-031` (driver mobile app) is the
-/// story that gives a `Driver` caller a client to submit their own
-/// checklist from; until then, submission is administrative, the same
-/// shape `extra_trip`'s `driver_id` already lets an owner name any driver.
 pub fn can_administer_checklist_run(actor: &User, run_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == run_tenant_id)
+    actor.allows_fully("checklist-run.create") && reaches(actor, run_tenant_id)
 }
 
+/// `C-032` (`D-27` 5): submitting the checklist is the driver's central act -- on their own vehicle and
+/// as themselves (`checklist-run.create@own`), which the handler enforces.
 pub fn can_create_checklist_run(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    // `C-032` (`D-27` 5): submitting the checklist is the driver's central act -- on their own vehicle and as
-    // themselves, which the handler enforces.
-    matches!(actor.role, Role::TenantOwner | Role::Driver)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "checklist-run.create", target_tenant_id)
 }
 
 pub fn can_read_checklist_run(actor: &User, run_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == run_tenant_id)
+    may_act_on(actor, "checklist-run.read", run_tenant_id)
 }
 
-/// `EPIC-MT-01-S01` (`HRMS-700`, `C-026`): the same hierarchy every other
-/// tenant-owned registry uses, widened to `Mechanic` for create -- the
-/// accepted story names "tenant owner or mechanic," and `Role::Mechanic` is
-/// already scoped to "garage and maintenance only" (`EPIC-IA-09`), unlike
-/// `Driver`'s own create-side deferral elsewhere in this program, which
-/// waits on a client that does not exist yet. Named rather than reused
-/// (`PD-020`).
+// ---------------------------------------------------------------------------------------------------
+// Maintenance
+// ---------------------------------------------------------------------------------------------------
+
+/// `EPIC-MT-01-S01` (`HRMS-700`, `C-026`): closing and cancelling a work order.
 pub fn can_administer_work_order(actor: &User, work_order_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == work_order_tenant_id)
+    may_act_on_any(actor, &["work-order.cancel", "work-order.conclude"], work_order_tenant_id)
 }
 
+/// Opening a work order and working it: items, parts, resolutions.
 pub fn can_create_work_order(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    ["work-order.create", "work-order.item.add", "work-order.item.resolve", "work-order.issue-part"]
+        .iter()
+        .any(|code| may_create_in(actor, code, target_tenant_id))
 }
 
 pub fn can_read_work_order(actor: &User, work_order_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == work_order_tenant_id)
+    may_act_on(actor, "work-order.read", work_order_tenant_id)
 }
 
-/// `EPIC-MT-03-S01` (`HRMS-703`, `C-026`): the same hierarchy `work_order`
-/// uses, widened to `Mechanic` for create for the same reason (`TRM-231`
-/// names "the manager," but scheduling a garage visit is squarely
-/// maintenance work, not an owner-only act). Named rather than reused
-/// (`PD-020`).
 pub fn can_administer_maintenance_plan(actor: &User, plan_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == plan_tenant_id)
+    may_act_on(actor, "maintenance-plan.create", plan_tenant_id)
 }
 
 pub fn can_create_maintenance_plan(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "maintenance-plan.create", target_tenant_id)
 }
 
 pub fn can_read_maintenance_plan(actor: &User, plan_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == plan_tenant_id)
+    may_act_on(actor, "maintenance-plan.read", plan_tenant_id)
 }
 
-/// `EPIC-MT-05-S01` (`HRMS-704`, `C-026`): the same hierarchy every other
-/// tenant-owned registry uses -- `TenantOwner`/`SysAdmin` only, unlike
-/// `work_order`/`maintenance_plan`. Classifying service categories is a
-/// configuration task, not day-to-day maintenance work a `Mechanic` does.
-/// Named rather than reused (`PD-020`).
 pub fn can_administer_service_type(actor: &User, service_type_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == service_type_tenant_id)
+    may_act_on(actor, "service-type.create", service_type_tenant_id)
 }
 
 pub fn can_create_service_type(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "service-type.create", target_tenant_id)
 }
 
 pub fn can_read_service_type(actor: &User, service_type_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == service_type_tenant_id)
+    may_act_on(actor, "service-type.read", service_type_tenant_id)
 }
 
-/// Same shape as `service_type` -- a sibling catalogue, same authorization.
 pub fn can_administer_priced_service(actor: &User, priced_service_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == priced_service_tenant_id)
+    may_act_on(actor, "priced-service.create", priced_service_tenant_id)
 }
 
 pub fn can_create_priced_service(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    may_create_in(actor, "priced-service.create", target_tenant_id)
 }
 
 pub fn can_read_priced_service(actor: &User, priced_service_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == priced_service_tenant_id)
+    may_act_on(actor, "priced-service.read", priced_service_tenant_id)
 }
 
-/// `EPIC-SP-01-S01` (`HRMS-800`, `C-030`): widened to `Mechanic`, unlike
-/// `service_type`/`priced_service`. Those two are pure classification
-/// catalogues; a part is registered as a side effect of day-to-day stores
-/// work (`TRM-612` auto-registers a supplier the same way during a stock
-/// entry), the same operational shape `work_order`/`maintenance_plan` widen
-/// for. Named rather than reused (`PD-020`).
-pub fn can_administer_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == part_tenant_id)
-}
-
-pub fn can_create_part(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-pub fn can_read_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == part_tenant_id)
-}
-
-/// `EPIC-SP-02-S01` (`HRMS-801`, `C-030`): same shape as `part` -- recording a
-/// stock entry or adjustment is the same day-to-day stores work.
-pub fn can_create_stock_movement(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-/// `EPIC-SP-03-S01` (`HRMS-802`, `C-030`): widened to `Mechanic` for both
-/// creating and administering (ordering/receiving/cancelling) a purchase
-/// order, unlike `work_order`'s own administer split. Chasing a part order is
-/// routine stores follow-up, not the kind of formal closing act `TRM-208`
-/// reserves for `work_order.conclude`.
-pub fn can_create_purchase_order(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-pub fn can_administer_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == purchase_order_tenant_id)
-}
-
-pub fn can_read_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == purchase_order_tenant_id)
-}
-
-/// `EPIC-SP-04-S01` (`HRMS-803`, `C-030`): a vehicle expense is financial
-/// record-keeping, the same shape `customer`/`holiday` already use -- unlike
-/// `part`/`stock_movement`/`purchase_order`, it is not widened to `Mechanic`,
-/// since recording a toll or plan-fee invoice is back-office paperwork, not
-/// day-to-day garage/stores work.
-pub fn can_administer_vehicle_expense(
-    actor: &User,
-    vehicle_expense_tenant_id: Option<i64>,
-) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.role == Role::TenantOwner
-            && actor.tenant_id.is_some()
-            && actor.tenant_id == vehicle_expense_tenant_id)
-}
-
-pub fn can_create_vehicle_expense(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-pub fn can_read_vehicle_expense(actor: &User, vehicle_expense_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == vehicle_expense_tenant_id)
-}
-
-/// `EPIC-FU-01-S01` (`HRMS-942`, `C-029`): recording a fuelling is the same
-/// day-to-day operational work `part`/`stock_movement`/`purchase_order`
-/// already widen to `Mechanic` for -- unlike `vehicle_expense`'s own
-/// back-office financial tier, a fuelling is routine stores-shaped activity.
-pub fn can_create_fuel_entry(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-/// `EPIC-FU-03-S01` (`HRMS-948`, `TRM-520`): a driver reports their own
-/// fuelling from a receipt (`C-031` gives them the client for it); the stores
-/// tier may report one on a driver's behalf.
-pub fn can_report_fuel_receipt(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic | Role::Driver)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-pub fn can_read_fuel_entry(actor: &User, fuel_entry_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == fuel_entry_tenant_id)
-}
-
-/// `EPIC-FU-07-S01` (`HRMS-943`, `C-029`): `TRM-1540` names "a reference
-/// stock reported by **the manager**" -- the same `TenantOwner`-only tier
-/// `vehicle_expense` uses, not the `Mechanic`-widened stores tier `fuel_entry`
-/// itself uses. Configuring the tank is a fleet-wide setting, not a per-
-/// fuelling operational record.
-pub fn can_configure_internal_tank(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    actor.role == Role::TenantOwner
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-/// `EPIC-FU-06-S03` (`HRMS-953`): the gauge thresholds are a fleet-wide tenant
-/// setting, like the internal tank's -- the owner's to set. Named rather than
-/// reused (`PD-020`).
-pub fn can_configure_fuel_gauge(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    can_configure_internal_tank(actor, target_tenant_id)
-}
-
-/// `EPIC-GA-01-S01` (`HRMS-956`, `C-028`): the garage catalogue is the tenant
-/// owner's to define; everyone of the tenant reads it. Named rather than
-/// reused (`PD-020`).
-pub fn can_manage_garage_catalogue(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    can_configure_internal_tank(actor, target_tenant_id)
-}
-
-/// `EPIC-GA-02-S01` (`HRMS-958`): running the yard -- opening a triage, marking
-/// its services, checking a vehicle out -- is the owner's and the mechanic's.
-pub fn can_operate_garage(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
-}
-
-/// `EPIC-GA-03-S01` (`HRMS-960`, `TRM-788`): arrival and departure stamps are the
-/// presence domain's exclusive output, so only the platform's own integration
-/// (an unbound administrator) publishes them -- no tenant user can stamp a vehicle.
-pub fn can_publish_presence(actor: &User) -> bool {
-    is_unbound_sys_admin(actor)
-}
-
-/// `EPIC-GA-05-S02` (`HRMS-963`, `TRM-483`): calling a vehicle to base is the
-/// manager's -- the tenant owner's -- decision.
-pub fn can_call_vehicle_to_base(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    can_configure_internal_tank(actor, target_tenant_id)
-}
-
-pub fn can_read_garage(actor: &User, tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor) || (actor.tenant_id.is_some() && actor.tenant_id == tenant_id)
-}
-
-pub fn can_read_internal_tank(actor: &User, internal_tank_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == internal_tank_tenant_id)
-}
-
-/// `EPIC-MT-07-S01` (`HRMS-706`, `C-027`): the same hierarchy
-/// `maintenance_plan` already uses (`EPIC-MT-03-S01`) -- registering a
-/// preventive plan is squarely maintenance work, not owner-only.
+/// `EPIC-MT-07-S01` (`HRMS-706`, `C-027`): preventive plans, inspection models and technical inspections
+/// are maintenance work -- one family, one gate.
 pub fn can_create_preventive_plan(actor: &User, target_tenant_id: Option<i64>) -> bool {
-    if is_unbound_sys_admin(actor) {
-        return target_tenant_id.is_some();
-    }
-    matches!(actor.role, Role::TenantOwner | Role::Mechanic)
-        && actor.tenant_id.is_some()
-        && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
+    [
+        "preventive-plan.create",
+        "preventive-plan.update",
+        "preventive-plan.extend",
+        "preventive-plan.open-work-order",
+        "preventive-plan.alert.discharge",
+        "inspection-model.create",
+        "technical-inspection.create",
+    ]
+    .iter()
+    .any(|code| may_create_in(actor, code, target_tenant_id))
 }
 
 pub fn can_read_preventive_plan(actor: &User, preventive_plan_tenant_id: Option<i64>) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some() && actor.tenant_id == preventive_plan_tenant_id)
+    may_act_on_any(
+        actor,
+        &["preventive-plan.read", "preventive-plan.alert.read", "inspection-model.read", "technical-inspection.read"],
+        preventive_plan_tenant_id,
+    )
 }
 
-/// `EPIC-MT-04` (`C-026`): the non-execution inbox is read by everyone in the tenant's office and
-/// workshop -- owner, tenant user, mechanic -- but not by the driver. Which tenant's rows is the
-/// gateway's scope. Acting on it (justify, record manually) is `can_administer_purchase_order`'s
-/// owner/mechanic/platform set.
+/// `EPIC-MT-04` (`C-026`): the non-execution inbox.
 pub fn can_read_non_execution(actor: &User) -> bool {
-    is_unbound_sys_admin(actor)
-        || (actor.tenant_id.is_some()
-            && matches!(actor.role, Role::TenantOwner | Role::TenantUser | Role::Mechanic))
+    may(actor, "non-execution.read")
 }
 
-/// `EPIC-MT-04` (`C-026`, `SR-MT-04-12`): triggering an evaluation is the tenant owner's and the
-/// platform's alone; the mechanic only sees the result.
+/// `EPIC-MT-04` (`C-026`, `SR-MT-04-12`): triggering an evaluation.
 pub fn can_evaluate_non_execution(actor: &User) -> bool {
-    is_unbound_sys_admin(actor) || (actor.role == Role::TenantOwner && actor.tenant_id.is_some())
+    may(actor, "non-execution.evaluate")
+}
+
+/// Justifying a non-execution and recording one by hand; reading and marking maintenance notifications.
+pub fn can_work_maintenance(actor: &User, tenant_id: Option<i64>) -> bool {
+    may_act_on_any(
+        actor,
+        &[
+            "non-execution.justify",
+            "non-execution.record-manual",
+            "maintenance-notification.read",
+            "maintenance-notification.update",
+        ],
+        tenant_id,
+    )
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Stock, purchasing and expenses
+// ---------------------------------------------------------------------------------------------------
+
+pub fn can_administer_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
+    may_act_on_any(actor, &["part.create", "part.stock-entry", "part.stock-adjust"], part_tenant_id)
+}
+
+pub fn can_create_part(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    may_create_in(actor, "part.create", target_tenant_id)
+}
+
+pub fn can_read_part(actor: &User, part_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "part.read", part_tenant_id)
+}
+
+pub fn can_create_stock_movement(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    ["part.stock-entry", "part.stock-adjust"].iter().any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+pub fn can_create_purchase_order(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    may_create_in(actor, "purchase-order.create", target_tenant_id)
+}
+
+pub fn can_administer_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
+    may_act_on_any(
+        actor,
+        &["purchase-order.mark-ordered", "purchase-order.mark-purchased", "purchase-order.cancel"],
+        purchase_order_tenant_id,
+    )
+}
+
+pub fn can_read_purchase_order(actor: &User, purchase_order_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "purchase-order.read", purchase_order_tenant_id)
+}
+
+pub fn can_administer_vehicle_expense(actor: &User, vehicle_expense_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "vehicle-expense.create", vehicle_expense_tenant_id)
+}
+
+pub fn can_create_vehicle_expense(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    may_create_in(actor, "vehicle-expense.create", target_tenant_id)
+}
+
+pub fn can_read_vehicle_expense(actor: &User, vehicle_expense_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "vehicle-expense.read", vehicle_expense_tenant_id)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Fuel
+// ---------------------------------------------------------------------------------------------------
+
+/// `EPIC-FU-01-S01` (`HRMS-942`, `C-029`): recording and curating fuellings -- the stores tier.
+pub fn can_create_fuel_entry(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    ["fuel-entry.create", "fuel-entry.delete", "fuel-entry.restore", "fuel-entry.unify", "fuel-entry.sync-provider"]
+        .iter()
+        .any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+/// `EPIC-FU-03-S01` (`HRMS-948`, `TRM-520`): a driver reports their own fuelling from a receipt
+/// (`fuel-entry.register-receipt@own`); the stores tier may report one on a driver's behalf.
+pub fn can_report_fuel_receipt(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    may_create_in(actor, "fuel-entry.register-receipt", target_tenant_id)
+}
+
+pub fn can_read_fuel_entry(actor: &User, fuel_entry_tenant_id: Option<i64>) -> bool {
+    may_act_on(actor, "fuel-entry.read", fuel_entry_tenant_id)
+}
+
+/// `EPIC-FU-07-S01` (`HRMS-943`, `C-029`): configuring the tank is a fleet-wide setting.
+pub fn can_configure_internal_tank(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    may_create_in(actor, "internal-tank.update", target_tenant_id)
+}
+
+/// `EPIC-FU-06-S03` (`HRMS-953`): the gauge thresholds and the tenant's rule settings.
+pub fn can_configure_fuel_gauge(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    ["fuel-gauge-settings.update", "tenant-rule-settings.update"]
+        .iter()
+        .any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+pub fn can_read_internal_tank(actor: &User, internal_tank_tenant_id: Option<i64>) -> bool {
+    may_act_on_any(actor, &["internal-tank.read", "internal-tank.stock.read"], internal_tank_tenant_id)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Garage
+// ---------------------------------------------------------------------------------------------------
+
+/// `EPIC-GA-01-S01` (`HRMS-956`, `C-028`): the garage catalogue.
+pub fn can_manage_garage_catalogue(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    ["garage.service-catalogue.create", "garage.service-catalogue.update"]
+        .iter()
+        .any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+/// `EPIC-GA-02-S01` (`HRMS-958`): running the yard -- opening a triage, marking its services, checking a
+/// vehicle out.
+pub fn can_operate_garage(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    [
+        "garage.triage.open",
+        "garage.triage.mark-service",
+        "garage.triage.check-out",
+        "garage.service.internal",
+        "garage.service.external",
+    ]
+    .iter()
+    .any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+/// `EPIC-GA-03-S01` (`HRMS-960`, `TRM-788`): arrival and departure stamps are published by the platform's
+/// own integration alone.
+pub fn can_publish_presence(actor: &User) -> bool {
+    is_platform_actor(actor) && actor.allows("vehicle-presence.publish")
+}
+
+/// `EPIC-GA-05-S02` (`HRMS-963`, `TRM-483`): calling a vehicle to base.
+pub fn can_call_vehicle_to_base(actor: &User, target_tenant_id: Option<i64>) -> bool {
+    ["garage.call.create", "garage.call.cancel"].iter().any(|code| may_create_in(actor, code, target_tenant_id))
+}
+
+pub fn can_read_garage(actor: &User, tenant_id: Option<i64>) -> bool {
+    may_act_on_any(
+        actor,
+        &[
+            "garage.triage.read",
+            "garage.queue.read",
+            "garage.monitor.read",
+            "garage.call.read",
+            "garage.call-list.read",
+            "garage.service-catalogue.read",
+        ],
+        tenant_id,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::permission::{self, DRIVER, MECHANIC, SYS_ADMIN, TENANT_OWNER, TENANT_USER};
+    use crate::domain::user::Access;
 
-    fn user(role: Role, tenant_id: Option<i64>) -> User {
+    fn actor(key: &str, tenant_id: Option<i64>) -> User {
+        let profile = permission::system_profile(key).unwrap();
         User {
             id: Some(1),
             uuid: None,
@@ -744,9 +618,29 @@ mod tests {
             password: String::new(),
             enabled: true,
             tenant_id,
-            role,
+            profile_id: Some(1),
+            extra_permissions: Vec::new(),
             cpf: None,
-            principal_function: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+            access: Access::from_grants(profile.scope, permission::system_grants(key)),
+        }
+    }
+
+    fn profile(scope: ProfileScope, system: bool, tenant_id: Option<i64>) -> AccessProfile {
+        AccessProfile {
+            id: Some(9),
+            uuid: Some("p".into()),
+            tenant_id,
+            name: "P".into(),
+            name_key: "p".into(),
+            scope,
+            system,
+            key: None,
+            active: true,
+            permissions: Vec::new(),
             created_at: None,
             created_by: None,
             updated_at: None,
@@ -754,700 +648,108 @@ mod tests {
         }
     }
 
-    /// HRMS-017 (EPIC-XF-02-S06): a role x operation matrix. Every
-    /// PD-013-shaped capability in this module reduces to `is_unbound_sys_admin`,
-    /// so proving it once here and asserting the others delegate is the
-    /// matrix -- not restating the same three cases four more times.
     #[test]
-    fn is_unbound_sys_admin_matrix() {
-        assert!(is_unbound_sys_admin(&user(Role::SysAdmin, None)));
-        assert!(!is_unbound_sys_admin(&user(Role::SysAdmin, Some(1))));
-        assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, None)));
-        assert!(!is_unbound_sys_admin(&user(Role::TenantOwner, Some(1))));
-        assert!(!is_unbound_sys_admin(&user(Role::TenantUser, Some(1))));
+    fn the_platform_actor_is_a_platform_profile_with_no_tenant() {
+        assert!(is_platform_actor(&actor(SYS_ADMIN, None)));
+        assert!(!is_platform_actor(&actor(SYS_ADMIN, Some(1))));
+        assert!(lacks_required_tenant(&actor(SYS_ADMIN, Some(1))));
+        assert!(lacks_required_tenant(&actor(TENANT_OWNER, None)));
+        assert!(!lacks_required_tenant(&actor(DRIVER, Some(1))));
     }
 
     #[test]
-    fn non_execution_is_read_by_the_office_and_evaluated_by_the_owner_alone() {
-        let platform = user(Role::SysAdmin, None);
-        let owner = user(Role::TenantOwner, Some(1));
-        let mechanic = user(Role::Mechanic, Some(1));
-        let member = user(Role::TenantUser, Some(1));
-        let driver = user(Role::Driver, Some(1));
-        for reader in [&platform, &owner, &mechanic, &member] {
-            assert!(can_read_non_execution(reader));
-        }
-        assert!(!can_read_non_execution(&driver));
-        assert!(!can_read_non_execution(&user(Role::SysAdmin, Some(1))));
-        assert!(can_evaluate_non_execution(&platform) && can_evaluate_non_execution(&owner));
-        for other in [&mechanic, &member, &driver] {
-            assert!(!can_evaluate_non_execution(other));
-        }
-        assert!(!can_evaluate_non_execution(&user(Role::TenantOwner, None)));
+    fn a_capability_is_the_permission_inside_the_tenant() {
+        let owner = actor(TENANT_OWNER, Some(1));
+        let user = actor(TENANT_USER, Some(1));
+        let platform = actor(SYS_ADMIN, None);
+        assert!(can_administer_vehicle(&owner, Some(1)));
+        assert!(!can_administer_vehicle(&owner, Some(2)));
+        assert!(!can_administer_vehicle(&user, Some(1)));
+        assert!(can_read_vehicle(&user, Some(1)));
+        assert!(can_administer_vehicle(&platform, Some(2)));
+        assert!(can_create_vehicle(&owner, None) && can_create_vehicle(&owner, Some(1)) && !can_create_vehicle(&owner, Some(2)));
+        assert!(!can_create_vehicle(&platform, None) && can_create_vehicle(&platform, Some(5)));
     }
 
     #[test]
-    fn driver_and_mechanic_never_update_a_tenant() {
-        assert!(can_update_tenant(&user(Role::SysAdmin, None), 1));
-        assert!(can_update_tenant(&user(Role::TenantOwner, Some(1)), 1));
-        assert!(!can_update_tenant(&user(Role::TenantOwner, Some(2)), 1));
-        assert!(!can_update_tenant(&user(Role::TenantUser, Some(1)), 1));
-        assert!(!can_update_tenant(&user(Role::Driver, Some(1)), 1));
-        assert!(!can_update_tenant(&user(Role::Mechanic, Some(1)), 1));
+    fn an_extra_grant_widens_a_profile_and_a_missing_tenant_voids_it() {
+        let mut user = actor(TENANT_USER, Some(1));
+        assert!(!can_create_work_order(&user, Some(1)));
+        user.access.grants.grant("work-order.create", permission::GrantScope::Full);
+        assert!(can_create_work_order(&user, Some(1)));
+        let homeless = actor(TENANT_OWNER, None);
+        assert!(!can_create_vehicle(&homeless, None) && !can_read_cost_reports(&homeless));
     }
 
     #[test]
-    fn only_the_unbound_platform_administrator_links_a_tracker_device() {
-        assert!(can_link_tracker_device(&user(Role::SysAdmin, None)));
-        assert!(!can_link_tracker_device(&user(Role::SysAdmin, Some(1))));
-        assert!(!can_link_tracker_device(&user(Role::TenantOwner, Some(1))));
-        assert!(!can_link_tracker_device(&user(Role::TenantUser, Some(1))));
+    fn the_driver_holds_own_scoped_grants_and_acts_as_a_driver() {
+        let driver = actor(DRIVER, Some(1));
+        assert!(driver.only_own("vehicle.read") && driver.only_own("checklist-run.create"));
+        assert!(can_create_checklist_run(&driver, Some(1)) && !can_administer_checklist_run(&driver, Some(1)));
+        assert!(is_active_driver_of(&driver, Some(1)) && !is_active_driver_of(&driver, Some(2)));
+        assert!(!is_active_driver_of(&actor(MECHANIC, Some(1)), Some(1)));
+        let mut off = actor(DRIVER, Some(1));
+        off.enabled = false;
+        assert!(!is_active_driver_of(&off, Some(1)));
     }
 
     #[test]
-    fn customer_authorization_matches_the_vehicle_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let sysadmin_bound = user(Role::SysAdmin, Some(1));
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_customer(&sysadmin_unbound, Some(1)));
-        assert!(!can_create_customer(&sysadmin_bound, Some(1)));
-        assert!(can_create_customer(&owner_1, Some(1)));
-        assert!(!can_create_customer(&owner_1, Some(2)));
-        assert!(!can_create_customer(&member_1, Some(1)));
-
-        assert!(can_administer_customer(&sysadmin_unbound, Some(1)));
-        assert!(can_administer_customer(&owner_1, Some(1)));
-        assert!(!can_administer_customer(&owner_2, Some(1)));
-        assert!(!can_administer_customer(&member_1, Some(1)));
-
-        assert!(can_read_customer(&sysadmin_unbound, Some(1)));
-        assert!(can_read_customer(&member_1, Some(1)));
-        assert!(!can_read_customer(&member_1, Some(2)));
-    }
-
-    /// `EPIC-SC-01-S03`: identical shape to `customer_authorization_matches_
-    /// the_vehicle_shape` -- proven once there, checked here for real rather
-    /// than assumed, since these are independently-declared functions.
-    #[test]
-    fn holiday_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_holiday(&sysadmin_unbound, Some(1)));
-        assert!(can_create_holiday(&owner_1, Some(1)));
-        assert!(!can_create_holiday(&owner_1, Some(2)));
-        assert!(!can_create_holiday(&member_1, Some(1)));
-
-        assert!(can_administer_holiday(&owner_1, Some(1)));
-        assert!(!can_administer_holiday(&owner_2, Some(1)));
-
-        assert!(can_read_holiday(&member_1, Some(1)));
-        assert!(!can_read_holiday(&member_1, Some(2)));
+    fn the_platform_only_capabilities_need_both_the_scope_and_the_permission() {
+        let platform = actor(SYS_ADMIN, None);
+        let owner = actor(TENANT_OWNER, Some(1));
+        assert!(can_create_tenant(&platform) && !can_create_tenant(&owner));
+        assert!(can_manage_reference_data(&platform) && !can_manage_reference_data(&owner));
+        assert!(can_publish_presence(&platform) && !can_publish_presence(&owner));
+        assert!(can_link_tracker_device(&platform) && !can_link_tracker_device(&owner));
     }
 
     #[test]
-    fn transport_demand_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_transport_demand(&sysadmin_unbound, Some(1)));
-        assert!(can_create_transport_demand(&owner_1, Some(1)));
-        assert!(!can_create_transport_demand(&owner_1, Some(2)));
-        assert!(!can_create_transport_demand(&member_1, Some(1)));
-
-        assert!(can_administer_transport_demand(&owner_1, Some(1)));
-        assert!(!can_administer_transport_demand(&owner_2, Some(1)));
-
-        assert!(can_read_transport_demand(&member_1, Some(1)));
-        assert!(!can_read_transport_demand(&member_1, Some(2)));
+    fn tenant_configuration_and_user_administration_follow_their_permissions() {
+        let owner = actor(TENANT_OWNER, Some(1));
+        let mechanic = actor(MECHANIC, Some(1));
+        assert!(can_read_tenant_configuration(&owner) && !can_read_tenant_configuration(&mechanic));
+        assert!(can_read_billing(&owner) && !can_read_billing(&mechanic));
+        assert!(mechanic.allows("tenant.read"), "every tenant profile reads the tenant summary");
+        assert!(can_update_tenant(&owner, 1) && !can_update_tenant(&owner, 2));
+        assert!(can_administer_user(&owner, Some(2), Some(1)) && !can_administer_user(&owner, Some(2), Some(2)));
+        assert!(!can_administer_user(&mechanic, Some(2), Some(1)));
+        assert!(can_read_user_record(&mechanic, Some(1), Some(1)) && !can_read_user_record(&mechanic, Some(2), Some(1)));
+        assert!(can_list_users(&owner) && !can_list_users(&mechanic));
+        assert!(can_manage_access_profiles(&owner, Some(1)) && can_manage_access_profiles(&owner, None));
+        assert!(!can_manage_access_profiles(&owner, Some(2)) && !can_manage_access_profiles(&mechanic, Some(1)));
     }
 
     #[test]
-    fn extra_trip_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_extra_trip(&sysadmin_unbound, Some(1)));
-        assert!(can_create_extra_trip(&owner_1, Some(1)));
-        assert!(!can_create_extra_trip(&owner_1, Some(2)));
-        assert!(!can_create_extra_trip(&member_1, Some(1)));
-
-        assert!(can_administer_extra_trip(&owner_1, Some(1)));
-        assert!(!can_administer_extra_trip(&owner_2, Some(1)));
-
-        assert!(can_read_extra_trip(&member_1, Some(1)));
-        assert!(!can_read_extra_trip(&member_1, Some(2)));
+    fn placing_a_profile_follows_the_hierarchy() {
+        let platform = actor(SYS_ADMIN, None);
+        let owner = actor(TENANT_OWNER, Some(1));
+        let platform_profile = profile(ProfileScope::Platform, true, None);
+        let system_tenant_profile = profile(ProfileScope::Tenant, true, None);
+        let own_profile = profile(ProfileScope::Tenant, false, Some(1));
+        let foreign_profile = profile(ProfileScope::Tenant, false, Some(2));
+        assert_eq!(can_assign_profile(&platform, &platform_profile), Some(CreationTenant::Fixed(None)));
+        assert_eq!(can_assign_profile(&platform, &own_profile), Some(CreationTenant::CallerChosen));
+        assert_eq!(can_assign_profile(&owner, &platform_profile), None);
+        assert_eq!(can_assign_profile(&owner, &system_tenant_profile), Some(CreationTenant::Fixed(Some(1))));
+        assert_eq!(can_assign_profile(&owner, &own_profile), Some(CreationTenant::Fixed(Some(1))));
+        assert_eq!(can_assign_profile(&owner, &foreign_profile), None);
+        let mut inactive = own_profile.clone();
+        inactive.active = false;
+        assert_eq!(can_assign_profile(&owner, &inactive), None);
+        assert!(profile_fits(&platform_profile, None) && !profile_fits(&platform_profile, Some(1)));
+        assert!(profile_fits(&system_tenant_profile, Some(7)) && !profile_fits(&system_tenant_profile, None));
+        assert!(profile_fits(&own_profile, Some(1)) && !profile_fits(&own_profile, Some(2)));
+        assert!(can_move_user_to_tenant(&platform, &own_profile, Some(1)) && !can_move_user_to_tenant(&owner, &own_profile, Some(1)));
     }
 
     #[test]
-    fn checklist_template_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_checklist_template(&sysadmin_unbound, Some(1)));
-        assert!(can_create_checklist_template(&owner_1, Some(1)));
-        assert!(!can_create_checklist_template(&owner_1, Some(2)));
-        assert!(!can_create_checklist_template(&member_1, Some(1)));
-
-        assert!(can_administer_checklist_template(&owner_1, Some(1)));
-        assert!(!can_administer_checklist_template(&owner_2, Some(1)));
-
-        assert!(can_read_checklist_template(&member_1, Some(1)));
-        assert!(!can_read_checklist_template(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn checklist_run_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_checklist_run(&sysadmin_unbound, Some(1)));
-        assert!(can_create_checklist_run(&owner_1, Some(1)));
-        assert!(!can_create_checklist_run(&owner_1, Some(2)));
-        assert!(!can_create_checklist_run(&member_1, Some(1)));
-
-        assert!(can_administer_checklist_run(&owner_1, Some(1)));
-        assert!(!can_administer_checklist_run(&owner_2, Some(1)));
-
-        assert!(can_read_checklist_run(&member_1, Some(1)));
-        assert!(!can_read_checklist_run(&member_1, Some(2)));
-    }
-
-    /// `EPIC-MT-01-S01`: the one place this shape differs from its
-    /// siblings -- `Mechanic` may create, the same as `TenantOwner`.
-    #[test]
-    fn work_order_authorization_widens_create_to_the_mechanic_role() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_work_order(&sysadmin_unbound, Some(1)));
-        assert!(can_create_work_order(&owner_1, Some(1)));
-        assert!(can_create_work_order(&mechanic_1, Some(1)));
-        assert!(!can_create_work_order(&mechanic_1, Some(2)));
-        assert!(!can_create_work_order(&member_1, Some(1)));
-
-        assert!(can_administer_work_order(&owner_1, Some(1)));
-        assert!(!can_administer_work_order(&owner_2, Some(1)));
-        assert!(
-            !can_administer_work_order(&mechanic_1, Some(1)),
-            "administer stays tenant-owner-only until an update/conclude story exists"
-        );
-
-        assert!(can_read_work_order(&member_1, Some(1)));
-        assert!(!can_read_work_order(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn maintenance_plan_authorization_widens_create_to_the_mechanic_role() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_maintenance_plan(&sysadmin_unbound, Some(1)));
-        assert!(can_create_maintenance_plan(&owner_1, Some(1)));
-        assert!(can_create_maintenance_plan(&mechanic_1, Some(1)));
-        assert!(!can_create_maintenance_plan(&mechanic_1, Some(2)));
-        assert!(!can_create_maintenance_plan(&member_1, Some(1)));
-
-        assert!(can_administer_maintenance_plan(&owner_1, Some(1)));
-        assert!(!can_administer_maintenance_plan(&owner_2, Some(1)));
-
-        assert!(can_read_maintenance_plan(&member_1, Some(1)));
-        assert!(!can_read_maintenance_plan(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn service_type_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_service_type(&sysadmin_unbound, Some(1)));
-        assert!(can_create_service_type(&owner_1, Some(1)));
-        assert!(!can_create_service_type(&owner_1, Some(2)));
-        assert!(
-            !can_create_service_type(&mechanic_1, Some(1)),
-            "unlike work_order/maintenance_plan, a Mechanic may not create service types"
-        );
-        assert!(!can_create_service_type(&member_1, Some(1)));
-
-        assert!(can_administer_service_type(&owner_1, Some(1)));
-        assert!(!can_administer_service_type(&owner_2, Some(1)));
-
-        assert!(can_read_service_type(&member_1, Some(1)));
-        assert!(!can_read_service_type(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn priced_service_authorization_matches_the_customer_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_priced_service(&sysadmin_unbound, Some(1)));
-        assert!(can_create_priced_service(&owner_1, Some(1)));
-        assert!(!can_create_priced_service(&owner_1, Some(2)));
-        assert!(!can_create_priced_service(&member_1, Some(1)));
-
-        assert!(can_administer_priced_service(&owner_1, Some(1)));
-        assert!(!can_administer_priced_service(&owner_2, Some(1)));
-
-        assert!(can_read_priced_service(&member_1, Some(1)));
-        assert!(!can_read_priced_service(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn part_authorization_widens_create_to_the_mechanic_role() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let owner_2 = user(Role::TenantOwner, Some(2));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_part(&sysadmin_unbound, Some(1)));
-        assert!(can_create_part(&owner_1, Some(1)));
-        assert!(can_create_part(&mechanic_1, Some(1)));
-        assert!(!can_create_part(&mechanic_1, Some(2)));
-        assert!(!can_create_part(&member_1, Some(1)));
-
-        assert!(can_administer_part(&owner_1, Some(1)));
-        assert!(!can_administer_part(&owner_2, Some(1)));
-
-        assert!(can_read_part(&member_1, Some(1)));
-        assert!(!can_read_part(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn stock_movement_authorization_matches_the_part_shape() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let mechanic_2 = user(Role::Mechanic, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_stock_movement(&sysadmin_unbound, Some(1)));
-        assert!(can_create_stock_movement(&owner_1, Some(1)));
-        assert!(can_create_stock_movement(&mechanic_1, Some(1)));
-        assert!(!can_create_stock_movement(&mechanic_2, Some(1)));
-        assert!(!can_create_stock_movement(&member_1, Some(1)));
-    }
-
-    #[test]
-    fn purchase_order_authorization_widens_both_create_and_administer_to_the_mechanic_role() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        let mechanic_2 = user(Role::Mechanic, Some(2));
-        let member_1 = user(Role::TenantUser, Some(1));
-
-        assert!(can_create_purchase_order(&sysadmin_unbound, Some(1)));
-        assert!(can_create_purchase_order(&owner_1, Some(1)));
-        assert!(can_create_purchase_order(&mechanic_1, Some(1)));
-        assert!(!can_create_purchase_order(&mechanic_2, Some(1)));
-        assert!(!can_create_purchase_order(&member_1, Some(1)));
-
-        assert!(can_administer_purchase_order(&owner_1, Some(1)));
-        assert!(
-            can_administer_purchase_order(&mechanic_1, Some(1)),
-            "unlike work_order, a Mechanic may administer a purchase order's own lifecycle"
-        );
-        assert!(!can_administer_purchase_order(&mechanic_2, Some(1)));
-
-        assert!(can_read_purchase_order(&member_1, Some(1)));
-        assert!(!can_read_purchase_order(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn can_access_tenant_matrix() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_access_tenant(&sysadmin, 1));
-        assert!(can_access_tenant(&sysadmin, 999));
-
-        let owner_of_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_access_tenant(&owner_of_1, 1));
-        assert!(!can_access_tenant(&owner_of_1, 2));
-
-        let member_of_1 = user(Role::TenantUser, Some(1));
-        assert!(can_access_tenant(&member_of_1, 1));
-        assert!(!can_access_tenant(&member_of_1, 2));
-
-        // A tenant-bound SysAdmin (U-019: whether this is even a
-        // representable state is still open) is not treated as unbound --
-        // it falls back to the plain tenant-match rule, same as any member.
-        let bound_sysadmin = user(Role::SysAdmin, Some(1));
-        assert!(can_access_tenant(&bound_sysadmin, 1));
-        assert!(!can_access_tenant(&bound_sysadmin, 2));
-    }
-
-    #[test]
-    fn create_tenant_manage_catalogue_and_set_plan_agree_with_is_unbound_sys_admin() {
-        for (role, tenant_id) in [
-            (Role::SysAdmin, None),
-            (Role::SysAdmin, Some(1)),
-            (Role::TenantOwner, Some(1)),
-            (Role::TenantUser, Some(1)),
-        ] {
-            let actor = user(role, tenant_id);
-            let expected = is_unbound_sys_admin(&actor);
-            assert_eq!(can_create_tenant(&actor), expected);
-            assert_eq!(can_manage_business_plan_catalogue(&actor), expected);
-            assert_eq!(can_set_tenant_plan(&actor), expected);
-            assert_eq!(can_manage_reference_data(&actor), expected);
-        }
-    }
-
-    /// HRMS-113...116 (EPIC-IA-04-S01...S05): the full role x target-role
-    /// creation matrix. Every combination is asserted, not just the
-    /// permitted ones -- S05 explicitly wants "outside the hierarchy" to be
-    /// a rejection, and the platform-admin-creates-tenant-user cell is the
-    /// one the pre-fix code got backwards (it forced the opposite).
-    #[test]
-    fn can_create_user_with_role_matrix() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert_eq!(
-            can_create_user_with_role(&sysadmin, &Role::SysAdmin),
-            Some(CreationTenant::Fixed(None))
-        );
-        assert_eq!(
-            can_create_user_with_role(&sysadmin, &Role::TenantOwner),
-            Some(CreationTenant::CallerChosen)
-        );
-        assert_eq!(
-            can_create_user_with_role(&sysadmin, &Role::TenantUser),
-            None
-        );
-
-        let owner = user(Role::TenantOwner, Some(7));
-        assert_eq!(can_create_user_with_role(&owner, &Role::SysAdmin), None);
-        assert_eq!(can_create_user_with_role(&owner, &Role::TenantOwner), None);
-        assert_eq!(
-            can_create_user_with_role(&owner, &Role::TenantUser),
-            Some(CreationTenant::Fixed(Some(7)))
-        );
-
-        let member = user(Role::TenantUser, Some(7));
-        for target in [Role::SysAdmin, Role::TenantOwner, Role::TenantUser] {
-            assert_eq!(can_create_user_with_role(&member, &target), None);
-        }
-
-        // A tenant-bound SysAdmin is not unbound (U-019 is still open on
-        // whether this state should even exist) -- today it creates nothing.
-        let bound_sysadmin = user(Role::SysAdmin, Some(1));
-        for target in [Role::SysAdmin, Role::TenantOwner, Role::TenantUser] {
-            assert_eq!(can_create_user_with_role(&bound_sysadmin, &target), None);
-        }
-    }
-
-    #[test]
-    fn can_reassign_role_only_an_unbound_sys_admin_and_never_to_tenant_user() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_reassign_role(&sysadmin, &Role::SysAdmin, None));
-        assert!(!can_reassign_role(&sysadmin, &Role::SysAdmin, Some(1)));
-        assert!(can_reassign_role(&sysadmin, &Role::TenantOwner, Some(1)));
-        assert!(!can_reassign_role(&sysadmin, &Role::TenantOwner, None));
-        assert!(!can_reassign_role(&sysadmin, &Role::TenantUser, Some(1)));
-
-        let owner = user(Role::TenantOwner, Some(1));
-        assert!(!can_reassign_role(&owner, &Role::TenantOwner, Some(1)));
-        assert!(!can_reassign_role(&owner, &Role::TenantUser, Some(1)));
-    }
-
-    /// EPIC-IA-09-S02/S03/S05 (HRMS-130, HRMS-131, HRMS-133, D-22): a tenant
-    /// owner creates drivers and mechanics in their own tenant; nobody else
-    /// does, no edit reassigns onto them, and neither role administers
-    /// anything that exists today. They read their own tenant's vehicles.
-    #[test]
-    fn operational_roles_matrix() {
-        let owner = user(Role::TenantOwner, Some(7));
-        let sysadmin = user(Role::SysAdmin, None);
-        for role in [Role::Driver, Role::Mechanic] {
-            assert_eq!(
-                can_create_user_with_role(&owner, &role),
-                Some(CreationTenant::Fixed(Some(7)))
-            );
-            assert_eq!(can_create_user_with_role(&sysadmin, &role), None);
-            assert!(!can_reassign_role(&sysadmin, &role, Some(7)));
-
-            let actor = user(role.clone(), Some(7));
-            for target in [
-                Role::SysAdmin,
-                Role::TenantOwner,
-                Role::TenantUser,
-                Role::Driver,
-                Role::Mechanic,
-            ] {
-                assert_eq!(can_create_user_with_role(&actor, &target), None);
-            }
-            assert!(!is_unbound_sys_admin(&actor));
-            assert!(!can_create_tenant(&actor));
-            assert!(!can_set_tenant_plan(&actor));
-            assert!(!can_manage_business_plan_catalogue(&actor));
-            assert!(!can_manage_reference_data(&actor));
-            assert!(!can_administer_user(&actor, Some(99), Some(7)));
-            assert!(!can_create_vehicle(&actor, Some(7)));
-            assert!(!can_administer_vehicle(&actor, Some(7)));
-            assert!(!can_link_tracker_device(&actor));
-            assert!(can_read_vehicle(&actor, Some(7)));
-            assert!(!can_read_vehicle(&actor, Some(8)));
-            assert!(lacks_required_tenant(&user(role.clone(), None)));
-            assert!(!lacks_required_tenant(&actor));
-        }
-        assert!(!lacks_required_tenant(&sysadmin));
-    }
-
-    #[test]
-    fn can_administer_user_matrix() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_administer_user(&sysadmin, Some(42), Some(1)));
-        assert!(can_administer_user(&sysadmin, Some(42), None));
-
-        let owner_of_1 = User {
-            id: Some(10),
-            ..user(Role::TenantOwner, Some(1))
-        };
-        assert!(can_administer_user(&owner_of_1, Some(99), Some(1))); // same tenant
-        assert!(!can_administer_user(&owner_of_1, Some(99), Some(2))); // different tenant
-        assert!(can_administer_user(&owner_of_1, Some(10), Some(1))); // self, via the tenant rule
-
-        // DEF-IA-03/HRMS-117: a tenant user administers nobody -- themselves
-        // included. Their own account is reachable through change-password,
-        // which is a different capability.
-        let member_of_1 = User {
-            id: Some(20),
-            ..user(Role::TenantUser, Some(1))
-        };
-        assert!(!can_administer_user(&member_of_1, Some(20), Some(1)));
-        assert!(!can_administer_user(&member_of_1, Some(99), Some(1)));
-    }
-
-    #[test]
-    fn reading_your_own_record_is_allowed_where_administering_it_is_not() {
-        let member_of_1 = User {
-            id: Some(20),
-            ..user(Role::TenantUser, Some(1))
-        };
-        assert!(can_read_user_record(&member_of_1, Some(20), Some(1)));
-        assert!(!can_read_user_record(&member_of_1, Some(99), Some(1)));
-        assert!(!can_read_user_record(&member_of_1, Some(99), Some(2)));
-
-        // And it stays a superset of the administration rule everywhere else.
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_read_user_record(&sysadmin, Some(42), Some(1)));
-        let owner_of_1 = User {
-            id: Some(10),
-            ..user(Role::TenantOwner, Some(1))
-        };
-        assert!(can_read_user_record(&owner_of_1, Some(99), Some(1)));
-        assert!(!can_read_user_record(&owner_of_1, Some(99), Some(2)));
-    }
-
-    /// EPIC-FO-01-S04 (HRMS-923): the role x operation matrix for the vehicle
-    /// register. Every combination is asserted, including the cross-tenant
-    /// cells -- those are the ones D-09 exists for, and the ones the endpoint
-    /// turns into 404 rather than 403 (PD-034).
-    #[test]
-    fn vehicle_administration_matrix() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_administer_vehicle(&sysadmin, Some(1)));
-        assert!(can_administer_vehicle(&sysadmin, Some(999)));
-
-        let owner_of_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_administer_vehicle(&owner_of_1, Some(1)));
-        assert!(!can_administer_vehicle(&owner_of_1, Some(2)));
-        assert!(!can_administer_vehicle(&owner_of_1, None));
-
-        // HRMS-117's rule read one level down: a tenant user administers no
-        // record, a vehicle in their own tenant included.
-        let member_of_1 = user(Role::TenantUser, Some(1));
-        assert!(!can_administer_vehicle(&member_of_1, Some(1)));
-        assert!(!can_administer_vehicle(&member_of_1, Some(2)));
-
-        // A tenant-bound SysAdmin is not unbound (U-019 is still open on
-        // whether the state should exist) -- it administers nothing.
-        let bound_sysadmin = user(Role::SysAdmin, Some(1));
-        assert!(!can_administer_vehicle(&bound_sysadmin, Some(1)));
-
-        // An owner with no tenant has no fleet to administer.
-        let unbound_owner = user(Role::TenantOwner, None);
-        assert!(!can_administer_vehicle(&unbound_owner, None));
-        assert!(!can_administer_vehicle(&unbound_owner, Some(1)));
-    }
-
-    #[test]
-    fn vehicle_creation_matrix() {
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_create_vehicle(&sysadmin, Some(1)));
-        // HRMS-921: an unbound administrator has no tenant of their own, so
-        // an unnamed tenant would produce a vehicle nobody owns.
-        assert!(!can_create_vehicle(&sysadmin, None));
-
-        let owner_of_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_create_vehicle(&owner_of_1, None));
-        assert!(can_create_vehicle(&owner_of_1, Some(1)));
-        assert!(!can_create_vehicle(&owner_of_1, Some(2)));
-
-        let member_of_1 = user(Role::TenantUser, Some(1));
-        assert!(!can_create_vehicle(&member_of_1, None));
-        assert!(!can_create_vehicle(&member_of_1, Some(1)));
-
-        let unbound_owner = user(Role::TenantOwner, None);
-        assert!(!can_create_vehicle(&unbound_owner, None));
-    }
-
-    #[test]
-    fn reading_a_vehicle_is_wider_than_administering_it_but_never_crosses_a_tenant() {
-        let member_of_1 = user(Role::TenantUser, Some(1));
-        assert!(can_read_vehicle(&member_of_1, Some(1)));
-        assert!(!can_administer_vehicle(&member_of_1, Some(1)));
-        assert!(!can_read_vehicle(&member_of_1, Some(2)));
-
-        let owner_of_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_read_vehicle(&owner_of_1, Some(1)));
-        assert!(!can_read_vehicle(&owner_of_1, Some(2)));
-
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_read_vehicle(&sysadmin, Some(1)));
-        assert!(can_read_vehicle(&sysadmin, Some(999)));
-
-        // A row with no owner is readable by nobody but the platform.
-        assert!(!can_read_vehicle(&owner_of_1, None));
-    }
-
-    #[test]
-    fn only_a_tenant_owner_or_sysadmin_may_create_a_vehicle_expense() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        assert!(can_create_vehicle_expense(&sysadmin_unbound, Some(1)));
-        assert!(!can_create_vehicle_expense(&sysadmin_unbound, None));
-
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_create_vehicle_expense(&owner_1, Some(1)));
-        assert!(!can_create_vehicle_expense(&owner_1, Some(2)));
-
-        // Unlike `part`/`purchase_order`, a mechanic may not record one.
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        assert!(!can_create_vehicle_expense(&mechanic_1, Some(1)));
-
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(!can_create_vehicle_expense(&member_1, Some(1)));
-    }
-
-    #[test]
-    fn reading_a_vehicle_expense_is_wider_than_administering_it_but_never_crosses_a_tenant() {
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(can_read_vehicle_expense(&member_1, Some(1)));
-        assert!(!can_administer_vehicle_expense(&member_1, Some(1)));
-        assert!(!can_read_vehicle_expense(&member_1, Some(2)));
-
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_administer_vehicle_expense(&owner_1, Some(1)));
-        assert!(!can_administer_vehicle_expense(&owner_1, Some(2)));
-    }
-
-    #[test]
-    fn a_mechanic_may_record_a_fuel_entry_unlike_a_vehicle_expense() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        assert!(can_create_fuel_entry(&sysadmin_unbound, Some(1)));
-        assert!(!can_create_fuel_entry(&sysadmin_unbound, None));
-
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_create_fuel_entry(&owner_1, Some(1)));
-        assert!(!can_create_fuel_entry(&owner_1, Some(2)));
-
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        assert!(can_create_fuel_entry(&mechanic_1, Some(1)));
-        assert!(!can_create_fuel_entry(&mechanic_1, Some(2)));
-
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(!can_create_fuel_entry(&member_1, Some(1)));
-    }
-
-    #[test]
-    fn reading_a_fuel_entry_never_crosses_a_tenant() {
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(can_read_fuel_entry(&member_1, Some(1)));
-        assert!(!can_read_fuel_entry(&member_1, Some(2)));
-
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_read_fuel_entry(&sysadmin, Some(1)));
-    }
-
-    #[test]
-    fn only_a_tenant_owner_or_sysadmin_may_configure_the_internal_tank() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        assert!(can_configure_internal_tank(&sysadmin_unbound, Some(1)));
-        assert!(!can_configure_internal_tank(&sysadmin_unbound, None));
-
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_configure_internal_tank(&owner_1, Some(1)));
-        assert!(!can_configure_internal_tank(&owner_1, Some(2)));
-
-        // Unlike `fuel_entry`, a mechanic may not configure the tank.
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        assert!(!can_configure_internal_tank(&mechanic_1, Some(1)));
-    }
-
-    #[test]
-    fn reading_the_internal_tank_never_crosses_a_tenant() {
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(can_read_internal_tank(&member_1, Some(1)));
-        assert!(!can_read_internal_tank(&member_1, Some(2)));
-
-        let sysadmin = user(Role::SysAdmin, None);
-        assert!(can_read_internal_tank(&sysadmin, Some(1)));
-    }
-
-    #[test]
-    fn a_mechanic_may_create_a_preventive_plan() {
-        let sysadmin_unbound = user(Role::SysAdmin, None);
-        assert!(can_create_preventive_plan(&sysadmin_unbound, Some(1)));
-        assert!(!can_create_preventive_plan(&sysadmin_unbound, None));
-
-        let owner_1 = user(Role::TenantOwner, Some(1));
-        assert!(can_create_preventive_plan(&owner_1, Some(1)));
-        assert!(!can_create_preventive_plan(&owner_1, Some(2)));
-
-        let mechanic_1 = user(Role::Mechanic, Some(1));
-        assert!(can_create_preventive_plan(&mechanic_1, Some(1)));
-
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(!can_create_preventive_plan(&member_1, Some(1)));
-    }
-
-    #[test]
-    fn reading_a_preventive_plan_never_crosses_a_tenant() {
-        let member_1 = user(Role::TenantUser, Some(1));
-        assert!(can_read_preventive_plan(&member_1, Some(1)));
-        assert!(!can_read_preventive_plan(&member_1, Some(2)));
-    }
-
-    #[test]
-    fn a_driver_submits_checklists_and_records_the_odometer_but_administers_nothing() {
-        let driver = user(Role::Driver, Some(1));
-        assert!(can_create_checklist_run(&driver, Some(1)) && !can_create_checklist_run(&driver, Some(2)));
-        assert!(can_record_odometer(&driver, Some(1)) && !can_record_odometer(&driver, Some(2)));
-        assert!(!can_administer_vehicle(&driver, Some(1)) && !can_create_vehicle(&driver, Some(1)));
-        let mechanic = user(Role::Mechanic, Some(1));
-        assert!(!can_create_checklist_run(&mechanic, Some(1)) && !can_record_odometer(&mechanic, Some(1)));
+    fn nobody_grants_what_they_do_not_hold() {
+        let owner = actor(TENANT_OWNER, Some(1));
+        let mechanic = actor(MECHANIC, Some(1));
+        let driver_grants = Grants::from_codes(permission::system_grants(DRIVER));
+        assert!(can_grant(&owner, &driver_grants));
+        assert!(!can_grant(&mechanic, &Grants::from_codes(["user.create"])));
+        assert!(!can_grant(&owner, &Grants::from_codes(["tenant.create"])));
+        assert!(can_grant(&actor(SYS_ADMIN, None), &Grants::from_codes(["tenant.create"])));
     }
 }

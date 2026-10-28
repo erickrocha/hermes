@@ -366,13 +366,7 @@ async fn require_service_group_permission(
     } else {
         "garage.service.external"
     };
-    let effective = business::use_cases::access_profile_use_case::AccessProfileUseCase::new(
-        business::gateway::access_profile_gateway::AccessProfileGateway::new(db),
-    )
-    .effective(current_user)
-    .await
-    .map_err(|_| unexpected())?;
-    if effective.permissions.iter().any(|held| held == code) {
+    if current_user.allows(code) {
         Ok(())
     } else {
         Err(ExceptionResponse::ForbiddenPermission(locale.clone(), ErrorKey::PermissionNotInProfile, code))

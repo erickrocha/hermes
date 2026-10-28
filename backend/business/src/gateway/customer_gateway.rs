@@ -16,6 +16,8 @@ pub trait CustomerStore: Send + Sync {
     async fn save(&self, customer: Customer) -> Result<Customer, BusinessError>;
     async fn get_by_id(&self, id: i64) -> Result<Option<Customer>, BusinessError>;
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<Customer>, BusinessError>;
+    /// The tenant's customer holding this (normalised) taxpayer document, if any -- under the caller's scope.
+    async fn get_by_tax_id(&self, tenant_id: Option<i64>, tax_id: &str) -> Result<Option<Customer>, BusinessError>;
     async fn list_page(
         &self,
         page: u64,
@@ -70,6 +72,16 @@ impl CustomerStore for CustomerGateway {
         >>::find_by_uuid(self, uuid)
         .await
         .map_err(database_error)?;
+        Ok(model.map(CustomerEntityMapper::from_model))
+    }
+
+    async fn get_by_tax_id(&self, tenant_id: Option<i64>, tax_id: &str) -> Result<Option<Customer>, BusinessError> {
+        let model = tenant_select(CustomerQuery::find(), customer_entity::Column::TenantId)
+            .filter(customer_entity::Column::TenantId.eq(tenant_id))
+            .filter(customer_entity::Column::TaxId.eq(tax_id))
+            .one(&self.db)
+            .await
+            .map_err(database_error)?;
         Ok(model.map(CustomerEntityMapper::from_model))
     }
 
@@ -142,7 +154,10 @@ impl CustomerGateway {
             .order_by_desc(customer_entity::Column::Id);
         if let Some(term) = search {
             query = query.filter(
-                Condition::any().add(customer_entity::Column::Name.contains(term)),
+                Condition::any()
+                    .add(customer_entity::Column::Name.contains(term))
+                    .add(customer_entity::Column::LegalName.contains(term))
+                    .add(customer_entity::Column::TaxId.contains(term)),
             );
         }
         fetch_page(query, &self.db, page, page_size).await

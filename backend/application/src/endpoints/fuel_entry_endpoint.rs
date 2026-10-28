@@ -16,7 +16,6 @@ use axum::http::StatusCode;
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
 use business::domain::authorization::{can_create_fuel_entry, can_read_fuel_entry, can_report_fuel_receipt};
-use business::domain::enums::Role;
 use business::use_cases::fuel_entry_use_case::{
     NOTHING_TO_RESTORE, UNIFY_DIFFERENT_DAYS, UNIFY_DIFFERENT_VEHICLES, UNIFY_NEEDS_TWO_ENTRIES,
 };
@@ -163,7 +162,7 @@ pub async fn get_by_uuid(
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::FuelEntryNotFound))?;
     // `C-032` (`HRMS-860`): a driver reads the fuellings they reported themselves.
-    let foreign_to_driver = current_user.role == Role::Driver && entry.reported_by_user_id != current_user.id;
+    let foreign_to_driver = current_user.only_own("fuel-entry.read") && entry.reported_by_user_id != current_user.id;
     if !can_read_fuel_entry(&current_user, entry.tenant_id) || foreign_to_driver {
         return Err(ExceptionResponse::NotFound(locale, ErrorKey::FuelEntryNotFound));
     }
@@ -189,8 +188,8 @@ pub async fn list_all(
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<PageJson<FuelEntryJson>>> {
     let (page, page_size) = (page_query.page(), page_query.page_size());
-    // `C-032` (`HRMS-860`): a driver's list is the fuellings they reported.
-    if let (Role::Driver, Some(user_id)) = (&current_user.role, current_user.id) {
+    // `C-032` (`HRMS-860`): an own-records holder's list (`fuel-entry.read@own`) is the fuellings they reported.
+    if let (true, Some(user_id)) = (current_user.only_own("fuel-entry.read"), current_user.id) {
         let gateway = FuelEntryGateway::new(state.conn.as_ref().clone());
         return match gateway.find_page_reported_by(user_id, page, page_size).await {
             Ok((models, total)) => {
@@ -410,7 +409,7 @@ pub async fn receipt(
     if !can_report_fuel_receipt(&current_user, vehicle.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelEntryForbidden));
     }
-    let driver_id = if current_user.role == Role::Driver {
+    let driver_id = if current_user.only_own("fuel-entry.register-receipt") {
         current_user.id
     } else {
         crate::endpoints::transport_demand_endpoint::resolve_driver_id(&state, &locale, payload.driver_uuid).await?

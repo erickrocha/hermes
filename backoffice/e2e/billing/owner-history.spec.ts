@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { openBilling, signIn, testValue } from './auth'
 
-test('TenantOwner sees only their history and no platform actions', async ({ page }) => {
+test('Tenant owner (TenantOwner profile) sees only their history and no platform actions', async ({ page }) => {
   await signIn(page, testValue('BILLING_TEST_OWNER_B'), testValue('BILLING_TEST_PASSWORD'))
   await openBilling(page)
 

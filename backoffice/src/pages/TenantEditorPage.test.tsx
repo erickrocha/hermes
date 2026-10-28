@@ -92,4 +92,28 @@ describe('Tenant form masks and CNPJ validation', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/CNPJ/i)
     expect(post).not.toHaveBeenCalled()
   })
+
+  it('sends the tax id, phone and postal code as digits only -- masks are presentation, not data', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: [] } as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/tenants/new']}>
+          <Routes>
+            <Route path="/tenants/new" element={<TenantEditorPage />} />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    )
+
+    fireEvent.change(screen.getByLabelText(/legal name|nome empresarial/i), { target: { value: 'Empresa teste' } })
+    fireEvent.change(screen.getByLabelText(/trading name|nome fantasia/i), { target: { value: 'Marca teste' } })
+    fireEvent.change(screen.getByLabelText(/CNPJ/i), { target: { value: '11.222.333/0001-81' } })
+    fireEvent.change(screen.getByLabelText(/phone|telefone/i), { target: { value: '(11) 98765-4321' } })
+    fireEvent.change(screen.getByLabelText(/postal code|^cep$|código postal/i), { target: { value: '13000-000' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/tenant', expect.objectContaining({ taxId: '11222333000181', phone: '11987654321', postalCode: '13000000' })))
+  })
 })

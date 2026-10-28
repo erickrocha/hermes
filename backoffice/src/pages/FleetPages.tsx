@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
-import { can, OWNER } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useAction, usePanel, useResourceForm, useResourceState } from '../features/hooks'
 import { customers, transportDemands, vehicles, type Row } from '../features/resources'
 import type { AppDispatch, RootState } from '../store'
+import type { AddressValues } from '../features/address'
+import { addressLines } from '../features/address'
+import { maskDocument } from '../features/masks'
 import { Confirm, PageHeader } from '../components/UI'
+import { AddressBlock } from '../components/molecules/AddressBlock'
 import { DetailCard } from '../components/molecules/DetailCard'
 import { PanelSection } from '../components/molecules/PanelSection'
 import { StateView } from '../components/molecules/StateView'
@@ -47,8 +51,8 @@ export function VehicleDetailPage() {
   return <>
     <PageHeader title={vehicle ? `${vehicle.plate} — ${vehicle.model}` : t('vehicles')} actions={<>
       <Link className="btn secondary" to="/vehicles">{t('back')}</Link>
-      {can(session, 'vehicle.update', [...OWNER]) && <Link className="btn secondary" to={`/vehicles/${uuid}/edit`}>{t('edit')}</Link>}
-      {can(session, 'vehicle.odometer.record', [...OWNER]) && <Link className="btn primary" to={`/vehicles/${uuid}/odometer`}>{t('recordOdometer')}</Link>}</>} />
+      {can(session, 'vehicle.update') && <Link className="btn secondary" to={`/vehicles/${uuid}/edit`}>{t('edit')}</Link>}
+      {can(session, 'vehicle.odometer.record') && <Link className="btn primary" to={`/vehicles/${uuid}/odometer`}>{t('recordOdometer')}</Link>}</>} />
     <StateView loading={state.loading} error={vehicle ? '' : state.error}>
       {vehicle && <DetailCard rows={[
         { label: t('status'), value: <span className="badge blue">{t(`vehicleStatus${String(vehicle.status)}`)}</span> }, { label: t('prefix'), value: String(vehicle.prefix ?? '') },
@@ -57,8 +61,8 @@ export function VehicleDetailPage() {
       ]} />}
     </StateView>
     <PanelSection titleKey="currentDriver" loading={assignment.loading} empty={!holder}
-      actions={<>{can(session, 'vehicle.assign-driver', [...OWNER]) && !holder && <Link className="btn secondary" to={`/vehicles/${uuid}/assign`}>{t('assignDriver')}</Link>}
-        {can(session, 'vehicle.end-assignment', [...OWNER]) && holder && <button className="btn secondary danger-text" onClick={() => setEnding(true)}>{t('endAssignment')}</button>}</>}>
+      actions={<>{can(session, 'vehicle.assign-driver') && !holder && <Link className="btn secondary" to={`/vehicles/${uuid}/assign`}>{t('assignDriver')}</Link>}
+        {can(session, 'vehicle.end-assignment') && holder && <button className="btn secondary danger-text" onClick={() => setEnding(true)}>{t('endAssignment')}</button>}</>}>
       {holder && <DetailCard rows={[{ label: t('driver'), value: String(holder.driverName ?? '') }, { label: t('startedAt'), value: String(holder.startedAt ?? '').slice(0, 16).replace('T', ' ') }]} />}
     </PanelSection>
     <PanelSection titleKey="tracking" loading={tracking.loading} error={tracking.error ? 'trackingUnavailable' : ''} empty={!tracking.data}>
@@ -90,12 +94,17 @@ export function CustomerDetailPage() {
   return <>
     <PageHeader title={customer ? String(customer.name) : t('customers')} actions={<>
       <Link className="btn secondary" to="/customers">{t('back')}</Link>
-      {can(session, 'customer.update', [...OWNER]) && <Link className="btn secondary" to={`/customers/${uuid}/edit`}>{t('edit')}</Link>}</>} />
+      {can(session, 'customer.update') && <Link className="btn secondary" to={`/customers/${uuid}/edit`}>{t('edit')}</Link>}</>} />
     <StateView loading={state.loading} error={customer ? '' : state.error}>
-      {customer && <DetailCard rows={[{ label: t('status'), value: t(`customerStatus${String(customer.status)}`) }, { label: t('observation'), value: String(customer.notes ?? '') }]} />}
+      {customer && <DetailCard rows={[
+        { label: t('status'), value: t(`customerStatus${String(customer.status)}`) }, { label: t('legalName'), value: String(customer.legalName ?? '') },
+        { label: customer.countryCode === 'US' ? t('taxIdEin') : t('taxIdCpfCnpj'), value: customer.taxId ? maskDocument(String(customer.taxId), String(customer.countryCode ?? 'BR')) : '' },
+        { label: t('customerAddress'), value: <AddressBlock address={customer as AddressValues} />, hide: !addressLines(customer as AddressValues, t).length },
+        { label: t('observation'), value: String(customer.notes ?? '') },
+      ]} />}
     </StateView>
     <ChildList refresh={refresh} titleKey="customerDaysOff" path={`/customer/uuid/${uuid}/day-offs`} columns={[{ key: 'date', labelKey: 'date', kind: 'date' }, { key: 'reason', labelKey: 'reason' }]}
-      addTo={can(session, 'customer.day-off.create', [...OWNER]) ? `/customers/${uuid}/day-offs/new` : undefined} addKey="newDayOff" onDelete={can(session, 'customer.day-off.delete', [...OWNER]) ? setRemoving : undefined} />
+      addTo={can(session, 'customer.day-off.create') ? `/customers/${uuid}/day-offs/new` : undefined} addKey="newDayOff" onDelete={can(session, 'customer.day-off.delete') ? setRemoving : undefined} />
     {removing && <Confirm title={t('deleteTitle')} text={t('deleteText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
 }
 export function CustomerDayOffPage() {
@@ -109,7 +118,7 @@ export function DemandDetailPage() {
   const [removing, setRemoving] = useState<{ kind: 'daily-schedule' | 'exception'; row: Row } | null>(null); const [refresh, setRefresh] = useState(0)
   useEffect(() => { if (uuid) dispatch(transportDemands.fetchOne(uuid)) }, [dispatch, uuid])
   const remove = async () => { const target = removing; setRemoving(null); if (target && await run('delete', `/transport-demand/uuid/${uuid}/${target.kind}/uuid/${target.row.uuid}`)) setRefresh((n) => n + 1) }
-  const owner = can(session, 'transport-demand.update', [...OWNER])
+  const owner = can(session, 'transport-demand.update')
   return <>
     <PageHeader title={demand ? String(demand.lineName ?? demand.demandType) : t('transportDemands')} actions={<>
       <Link className="btn secondary" to="/transport-demands">{t('back')}</Link>{owner && <Link className="btn secondary" to={`/transport-demands/${uuid}/edit`}>{t('edit')}</Link>}</>} />
@@ -120,13 +129,13 @@ export function DemandDetailPage() {
       ]} />}
     </StateView>
     <ChildList refresh={refresh} titleKey="allocations" path={`/transport-demand/uuid/${uuid}/allocations`} columns={[{ key: 'startDate', labelKey: 'startDate', kind: 'date' }, { key: 'endDate', labelKey: 'endDate', kind: 'date' }, { key: 'daysOfWeek', labelKey: 'daysOfWeek' }, { key: 'active', labelKey: 'activeFlag', kind: 'bool' }]}
-      addTo={can(session, 'transport-demand.allocation.create', [...OWNER]) ? `/transport-demands/${uuid}/allocations/new` : undefined} addKey="newAllocation" />
+      addTo={can(session, 'transport-demand.allocation.create') ? `/transport-demands/${uuid}/allocations/new` : undefined} addKey="newAllocation" />
     <ChildList refresh={refresh} titleKey="dailySchedules" path={`/transport-demand/uuid/${uuid}/daily-schedules`} columns={[{ key: 'date', labelKey: 'date', kind: 'date' }, { key: 'startTime', labelKey: 'startTime' }, { key: 'endTime', labelKey: 'endTime' }, { key: 'notes', labelKey: 'observation' }]}
-      addTo={can(session, 'transport-demand.daily-schedule.create', [...OWNER]) ? `/transport-demands/${uuid}/daily-schedules/new` : undefined} addKey="newDailySchedule"
-      onDelete={can(session, 'transport-demand.daily-schedule.delete', [...OWNER]) ? (row) => setRemoving({ kind: 'daily-schedule', row }) : undefined} />
+      addTo={can(session, 'transport-demand.daily-schedule.create') ? `/transport-demands/${uuid}/daily-schedules/new` : undefined} addKey="newDailySchedule"
+      onDelete={can(session, 'transport-demand.daily-schedule.delete') ? (row) => setRemoving({ kind: 'daily-schedule', row }) : undefined} />
     <ChildList refresh={refresh} titleKey="scheduleExceptions" path={`/transport-demand/uuid/${uuid}/exceptions`} columns={[{ key: 'date', labelKey: 'date', kind: 'date' }, { key: 'exceptionType', labelKey: 'exceptionType', kind: 'badge', prefix: 'exceptionType' }, { key: 'reason', labelKey: 'reason' }]}
-      addTo={can(session, 'transport-demand.exception.create', [...OWNER]) ? `/transport-demands/${uuid}/exceptions/new` : undefined} addKey="newException"
-      onDelete={can(session, 'transport-demand.exception.delete', [...OWNER]) ? (row) => setRemoving({ kind: 'exception', row }) : undefined} />
+      addTo={can(session, 'transport-demand.exception.create') ? `/transport-demands/${uuid}/exceptions/new` : undefined} addKey="newException"
+      onDelete={can(session, 'transport-demand.exception.delete') ? (row) => setRemoving({ kind: 'exception', row }) : undefined} />
     {removing && <Confirm title={t('deleteTitle')} text={t('deleteText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}</>
 }
 const demandChild = (titleKey: string, fields: FieldDef[], suffix: string) => function DemandChildPage() {

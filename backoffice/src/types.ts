@@ -1,4 +1,7 @@
-export type Role = 'SysAdmin' | 'TenantOwner' | 'TenantUser' | 'Driver' | 'Mechanic'
+export type ProfileScope = 'Platform' | 'Tenant'
+
+/// C-035: a grant is a permission code (`vehicle.read`) or `code@own` -- over the holder's own records only.
+export type Grant = string
 
 export interface Session {
   accessToken: string
@@ -9,11 +12,13 @@ export interface Session {
   uuid: string
   name: string
   userId: number
-  role: Role
+  // C-035: the session's reach and effective grants come with the token; `GET /access-profile/mine` refreshes them.
+  scope: ProfileScope
+  profileKey?: string
+  profileName?: string
+  permissions: Grant[]
   tenantId?: number | null
   tenantUuid?: string | null
-  // `GET /access-profile/mine`: what the signed-in person may do. Absent until it loads.
-  permissions?: string[]
 }
 
 export interface Tenant {
@@ -32,6 +37,26 @@ export interface Tenant {
   postalCode?: string
   countryCode?: string
   businessPlanId?: number | null
+}
+
+/// EPIC-SC-01-S05: a customer carries its identity (trade name, legal name, CPF/CNPJ) and address.
+/// `name` is the trade name; the document is stored digits-only, checked by `countryCode`
+/// (the tenant's country when omitted).
+export interface Customer {
+  id?: number
+  uuid?: string
+  tenantId?: number | null
+  name: string
+  legalName?: string | null
+  taxId?: string | null
+  addressLine1?: string | null
+  addressLine2?: string | null
+  locality?: string | null
+  administrativeArea?: string | null
+  postalCode?: string | null
+  countryCode?: string | null
+  status: string
+  notes?: string | null
 }
 
 export interface BusinessPlan {
@@ -88,14 +113,20 @@ export interface User {
   email: string
   password?: string
   enabled: boolean
-  role: Role
+  // C-035: the access profile is required on creation; the name, key and scope are read-only echoes.
+  profileUuid?: string
+  profileName?: string
+  profileKey?: string
+  scope?: ProfileScope
+  extraPermissions: Grant[]
+  /// Read-only: the effective grants (profile, extras and baseline) the server resolved for the account.
+  permissions?: Grant[]
   tenantId?: number | null
   cpf?: string | null
-  principalFunction?: string | null
 }
-export interface AccessProfile { uuid?: string; name: string; baseRole: 'TenantUser' | 'Driver' | 'Mechanic'; active: boolean; permissions: string[] }
-export interface Permission { code: string; module: string; own: boolean; defaultFor: string[] }
-export interface EffectiveProfile { role: string; profileUuid?: string; profileName?: string; permissions: string[] }
+export interface AccessProfile { uuid?: string; tenantId?: number | null; name: string; scope: ProfileScope; system: boolean; key?: string; active: boolean; permissions: Grant[] }
+export interface Permission { code: string; module: string; scope: ProfileScope; own: boolean; defaultFor: string[] }
+export interface EffectiveProfile { scope: ProfileScope; profileUuid?: string; profileName?: string; profileKey?: string; extraPermissions: Grant[]; permissions: Grant[] }
 export interface Province { id: number; acronym: string; name: string; countryCode: string }
 export interface City { id: number; provinceId: number; name: string }
 

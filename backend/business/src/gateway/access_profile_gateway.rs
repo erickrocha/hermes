@@ -1,28 +1,47 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::string_to_bytes;
-use crate::commons::gateway::{Gateway, fetch_page, tenant_delete, tenant_select};
+use crate::commons::gateway::{Gateway, fetch_page, tenant_delete};
 use crate::domain::access_profile::{AccessProfile, AccessProfileEntityMapper};
 use crate::domain::business_error::BusinessError;
 use entity::access_profile_entity;
+use entity::audit;
 use entity::prelude::{AccessProfileEntity as AccessProfileQuery, UserEntity as UserQuery};
 use entity::user_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, DbErr, DeleteResult, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Select,
 };
+
+/// `C-035`: the profiles a scope sees -- its own tenant's and the system ones (no tenant). The platform
+/// sees every profile; a denied scope none. The `tenant_select` shape with the system rows let through,
+/// written out here because no other tenant-owned table shares rows across tenants.
+fn profile_select(query: Select<AccessProfileQuery>) -> Select<AccessProfileQuery> {
+    match audit::tenant_scope() {
+        audit::TenantScope::Unrestricted => query,
+        audit::TenantScope::Tenant(id) => query.filter(
+            Condition::any()
+                .add(access_profile_entity::Column::TenantId.eq(id))
+                .add(access_profile_entity::Column::TenantId.is_null()),
+        ),
+        audit::TenantScope::Denied => query.filter(Expr::cust("1 = 0")),
+    }
+}
 
 #[async_trait]
 pub trait AccessProfileStore: Send + Sync {
     async fn save(&self, profile: AccessProfile) -> Result<AccessProfile, BusinessError>;
     async fn get_by_id(&self, id: i64) -> Result<Option<AccessProfile>, BusinessError>;
     async fn get_by_uuid(&self, uuid: String) -> Result<Option<AccessProfile>, BusinessError>;
-    async fn find_by_key(&self, name_key: &str, tenant_id: Option<i64>) -> Result<Option<AccessProfile>, BusinessError>;
+    /// A profile by normalised name inside `tenant_id` -- or among the system profiles when `None`.
+    async fn find_by_name_key(&self, name_key: &str, tenant_id: Option<i64>) -> Result<Option<AccessProfile>, BusinessError>;
+    /// A system profile by its key (`SysAdmin`, `Driver`, ...).
+    async fn find_by_key(&self, key: &str) -> Result<Option<AccessProfile>, BusinessError>;
+    /// The profiles the caller's scope sees: the system ones and the tenant's own.
     async fn list_page(&self, page: u64, page_size: u64) -> Result<(Vec<AccessProfile>, u64), BusinessError>;
-    /// The profile id a user holds (None: the default of their role).
-    async fn user_profile_id(&self, user_id: i64) -> Result<Option<i64>, BusinessError>;
-    /// Sets or clears a user's profile. Touches that one column.
-    async fn set_user_profile(&self, user_id: i64, profile_id: Option<i64>) -> Result<(), BusinessError>;
+    /// Sets a user's profile and their extra grants. Touches those two columns.
+    async fn set_user_access(&self, user_id: i64, profile_id: i64, extras: &[String]) -> Result<(), BusinessError>;
     async fn users_holding(&self, profile_id: i64) -> Result<u64, BusinessError>;
 }
 
@@ -66,10 +85,23 @@ impl AccessProfileStore for AccessProfileGateway {
         Ok(model.map(AccessProfileEntityMapper::from_model))
     }
 
-    async fn find_by_key(&self, name_key: &str, tenant_id: Option<i64>) -> Result<Option<AccessProfile>, BusinessError> {
-        let model = tenant_select(AccessProfileQuery::find(), access_profile_entity::Column::TenantId)
+    async fn find_by_name_key(&self, name_key: &str, tenant_id: Option<i64>) -> Result<Option<AccessProfile>, BusinessError> {
+        let tenant = match tenant_id {
+            Some(id) => access_profile_entity::Column::TenantId.eq(id),
+            None => access_profile_entity::Column::TenantId.is_null(),
+        };
+        let model = profile_select(AccessProfileQuery::find())
             .filter(access_profile_entity::Column::NameKey.eq(name_key))
-            .filter(access_profile_entity::Column::TenantId.eq(tenant_id))
+            .filter(tenant)
+            .one(&self.db)
+            .await
+            .map_err(database_error)?;
+        Ok(model.map(AccessProfileEntityMapper::from_model))
+    }
+
+    async fn find_by_key(&self, key: &str) -> Result<Option<AccessProfile>, BusinessError> {
+        let model = profile_select(AccessProfileQuery::find())
+            .filter(access_profile_entity::Column::Key.eq(key))
             .one(&self.db)
             .await
             .map_err(database_error)?;
@@ -77,20 +109,18 @@ impl AccessProfileStore for AccessProfileGateway {
     }
 
     async fn list_page(&self, page: u64, page_size: u64) -> Result<(Vec<AccessProfile>, u64), BusinessError> {
-        let query = tenant_select(AccessProfileQuery::find(), access_profile_entity::Column::TenantId)
+        let query = profile_select(AccessProfileQuery::find())
+            .order_by_desc(access_profile_entity::Column::System)
             .order_by_asc(access_profile_entity::Column::Name);
         let (models, total) = fetch_page(query, &self.db, page, page_size).await.map_err(database_error)?;
         Ok((AccessProfileEntityMapper::from_models(models), total))
     }
 
-    async fn user_profile_id(&self, user_id: i64) -> Result<Option<i64>, BusinessError> {
-        let row = UserQuery::find_by_id(user_id).one(&self.db).await.map_err(database_error)?;
-        Ok(row.and_then(|u| u.profile_id))
-    }
-
-    async fn set_user_profile(&self, user_id: i64, profile_id: Option<i64>) -> Result<(), BusinessError> {
+    async fn set_user_access(&self, user_id: i64, profile_id: i64, extras: &[String]) -> Result<(), BusinessError> {
+        let extras = serde_json::to_string(extras).unwrap_or_else(|_| "[]".into());
         UserQuery::update_many()
             .col_expr(user_entity::Column::ProfileId, Expr::value(profile_id))
+            .col_expr(user_entity::Column::ExtraPermissions, Expr::value(extras))
             .filter(user_entity::Column::Id.eq(user_id))
             .exec(&self.db)
             .await
@@ -123,22 +153,20 @@ impl Gateway<AccessProfile, access_profile_entity::Model, access_profile_entity:
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<access_profile_entity::Model>, DbErr> {
-        tenant_select(AccessProfileQuery::find(), access_profile_entity::Column::TenantId)
+        profile_select(AccessProfileQuery::find())
             .filter(access_profile_entity::Column::Id.eq(id))
             .one(&self.db)
             .await
     }
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<access_profile_entity::Model>, DbErr> {
-        tenant_select(AccessProfileQuery::find(), access_profile_entity::Column::TenantId)
+        profile_select(AccessProfileQuery::find())
             .filter(access_profile_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
             .one(&self.db)
             .await
     }
 
     async fn find_all(&self) -> Result<Vec<access_profile_entity::Model>, DbErr> {
-        tenant_select(AccessProfileQuery::find(), access_profile_entity::Column::TenantId)
-            .all(&self.db)
-            .await
+        profile_select(AccessProfileQuery::find()).all(&self.db).await
     }
 }

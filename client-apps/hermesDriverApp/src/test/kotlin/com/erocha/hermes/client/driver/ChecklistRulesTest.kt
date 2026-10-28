@@ -92,11 +92,11 @@ class ChecklistRulesTest {
     }
 
     @Test
-    fun aSessionSavedBeforeThisChangeStillDecodesWithoutAUuid() {
-        val old = """{"accessToken":"a","refreshToken":"r","expireIn":1792000000,"name":"Maria","role":"Driver"}"""
+    fun aSessionSavedWithoutAUuidStillDecodes() {
+        val old = """{"accessToken":"a","refreshToken":"r","expireIn":1792000000,"name":"Maria","permissions":["driver.act"]}"""
         val decoded = decodeDriverSession(old)
         assertEquals("", decoded?.uuid)
-        val withUuid = DriverSession("a", "r", 1L, "Maria", "Driver", "u-1")
+        val withUuid = DriverSession("a", "r", 1L, "Maria", listOf("driver.act"), "u-1")
         assertEquals(withUuid, decodeDriverSession(withUuid.encode()))
     }
 

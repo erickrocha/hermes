@@ -7,7 +7,6 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::tenant_dashboard_json::TenantDashboardJson;
 use axum::Json;
 use axum::extract::{Extension, State};
-use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::tenant_dashboard_gateway::TenantDashboardGateway;
 use business::use_cases::tenant_dashboard_use_case::TenantDashboardUseCase;
@@ -49,7 +48,7 @@ pub async fn snapshot(
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<TenantDashboardJson>> {
     ensure_tenant_bound(&locale, &current_user)?;
-    let include_billing = current_user.role == Role::TenantOwner;
+    let include_billing = current_user.allows("billing.read");
     let snapshot = use_case(&state)
         .snapshot(Utc::now().naive_utc(), include_billing)
         .await

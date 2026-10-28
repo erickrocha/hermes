@@ -1,6 +1,6 @@
 use crate::domain::business_error::BusinessError;
 use crate::domain::daily_schedule::DailySchedule;
-use crate::domain::enums::Role;
+use crate::domain::authorization::is_active_driver_of;
 use crate::gateway::daily_schedule_gateway::{DailyScheduleStore, DailyScheduleStoreError};
 use crate::gateway::user_gateway::UserLookupStore;
 use crate::gateway::vehicle_gateway::VehicleLookupStore;
@@ -52,7 +52,7 @@ impl DailyScheduleUseCase {
     async fn validated(&self, entry: DailySchedule) -> Result<DailySchedule, BusinessError> {
         let driver = self.users.get_by_id(entry.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {
-            user.role == Role::Driver && user.enabled && user.tenant_id == entry.tenant_id
+            is_active_driver_of(&user, entry.tenant_id)
         });
         if !is_valid_driver {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));

@@ -1,6 +1,6 @@
 use crate::commons::password;
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
+use crate::domain::permission::{self, SYS_ADMIN};
 use crate::domain::password_policy;
 use crate::domain::user::User;
 use crate::gateway::user_gateway::UserStore;
@@ -35,6 +35,7 @@ impl UserUseCase {
             return Err(BusinessError::new(msg));
         }
         password_policy::validate_length(&user.password)?;
+        let user = Self::with_valid_access(user)?;
 
         let encrypted_password = password::hash(&user.password).map_err(|e| {
             let msg = format!("Password encryption error: {:?}", e);
@@ -48,6 +49,24 @@ impl UserUseCase {
         };
 
         self.gateway.save(user_to_save).await
+    }
+
+    /// `C-035`: an account always holds a profile, and its extra grants must come from the catalogue.
+    /// Whether the actor may hand out that profile and those grants is `authorization`'s question,
+    /// answered by the endpoint before this runs; here only the shape is checked.
+    fn with_valid_access(user: User) -> Result<User, BusinessError> {
+        if user.profile_id.is_none() {
+            let msg = "User profile is required".to_string();
+            log::error!("[UserUseCase] {}", msg);
+            return Err(BusinessError::new(msg));
+        }
+        let scope = user.access.scope;
+        let extra_permissions = permission::normalise_grants(&user.extra_permissions, scope).map_err(|code| {
+            let msg = format!("Unknown permission: {code}");
+            log::error!("[UserUseCase] {}", msg);
+            BusinessError::new(msg)
+        })?;
+        Ok(User { extra_permissions, ..user })
     }
 
     pub async fn update(&self, id: i64, user: User) -> Result<User, BusinessError> {
@@ -77,6 +96,7 @@ impl UserUseCase {
         // `/user/change-password`, which demands the current one, and the
         // invitation, which the account holder opens from their own mailbox.
         let password = existing.password;
+        let user = Self::with_valid_access(User { profile_id: user.profile_id.or(existing.profile_id), ..user })?;
 
         let updated_user = User {
             id: Some(id),
@@ -90,13 +110,14 @@ impl UserUseCase {
             password,
             enabled: user.enabled,
             tenant_id: user.tenant_id,
-            role: user.role,
+            profile_id: user.profile_id.or(existing.profile_id),
+            extra_permissions: user.extra_permissions,
             cpf: user.cpf,
-            principal_function: user.principal_function,
             created_at: existing.created_at,
             created_by: existing.created_by,
             updated_at: None,
             updated_by: user.updated_by,
+            access: existing.access,
         };
 
         self.gateway.save(updated_user).await
@@ -245,11 +266,12 @@ impl UserUseCase {
     }
 
     async fn find_sysadmin(&self) -> Result<Option<User>, BusinessError> {
-        self.gateway.get_by_role(Role::SysAdmin).await
+        self.gateway.get_by_profile_key(SYS_ADMIN).await
     }
 
-    /// Seeds the SysAdmin user from SYSADMIN_EMAIL/SYSADMIN_PASSWORD on every boot.
-    /// Looks the existing SysAdmin up by role (not just by email) so that changing
+    /// Seeds the SysAdmin user from SYSADMIN_EMAIL/SYSADMIN_PASSWORD on every boot, holding the
+    /// `SysAdmin` system profile (`sysadmin_profile_id`, seeded by the migration and synced before this
+    /// runs). Looks the existing SysAdmin up by that profile (not just by email) so that changing
     /// SYSADMIN_EMAIL updates the same user instead of leaving a stale one behind.
     ///
     /// EPIC-XF-04-S01 (HRMS-021): both variables are required, same as
@@ -258,7 +280,7 @@ impl UserUseCase {
     /// `admin` when absent -- the one setting in the whole service that
     /// defaulted a secret instead of failing fast, and the one whose
     /// default is public (it is right here in the source).
-    pub async fn seed_sysadmin(&self) -> Result<User, BusinessError> {
+    pub async fn seed_sysadmin(&self, sysadmin_profile_id: i64) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
         let sysadmin_email = env::var("SYSADMIN_EMAIL")
@@ -302,13 +324,14 @@ impl UserUseCase {
                 password: sysadmin_password,
                 enabled: true,
                 tenant_id: existing_sysadmin.tenant_id,
-                role: Role::SysAdmin,
+                profile_id: Some(sysadmin_profile_id),
+                extra_permissions: Vec::new(),
                 cpf: None,
-                principal_function: None,
                 created_at: existing_sysadmin.created_at,
                 created_by: Some("system".to_string()),
                 updated_at: existing_sysadmin.created_at,
                 updated_by: Some("system".to_string()),
+                access: existing_sysadmin.access,
             };
 
             let updated = self.persist(updated_sysadmin).await?;
@@ -329,13 +352,14 @@ impl UserUseCase {
             password: sysadmin_password,
             enabled: true,
             tenant_id: None,
-            role: Role::SysAdmin,
+            profile_id: Some(sysadmin_profile_id),
+            extra_permissions: Vec::new(),
             cpf: None,
-            principal_function: None,
             created_at: Some(Utc::now().naive_utc()),
             created_by: Some("system".to_string()),
             updated_at: Some(Utc::now().naive_utc()),
             updated_by: Some("system".to_string()),
+            access: Default::default(),
         };
 
         let created = self.persist(sysadmin_user).await?;

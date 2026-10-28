@@ -2,68 +2,139 @@ import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
-import { Pencil, Plus } from 'lucide-react'
+import { Eye, Lock, Pencil, Plus } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useDispatch } from 'react-redux'
-import type { AppDispatch } from '../store'
+import { useDispatch, useSelector } from 'react-redux'
+import type { AppDispatch, RootState } from '../store'
 import { fetchProfileEditor, fetchProfiles, fetchUserProfile, saveAccessProfile, saveUserProfile } from '../features/profileSlice'
-import type { AccessProfile, Permission } from '../types'
+import { grantCode, has, isPlatform, ownGrant } from '../features/access'
+import { canEditProfiles } from '../features/routeAccess'
+import type { AccessProfile, Grant, Permission, ProfileScope, Session } from '../types'
+import { Combobox } from '../components/Combobox'
 import { Empty, Form, Loading, PageHeader } from '../components/UI'
+import { PermissionPicker } from '../components/molecules/PermissionPicker'
 
-// C-032 (D-27, HRMS-851/852/862/863): the tenant owner's access profiles -- a named set of permissions
-// for a tenant user, a driver or a mechanic -- and the profile of each user.
-export const profileRoles: AccessProfile['baseRole'][] = ['TenantUser', 'Driver', 'Mechanic']
-const blank: AccessProfile = { name: '', baseRole: 'Mechanic', active: true, permissions: [] }
+// C-035 (replaces C-032's role-based profiles): an access profile is a named set of grants with a scope. The five
+// former roles are read-only system profiles; a tenant's own profiles are Tenant-scope, the platform's may be either.
+export const SCOPES: ProfileScope[] = ['Tenant', 'Platform']
+/// The system profiles a new profile can start from -- the ones below the owner, which `defaultFor` names.
+export const STARTING_POINTS = ['TenantUser', 'Driver', 'Mechanic']
+const blank: AccessProfile = { name: '', scope: 'Tenant', system: false, active: true, permissions: [] }
 
-/** Permissions grouped by module, in catalogue order; the form shows one group per module. */
-export const groupByModule = (permissions: Permission[]) => permissions.reduce<Record<string, Permission[]>>((groups, p) => ({ ...groups, [p.module]: [...(groups[p.module] ?? []), p] }), {})
+/** The catalogue entries a profile of this scope may hold: a Tenant profile holds Tenant codes, a Platform one everything grantable. */
+export const grantableFor = (catalogue: Permission[], scope: ProfileScope) => (scope === 'Platform' ? catalogue : catalogue.filter((p) => p.scope === 'Tenant'))
+
+/** The grants the given system profile holds, derived the way the server derives them: `@own` where the Driver's catalogue entry allows it. */
+export const systemGrantsFrom = (catalogue: Permission[], key: string): Grant[] =>
+  catalogue.filter((p) => p.defaultFor.includes(key)).map((p) => (key === 'Driver' && p.own ? ownGrant(p.code) : p.code))
+
+/** The profiles a caller may hand out: active ones; a tenant caller never sees Platform profiles. */
+export const profilesFor = (session: Session | null, profiles: AccessProfile[]) =>
+  profiles.filter((p) => p.active && (isPlatform(session) || p.scope === 'Tenant'))
+
+/** The catalogue for a user's extras: the profile's scope, minus what the profile already grants in full. */
+export const extrasCatalogueFor = (catalogue: Permission[], profile: AccessProfile | undefined) =>
+  profile ? grantableFor(catalogue, profile.scope).filter((p) => !profile.permissions.includes(p.code)) : []
+
+/** System profiles first, as the server lists them, then by name. */
+export const sortProfiles = (profiles: AccessProfile[]) => [...profiles].sort((a, b) => Number(b.system) - Number(a.system) || a.name.localeCompare(b.name))
+
+export const profileLabelOf = (profile: AccessProfile, t: (key: string) => string) => (profile.key ? t(`profile${profile.key}`) : profile.name)
 
 export function ProfilesPage() {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const [items, setItems] = useState<AccessProfile[] | null>(null); const [error, setError] = useState('')
-  useEffect(() => { dispatch(fetchProfiles()).unwrap().then(setItems).catch((cause) => setError(String(cause || t('loadError')))) }, [dispatch, t])
-  return <><PageHeader title={t('profiles')} subtitle={t('profilesSummary')} actions={<Link className="btn primary" to="/profiles/new"><Plus size={17} />{t('newProfile')}</Link>} />
+  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const session = useSelector((s: RootState) => s.auth.session)
+  const [items, setItems] = useState<AccessProfile[] | null>(null); const [error, setError] = useState('')
+  useEffect(() => { dispatch(fetchProfiles()).unwrap().then((profiles) => setItems(sortProfiles(profiles))).catch((cause) => setError(String(cause || t('loadError')))) }, [dispatch, t])
+  const editable = (profile: AccessProfile) => !profile.system && canEditProfiles(session!)
+  return <><PageHeader title={t('profiles')} subtitle={t('profilesSummary')} actions={has(session, 'profile.create') ? <Link className="btn primary" to="/profiles/new"><Plus size={17} />{t('newProfile')}</Link> : undefined} />
     {error && <p className="form-error">{error}</p>}
-    {!items ? <Loading /> : !items.length ? <Empty /> : <div className="table-card"><table><thead><tr><th>{t('name')}</th><th>{t('role')}</th><th>{t('permissions')}</th><th>{t('status')}</th><th /></tr></thead>
-      <tbody>{items.map((p) => <tr key={p.uuid}><td>{p.name}</td><td><span className="badge blue">{t(`role${p.baseRole}`)}</span></td><td>{p.permissions.length}</td><td>{p.active ? t('active') : t('inactive')}</td><td><Link to={`/profiles/${p.uuid}/edit`}><Pencil size={15} />{t('edit')}</Link></td></tr>)}</tbody></table></div>}</>
+    {!items ? <Loading /> : !items.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('scope')}</th><th>{t('permissions')}</th><th>{t('status')}</th><th /></tr></thead>
+      <tbody>{items.map((p) => <tr key={p.uuid}><td><b>{profileLabelOf(p, t)}</b>{p.system && <small><span className="badge yellow"><Lock size={12} />{t('systemProfile')} · <span className="profile-key">{p.key}</span></span></small>}</td><td><span className="badge blue">{t(`scope${p.scope}`)}</span></td><td>{p.permissions.length}</td><td>{p.active ? t('active') : t('inactive')}</td>
+        <td>{p.uuid && <Link to={`/profiles/${p.uuid}/edit`}>{editable(p) ? <><Pencil size={15} />{t('edit')}</> : <><Eye size={15} />{t('view')}</>}</Link>}</td></tr>)}</tbody></table></div></div>}</>
 }
 
 export function ProfileEditorPage() {
   const { uuid } = useParams(); const navigate = useNavigate(); const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>()
-  const [catalogue, setCatalogue] = useState<Permission[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  const schema = yup.object({ name: yup.string().required(t('genericError')), baseRole: yup.mixed<AccessProfile['baseRole']>().oneOf(profileRoles).required(t('genericError')), active: yup.boolean().required(), permissions: yup.array().of(yup.string().required()).required() })
-  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<AccessProfile>({ resolver: yupResolver(schema), defaultValues: { ...blank } })
+  const session = useSelector((s: RootState) => s.auth.session)
+  const [catalogue, setCatalogue] = useState<Permission[]>([]); const [loaded, setLoaded] = useState<AccessProfile | null>(null)
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const schema = yup.object({ name: yup.string().required(t('genericError')), scope: yup.mixed<ProfileScope>().oneOf(SCOPES).required(), system: yup.boolean().required(), active: yup.boolean().required(), permissions: yup.array().of(yup.string().required()).required() })
+  const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<AccessProfile>({ resolver: yupResolver(schema) as never, defaultValues: { ...blank } })
   useEffect(() => {
     dispatch(fetchProfileEditor(uuid)).unwrap()
-      .then(({ catalogue: permissions, profile }) => { setCatalogue(permissions); if (profile) reset(profile) }).catch((cause) => setError(String(cause || t('loadError')))).finally(() => setLoading(false))
+      .then(({ catalogue: permissions, profile }) => { setCatalogue(permissions); if (profile) { setLoaded(profile); reset(profile) } }).catch((cause) => setError(String(cause || t('loadError')))).finally(() => setLoading(false))
   }, [dispatch, reset, uuid, t])
-  const groups = useMemo(() => groupByModule(catalogue), [catalogue])
-  const held = new Set(watch('permissions') ?? [])
-  const toggle = (code: string) => setValue('permissions', held.has(code) ? [...held].filter((permission) => permission !== code) : [...held, code], { shouldDirty: true })
-  // the role's built-in default is the starting point: a profile is "this role, minus/plus a few things"
-  const startFromDefault = () => setValue('permissions', catalogue.filter((permission) => permission.defaultFor.includes(watch('baseRole'))).map((permission) => permission.code), { shouldDirty: true })
+  const scope = watch('scope'); const permissions = watch('permissions') ?? []
+  // A system profile is the server's: shown, never edited. A tenant caller's profiles are always Tenant-scope.
+  const readOnly = Boolean(loaded?.system) || (uuid ? !has(session, 'profile.update') : !has(session, 'profile.create'))
+  const scopeChoice = isPlatform(session) && !readOnly
+  const grantable = useMemo(() => grantableFor(catalogue, scope), [catalogue, scope])
+  // Narrowing to Tenant drops the Platform grants a Tenant profile cannot hold.
+  const changeScope = (next: ProfileScope) => { setValue('scope', next, { shouldDirty: true }); if (next === 'Tenant') { const tenantCodes = new Set(catalogue.filter((p) => p.scope === 'Tenant').map((p) => p.code)); setValue('permissions', permissions.filter((grant) => tenantCodes.has(grantCode(grant))), { shouldDirty: true }) } }
+  const startFrom = (key: string) => { if (key) setValue('permissions', systemGrantsFrom(grantable, key), { shouldDirty: true }) }
   const save = handleSubmit(async (profile) => { setSaving(true); setError(''); try { await dispatch(saveAccessProfile({ uuid, profile })).unwrap(); navigate('/profiles') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
   if (loading) return <Loading />
-  return <><PageHeader title={uuid ? t('editProfile') : t('newProfile')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/profiles')}>
-    <label className="span-2">{t('name')}<input required {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label>
-    <label>{t('role')}<Controller control={control} name="baseRole" render={({ field }) => <select {...field} onChange={(event) => field.onChange(event.target.value)}>{profileRoles.map((role) => <option key={role} value={role}>{t(`role${role}`)}</option>)}</select>} /></label>
-    <label className="checkbox"><Controller control={control} name="active" render={({ field }) => <input type="checkbox" checked={field.value} onChange={field.onChange} />} />{t('active')}</label>
-    <div className="span-2"><button type="button" className="btn secondary" onClick={startFromDefault}>{t('startFromDefault')}</button></div>
-    {Object.entries(groups).map(([module, perms]) => <fieldset className="span-2 permission-group" key={module}><legend>{module}</legend>
-      {perms.map((permission) => <label className="checkbox" key={permission.code}><input type="checkbox" checked={held.has(permission.code)} onChange={() => toggle(permission.code)} />{permission.code}{permission.own ? ` · ${t('ownOnly')}` : ''}</label>)}</fieldset>)}
+  return <><PageHeader title={uuid ? (readOnly ? t('viewProfile') : t('editProfile')) : t('newProfile')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/profiles')} readOnly={readOnly}>
+    {loaded?.system && <p className="span-2 form-hint"><Lock size={14} /> {t('systemProfileHint')} · <span className="profile-key">{loaded.key}</span></p>}
+    <label className="span-2">{t('name')}<input required readOnly={readOnly} {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label>
+    <label>{t('scope')}{scopeChoice
+      ? <Controller control={control} name="scope" render={({ field }) => <select value={field.value} onChange={(event) => changeScope(event.target.value as ProfileScope)}>{SCOPES.map((option) => <option key={option} value={option}>{t(`scope${option}`)}</option>)}</select>} />
+      : <input readOnly value={t(`scope${scope}`)} />}</label>
+    <label className="checkbox"><Controller control={control} name="active" render={({ field }) => <input type="checkbox" disabled={readOnly} checked={field.value} onChange={field.onChange} />} />{t('active')}</label>
+    {!readOnly && <label className="span-2">{t('startFrom')}<select value="" onChange={(event) => startFrom(event.target.value)}><option value="">{t('startFromPlaceholder')}</option>{STARTING_POINTS.map((key) => <option key={key} value={key}>{t(`profile${key}`)}</option>)}</select></label>}
+    <PermissionPicker catalogue={grantable} value={permissions} readOnly={readOnly} onChange={(grants) => setValue('permissions', grants, { shouldDirty: true })} />
   </Form></section></>
 }
 
-/** On a user's form: which profile the user holds, changeable by the owner. Hidden for roles that take none. */
-export function UserProfilePicker({ userUuid, role }: { userUuid: string; role: string }) {
-  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const [profiles, setProfiles] = useState<AccessProfile[]>([]); const [current, setCurrent] = useState(''); const [message, setMessage] = useState(''); const eligible = (profileRoles as string[]).includes(role)
+export interface UserAccessFieldsProps {
+  profiles: AccessProfile[]
+  catalogue: Permission[]
+  profileUuid: string | null
+  extraPermissions: Grant[]
+  onProfileChange: (profileUuid: string | null, profile: AccessProfile | undefined) => void
+  onExtrasChange: (grants: Grant[]) => void
+  disabled?: boolean
+  error?: string
+}
+
+/** The access a user is handed: a profile, and the grants laid on top of it (never what the profile already gives). */
+export function UserAccessFields({ profiles, catalogue, profileUuid, extraPermissions, onProfileChange, onExtrasChange, disabled = false, error }: UserAccessFieldsProps) {
+  const { t } = useTranslation(); const session = useSelector((s: RootState) => s.auth.session)
+  const offered = useMemo(() => sortProfiles(profilesFor(session, profiles)), [session, profiles])
+  const selected = offered.find((p) => p.uuid === profileUuid)
+  const extras = useMemo(() => extrasCatalogueFor(catalogue, selected), [catalogue, selected])
+  return <div className="access-fields">
+    <label className="span-2">{t('profile')}<Combobox filterable ariaLabel={t('profile')} disabled={disabled} value={profileUuid} options={offered.map((p) => ({ value: p.uuid!, label: `${profileLabelOf(p, t)} · ${t(`scope${p.scope}`)}` }))} onChange={(value) => onProfileChange(value, offered.find((p) => p.uuid === value))} />
+      {selected && <small className="form-hint">{selected.system ? `${t('systemProfile')} · ${selected.key}` : t('customProfile')} · {t('permissionsCount', { count: selected.permissions.length })}</small>}
+      {error && <small className="form-error">{error}</small>}</label>
+    {selected && <><p className="span-2 form-hint"><b>{t('extraPermissions')}</b> · {t('extraPermissionsHint')}</p>
+      <PermissionPicker name="extraPermissions" catalogue={extras} value={extraPermissions} readOnly={disabled} onChange={onExtrasChange} /></>}
+  </div>
+}
+
+/** On an existing user's form: the profile and extras they hold, changed through the assign flow (`PUT /access-profile/user/uuid/{uuid}`). */
+export function UserProfilePicker({ userUuid }: { userUuid: string }) {
+  const { t } = useTranslation(); const dispatch = useDispatch<AppDispatch>(); const session = useSelector((s: RootState) => s.auth.session)
+  const [profiles, setProfiles] = useState<AccessProfile[]>([]); const [catalogue, setCatalogue] = useState<Permission[]>([])
+  const [profileUuid, setProfileUuid] = useState<string | null>(null); const [extras, setExtras] = useState<Grant[]>([]); const [effective, setEffective] = useState<Grant[]>([])
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(''); const [failed, setFailed] = useState(false)
   useEffect(() => {
-    if (!eligible) return
     dispatch(fetchUserProfile(userUuid)).unwrap()
-      .then(({ profiles: available, current: held }) => { setProfiles(available); setCurrent(held.profileUuid ?? '') }).catch(() => setMessage(t('loadError')))
-  }, [dispatch, userUuid, eligible, t])
-  if (!eligible) return null
-  const change = async (profileUuid: string) => { setMessage(''); try { await dispatch(saveUserProfile({ userUuid, profileUuid })).unwrap(); setCurrent(profileUuid); setMessage(t('profileSaved')) } catch (cause) { setMessage(String(cause || t('genericError'))) } }
-  return <label className="span-2">{t('profile')}<select value={current} onChange={(e) => change(e.target.value)}>
-    <option value="">{t('roleDefault')}</option>{profiles.filter((p) => p.active && p.baseRole === role).map((p) => <option key={p.uuid} value={p.uuid}>{p.name}</option>)}</select>{message && <small>{message}</small>}</label>
+      .then(({ profiles: available, catalogue: permissions, current }) => { setProfiles(available); setCatalogue(permissions); setProfileUuid(current.profileUuid ?? null); setExtras(current.extraPermissions); setEffective(current.permissions) })
+      .catch(() => { setMessage(t('loadError')); setFailed(true) }).finally(() => setLoading(false))
+  }, [dispatch, userUuid, t])
+  const apply = async () => {
+    if (!profileUuid) return
+    setSaving(true); setMessage(''); setFailed(false)
+    try { await dispatch(saveUserProfile({ userUuid, profileUuid, extraPermissions: extras })).unwrap(); setMessage(t('profileSaved')) } catch (cause) { setMessage(String(cause || t('genericError'))); setFailed(true) } finally { setSaving(false) }
+  }
+  if (loading) return <p className="span-2 form-hint">{t('loading')}</p>
+  const assignable = has(session, 'profile.assign')
+  return <fieldset className="span-2 permission-group access-section"><legend>{t('access')}</legend><div className="form-grid">
+    <UserAccessFields profiles={profiles} catalogue={catalogue} profileUuid={profileUuid} extraPermissions={extras} disabled={!assignable} onProfileChange={(value) => { setProfileUuid(value); setExtras([]) }} onExtrasChange={setExtras} />
+    {effective.length > 0 && <p className="span-2 form-hint">{t('effectivePermissions')}: {effective.length}</p>}
+    {assignable && <div className="span-2 form-actions"><button type="button" className="btn tertiary" disabled={saving || !profileUuid} onClick={apply}>{saving ? t('saving') : t('applyAccess')}</button></div>}
+    {message && <small className={failed ? 'form-error span-2' : 'form-hint span-2'}>{message}</small>}
+  </div></fieldset>
 }

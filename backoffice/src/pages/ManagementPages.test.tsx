@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { configureStore } from '@reduxjs/toolkit'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -7,8 +7,9 @@ import '../i18n'
 import { api } from '../api'
 import { store } from '../store'
 import { emptyPage } from '../types'
-import type { Session, Tenant } from '../types'
-import { PlanEditorPage, UserEditorPage, amountToCents, canCreateUsers, canReachAdministration, centsToAmount } from './ManagementPages'
+import type { AccessProfile, Permission, Session, Tenant } from '../types'
+import { sessionAs, sessionWith } from '../test/session'
+import { PlanEditorPage, UserEditorPage, amountToCents, canCreateUsers, canSeeUsers, centsToAmount } from './ManagementPages'
 
 // EPIC-BO-03-S02 (HRMS-412): the API's price fields are integer cents; a
 // human types and reads currency amounts. These two conversions are the
@@ -66,9 +67,19 @@ describe('PlanEditorPage price editing', () => {
   })
 })
 
-const sysAdminSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1, role: 'SysAdmin', tenantId: null }
-const tenantOwnerSession: Session = { accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, role: 'TenantOwner', tenantId: 42 }
+const sysAdminSession: Session = sessionAs('SysAdmin', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
+const tenantOwnerSession: Session = sessionAs('TenantOwner', { email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, tenantId: 42 })
 const oneTenant: Tenant = { id: 42, businessName: 'Transmega', companyName: 'Transmega', taxId: '52998224725', countryCode: 'BR' }
+const perm = (code: string, module: string, extra: Partial<Permission> = {}): Permission => ({ code, module, scope: 'Tenant', own: false, defaultFor: [], ...extra })
+const catalogue: Permission[] = [perm('vehicle.read', 'Fleet', { own: true }), perm('vehicle.create', 'Fleet'), perm('business-plan.read', 'Platform', { scope: 'Platform' })]
+const driverProfile: AccessProfile = { uuid: 'sys-driver', name: 'Driver', scope: 'Tenant', system: true, key: 'Driver', active: true, permissions: ['vehicle.read@own'] }
+const ownerProfile: AccessProfile = { uuid: 'sys-owner', name: 'Tenant owner', scope: 'Tenant', system: true, key: 'TenantOwner', active: true, permissions: ['vehicle.read', 'vehicle.create'] }
+const adminProfile: AccessProfile = { uuid: 'sys-admin', name: 'Platform administrator', scope: 'Platform', system: true, key: 'SysAdmin', active: true, permissions: ['vehicle.read', 'vehicle.create', 'business-plan.read'] }
+const mockAccessOptions = () => vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
+  if (url === '/access-profile/catalogue') return { data: catalogue }
+  if (url === '/access-profile') return { data: { items: [adminProfile, ownerProfile, driverProfile] } }
+  return { data: { items: [oneTenant], page: 0, pageSize: 200, totalItems: 1, totalPages: 1 } }
+}) as never)
 
 // A minimal store shaped like RootState -- it doesn't need to react to the
 // thunks UserEditorPage dispatches (loadTenants), only to hold the session
@@ -82,65 +93,82 @@ function sessionStore(session: Session, tenants: Tenant[] = []) {
     },
   })
 }
+const renderNewUser = (session: Session) => render(
+  <Provider store={sessionStore(session, [oneTenant])}>
+    <MemoryRouter initialEntries={['/users/new']}>
+      <Routes><Route path="/users/new" element={<UserEditorPage />} /></Routes>
+    </MemoryRouter>
+  </Provider>
+)
+const pickProfile = async (name: RegExp) => {
+  const picker = await screen.findByRole('combobox', { name: /^profile$|^perfil$/i })
+  fireEvent.focus(within(picker).getByRole('textbox'))
+  fireEvent.click(await screen.findByRole('option', { name }))
+}
 
-// EPIC-BO-02-S02 / PD-019 (HRMS-405, HRMS-113..116): a platform administrator
-// creates tenants and tenant owners -- never a tenant user directly -- and a
-// tenant owner creates tenant users in their own tenant only. The console
-// must offer exactly those actions, not the superset the API would refuse.
-describe('UserEditorPage role-conditional creation (EPIC-BO-02)', () => {
-  beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(api, 'get').mockResolvedValue({ data: [] } as never) })
+// C-035 (replaces EPIC-BO-02-S02 / PD-019): a user is created with an access profile. The platform hands out Platform
+// profiles (no tenant) and Tenant profiles (naming the tenant); a tenant caller hands out Tenant profiles inside their
+// own tenant. Extras are laid on top of the profile, never repeating what it already grants.
+describe('UserEditorPage profile-based creation (C-035)', () => {
+  beforeEach(() => { vi.restoreAllMocks(); mockAccessOptions() })
 
-  it('offers a SysAdmin only TenantOwner and SysAdmin as roles to create, never TenantUser', () => {
-    render(
-      <Provider store={sessionStore(sysAdminSession, [oneTenant])}>
-        <MemoryRouter initialEntries={['/users/new']}>
-          <Routes><Route path="/users/new" element={<UserEditorPage />} /></Routes>
-        </MemoryRouter>
-      </Provider>
-    )
-    fireEvent.click(screen.getByRole('button', { name: /^role$/i }))
-    const options = screen.getAllByRole('option').map((option) => option.textContent)
-    // EPIC-IA-09-S06 (HRMS-134): role names are shown translated, not as enum values.
-    expect(options).toEqual(expect.arrayContaining(['Tenant owner', 'Platform administrator']))
-    expect(options).not.toContain('Tenant user')
-    expect(options).not.toContain('Driver')
+  it('lets the platform pick any active profile; a Platform profile takes the tenant away, a Tenant profile asks for one', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
+    renderNewUser(sysAdminSession)
+    await pickProfile(/Platform administrator/)
+    expect(screen.getByText(/platform profile gives the user no tenant|perfil de plataforma não dá tenant/i)).toBeInTheDocument()
+    expect(within(screen.getByRole('combobox', { name: /^tenant$/i })).getByRole('textbox')).toBeDisabled()
+    await pickProfile(/Tenant owner/)
+    expect(within(screen.getByRole('combobox', { name: /^tenant$/i })).getByRole('textbox')).not.toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'New Owner' } })
+    fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'owner2@transmega.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ profileUuid: 'sys-owner', tenantId: 42, extraPermissions: [] })))
   })
 
-  it('gives a tenant owner a role picker limited to tenant user, driver and mechanic, and no tenant picker -- the new user lands in their own tenant', async () => {
+  it('gives a tenant owner Tenant profiles only and no tenant picker -- the new user lands in their own tenant, with extras on top of the profile', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
-    render(
-      <Provider store={sessionStore(tenantOwnerSession, [oneTenant])}>
-        <MemoryRouter initialEntries={['/users/new']}>
-          <Routes><Route path="/users/new" element={<UserEditorPage />} /></Routes>
-        </MemoryRouter>
-      </Provider>
-    )
-    // EPIC-IA-09-S03 (HRMS-131, D-22): a tenant owner staffs their own tenant.
-    fireEvent.click(screen.getByRole('button', { name: /^role$/i }))
-    const roles = screen.getAllByRole('option').map((option) => option.textContent)
-    expect(roles).toEqual(['Tenant user', 'Driver', 'Mechanic'])
-    expect(screen.queryByRole('button', { name: /^tenant$/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('option', { name: 'Driver' }))
-    // EPIC-IA-07/D-07: no password field on creation -- the account is
-    // invite-only, never given a caller-set password.
+    renderNewUser(tenantOwnerSession)
+    const picker = await screen.findByRole('combobox', { name: /^profile$|^perfil$/i })
+    fireEvent.focus(within(picker).getByRole('textbox'))
+    const options = (await screen.findAllByRole('option')).map((option) => option.textContent)
+    expect(options.some((label) => /Platform administrator/.test(label ?? ''))).toBe(false)
+    expect(options.some((label) => /Driver|Motorista/.test(label ?? ''))).toBe(true)
+    expect(screen.queryByRole('combobox', { name: /^tenant$/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: /Driver|Motorista/ }))
+    // EPIC-IA-07/D-07: no password field on creation -- the account is invite-only.
     expect(screen.queryByLabelText(/temporary password|senha tempor|new password|nova senha/i)).not.toBeInTheDocument()
-
-    fireEvent.change(screen.getByLabelText(/name|nome/i), { target: { value: 'New Driver Coordinator' } })
+    // the Driver profile already holds vehicle.read@own; vehicle.read is still offered (widening), vehicle.create too
+    const extras = within(screen.getByTestId('extraPermissions'))
+    fireEvent.click(extras.getByRole('checkbox', { name: /^vehicle\.create$/ }))
+    fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'New Driver Coordinator' } })
     fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'coordinator@transmega.com' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ role: 'Driver', tenantId: 42 })))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/user', expect.objectContaining({ profileUuid: 'sys-driver', tenantId: 42, extraPermissions: ['vehicle.create'] })))
     expect(post).not.toHaveBeenCalledWith('/user', expect.objectContaining({ password: expect.anything() }))
+    expect(post).not.toHaveBeenCalledWith('/user', expect.objectContaining({ principalFunction: expect.anything() }))
+  })
+
+  it('refuses to submit without a profile', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
+    renderNewUser(tenantOwnerSession)
+    await screen.findByRole('combobox', { name: /^profile$|^perfil$/i })
+    fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'Nobody' } })
+    fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'nobody@transmega.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
+    expect(await screen.findByText(/pick an access profile|escolha um perfil de acesso/i)).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
   })
 })
 
-// EPIC-BO-07-S02/S03 (HRMS-416, HRMS-417, D-22): the console's role guards answer for five roles.
-describe('operational roles in the console', () => {
-  it('keeps drivers and mechanics out of tenant and user administration', () => {
-    for (const role of ['SysAdmin', 'TenantOwner', 'TenantUser']) expect(canReachAdministration(role)).toBe(true)
-    for (const role of ['Driver', 'Mechanic']) {
-      expect(canReachAdministration(role)).toBe(false)
-      expect(canCreateUsers(role)).toBe(false)
-    }
+// C-035: the console's administration guards answer for permissions, not roles.
+describe('administration guards', () => {
+  it('opens user administration to whoever may create, update, invite or assign, and to nobody else', () => {
+    for (const code of ['user.create', 'user.update', 'user.invite', 'profile.assign']) expect(canSeeUsers(sessionWith([code]))).toBe(true)
+    expect(canSeeUsers(sessionWith(['vehicle.read']))).toBe(false)
+    expect(canCreateUsers(sessionWith(['user.update']))).toBe(false)
+    expect(canCreateUsers(sessionWith(['user.create']))).toBe(true)
+    for (const key of ['Driver', 'Mechanic'] as const) { expect(canSeeUsers(sessionAs(key))).toBe(false); expect(canCreateUsers(sessionAs(key))).toBe(false) }
+    for (const key of ['SysAdmin', 'TenantOwner'] as const) expect(canCreateUsers(sessionAs(key))).toBe(true)
   })
 })

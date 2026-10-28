@@ -8,10 +8,11 @@
 use business::commons::functions::string_to_bytes;
 use business::domain::business_plan::BusinessPlan;
 use business::domain::city::City;
-use business::domain::enums::Role;
+use business::domain::enums::ProfileScope;
+use business::domain::permission::{DRIVER, MECHANIC, SYS_ADMIN, TENANT_OWNER, TENANT_USER, system_grants};
 use business::domain::province::Province;
 use business::domain::tenant::Tenant;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::gateway::city_gateway::CityGateway;
 use business::gateway::province_gateway::ProvinceGateway;
@@ -25,7 +26,7 @@ use business::use_cases::user_use_case::UserUseCase;
 use chrono::{NaiveDate, TimeZone, Utc};
 use entity::audit::{AuditUser, run_as_platform, run_with_user};
 use entity::{
-    business_plan_entity, city_entity, province_entity, schedule_exception_entity, tenant_entity,
+    access_profile_entity, business_plan_entity, city_entity, province_entity, schedule_exception_entity, tenant_entity,
     user_entity,
 };
 use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase, MockExecResult, Transaction};
@@ -254,10 +255,68 @@ fn tenant_row(id: i64) -> tenant_entity::Model {
     }
 }
 
+/// `C-035`: the system profile rows the mock knows, by key. `UserGateway` reads the holder's profile
+/// after every user read, so a user result set is always followed by a profile result set -- see
+/// [`UserResults::users`].
+fn profile_id_of(key: &str) -> i64 {
+    match key {
+        TENANT_OWNER => 1,
+        DRIVER => 2,
+        TENANT_USER => 3,
+        SYS_ADMIN => 4,
+        MECHANIC => 5,
+        other => panic!("not a system profile: {other}"),
+    }
+}
+
+fn profile_row(id: i64) -> access_profile_entity::Model {
+    let key = [TENANT_OWNER, DRIVER, TENANT_USER, SYS_ADMIN, MECHANIC]
+        .into_iter()
+        .find(|key| profile_id_of(key) == id)
+        .expect("a known profile id");
+    let scope = if key == SYS_ADMIN { ProfileScope::Platform } else { ProfileScope::Tenant };
+    access_profile_entity::Model {
+        id,
+        uuid: string_to_bytes(&format!("00000000-0000-0000-0000-00000000000{id}")),
+        tenant_id: None,
+        name: key.into(),
+        name_key: key.to_lowercase(),
+        scope: scope.to_string(),
+        system: true,
+        key: Some(key.into()),
+        active: true,
+        permissions: serde_json::to_string(&system_grants(key)).unwrap(),
+        created_at: at(),
+        created_by: None,
+        updated_at: at(),
+        updated_by: None,
+    }
+}
+
+trait UserResults {
+    /// Appends a user result set and, when it is not empty, the profile rows those users hold.
+    fn users<I: IntoIterator<Item = user_entity::Model>>(self, rows: I) -> MockDatabase;
+}
+
+impl UserResults for MockDatabase {
+    fn users<I: IntoIterator<Item = user_entity::Model>>(self, rows: I) -> MockDatabase {
+        let rows: Vec<user_entity::Model> = rows.into_iter().collect();
+        let mut ids: Vec<i64> = rows.iter().map(|row| row.profile_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let db = self.append_query_results([rows]);
+        if ids.is_empty() {
+            db
+        } else {
+            db.append_query_results([ids.into_iter().map(profile_row).collect::<Vec<_>>()])
+        }
+    }
+}
+
 fn user_row(
     id: i64,
     email: &str,
-    role: &str,
+    profile_key: &str,
     tenant_id: Option<i64>,
     password: &str,
 ) -> user_entity::Model {
@@ -269,11 +328,10 @@ fn user_row(
         password: password.into(),
         enabled: true,
         blocked_reason: None,
-        profile_id: None,
+        profile_id: profile_id_of(profile_key),
+        extra_permissions: "[]".into(),
         cpf: None,
-        principal_function: None,
         tenant_id,
-        role: role.into(),
         created_at: at(),
         created_by: None,
         updated_at: at(),
@@ -854,7 +912,7 @@ async fn tenant_reads() {
 
 // ================================================================ users
 
-fn new_user(email: &str, password: &str, role: Role, tenant_id: Option<i64>) -> User {
+fn new_user(email: &str, password: &str, profile_key: &str, tenant_id: Option<i64>) -> User {
     User {
         id: None,
         uuid: None,
@@ -863,13 +921,14 @@ fn new_user(email: &str, password: &str, role: Role, tenant_id: Option<i64>) -> 
         password: password.into(),
         enabled: true,
         tenant_id,
-        role,
+        profile_id: Some(profile_id_of(profile_key)),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,
         updated_by: None,
+        access: Access::of_system_profile(profile_key).expect("a system profile"),
     }
 }
 
@@ -877,20 +936,20 @@ fn new_user(email: &str, password: &str, role: Role, tenant_id: Option<i64>) -> 
 async fn creating_a_user_stores_an_argon2id_hash_never_the_password() {
     let db = mock()
         .append_exec_results([inserted(5)])
-        .append_query_results([[user_row(
+        .users([user_row(
             5,
             "new@example.com",
-            "TenantUser",
+            TENANT_USER,
             Some(42),
             "$argon2id$x",
-        )]])
+        )])
         .into_connection();
     let created = run_with_user(
         Some(owner(42)),
         UserUseCase::new(UserGateway::new(db.clone())).create(new_user(
             "new@example.com",
             "Correct#Horse9",
-            Role::TenantUser,
+            TENANT_USER,
             Some(42),
         )),
     )
@@ -913,17 +972,17 @@ async fn user_creation_rules_are_checked_before_any_write() {
     let db = mock().into_connection();
     let uc = UserUseCase::new(UserGateway::new(db.clone()));
     assert!(
-        uc.create(new_user("", "Correct#Horse9", Role::TenantUser, Some(42)))
+        uc.create(new_user("", "Correct#Horse9", TENANT_USER, Some(42)))
             .await
             .is_err()
     );
     assert!(
-        uc.create(new_user("a@b.c", "", Role::TenantUser, Some(42)))
+        uc.create(new_user("a@b.c", "", TENANT_USER, Some(42)))
             .await
             .is_err()
     );
     assert!(
-        uc.create(new_user("a@b.c", "short", Role::TenantUser, Some(42)))
+        uc.create(new_user("a@b.c", "short", TENANT_USER, Some(42)))
             .await
             .is_err()
     );
@@ -939,7 +998,7 @@ async fn a_user_write_without_any_tenant_scope_is_refused() {
         .create(new_user(
             "new@example.com",
             "Correct#Horse9",
-            Role::TenantUser,
+            TENANT_USER,
             Some(42),
         ))
         .await
@@ -952,19 +1011,19 @@ async fn updating_a_user_without_a_password_keeps_the_stored_hash() {
     let existing = user_row(
         5,
         "u@example.com",
-        "TenantUser",
+        TENANT_USER,
         Some(42),
         "$argon2id$stored",
     );
     let db = mock()
-        .append_query_results([[existing.clone()]])
+        .users([existing.clone()])
         .append_exec_results([inserted(5)])
-        .append_query_results([[existing]])
+        .users([existing])
         .into_connection();
     run_with_user(
         Some(owner(42)),
         UserUseCase::new(UserGateway::new(db.clone()))
-            .update(5, new_user("u@example.com", "", Role::TenantUser, Some(42))),
+            .update(5, new_user("u@example.com", "", TENANT_USER, Some(42))),
     )
     .await
     .expect("update without password");
@@ -978,12 +1037,12 @@ async fn updating_a_user_without_a_password_keeps_the_stored_hash() {
 #[tokio::test]
 async fn changing_a_password_requires_the_current_one() {
     let current = business::commons::password::hash("Current#Pass1").unwrap();
-    let row = user_row(5, "u@example.com", "TenantUser", Some(42), &current);
+    let row = user_row(5, "u@example.com", TENANT_USER, Some(42), &current);
     let db = mock()
-        .append_query_results([[row.clone()]]) // wrong current password
-        .append_query_results([[row.clone()]]) // right current password
+        .users([row.clone()]) // wrong current password
+        .users([row.clone()]) // right current password
         .append_exec_results([inserted(5)])
-        .append_query_results([[row]])
+        .users([row])
         .into_connection();
     let uc = UserUseCase::new(UserGateway::new(db));
     let wrong = run_with_user(
@@ -1008,13 +1067,13 @@ async fn changing_a_password_requires_the_current_one() {
 
 #[tokio::test]
 async fn user_reads() {
-    let row = user_row(5, "u@example.com", "TenantUser", Some(42), "h");
+    let row = user_row(5, "u@example.com", TENANT_USER, Some(42), "h");
     let db = mock()
-        .append_query_results([[row.clone()]])
+        .users([row.clone()])
         .append_query_results([Vec::<user_entity::Model>::new()])
-        .append_query_results([vec![row.clone(), row.clone()]])
-        .append_query_results([vec![row.clone()]])
-        .append_query_results([[row]])
+        .users([row.clone(), row.clone()])
+        .users([row.clone()])
+        .users([row])
         .into_connection();
     let uc = UserUseCase::new(UserGateway::new(db.clone()));
     assert_eq!(
@@ -1053,31 +1112,35 @@ async fn seeding_creates_the_sysadmin_once_under_platform_scope() {
         std::env::set_var("SYSADMIN_EMAIL", "admin@hermes.test");
         std::env::set_var("SYSADMIN_PASSWORD", "Seeded#Admin1");
     }
+    // the administrator is looked up through the `SysAdmin` profile: profile row, then its holder
     let db = mock()
+        .append_query_results([[profile_row(profile_id_of(SYS_ADMIN))]])
         .append_query_results([Vec::<user_entity::Model>::new()]) // no sysadmin yet
         .append_exec_results([inserted(1)])
-        .append_query_results([[user_row(
+        .users([user_row(
             1,
             "admin@hermes.test",
-            "SysAdmin",
+            SYS_ADMIN,
             None,
             "$argon2id$x",
-        )]])
-        .append_query_results([[user_row(
+        )])
+        .append_query_results([[profile_row(profile_id_of(SYS_ADMIN))]]) // second boot
+        .users([user_row(
             1,
             "admin@hermes.test",
-            "SysAdmin",
+            SYS_ADMIN,
             None,
             "$argon2id$x",
-        )]]) // second boot
+        )])
         .into_connection();
     let use_case = UserUseCase::new(UserGateway::new(db.clone()));
-    let first = run_as_platform(use_case.seed_sysadmin())
+    let first = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN)))
         .await
         .expect("seeded");
-    assert_eq!(first.role, Role::SysAdmin);
+    assert_eq!(first.profile_id, Some(profile_id_of(SYS_ADMIN)));
+    assert!(first.is_platform());
     assert_eq!(first.tenant_id, None);
-    let again = run_as_platform(use_case.seed_sysadmin())
+    let again = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN)))
         .await
         .expect("found");
     assert_eq!(
@@ -1112,13 +1175,13 @@ async fn every_list_returns_its_page_and_the_table_total() {
         .append_query_results(count(5000))
         .append_query_results([vec![city_row(9, 26, "Limeira")]])
         .append_query_results(count(2))
-        .append_query_results([vec![user_row(
+        .users([user_row(
             5,
             "u@example.com",
-            "TenantUser",
+            TENANT_USER,
             Some(42),
             "h",
-        )]])
+        )])
         .into_connection();
 
     let (tenants, total) = TenantUseCase::new(TenantGateway::new(db.clone()))
@@ -1274,7 +1337,7 @@ async fn failed_writes_are_reported() {
         UserUseCase::new(UserGateway::new(write_fails())).create(new_user(
             "n@example.com",
             "Correct#Horse9",
-            Role::TenantUser,
+            TENANT_USER,
             Some(42),
         )),
     )
@@ -1285,7 +1348,7 @@ async fn failed_writes_are_reported() {
         new_user(
             "n@example.com",
             "Correct#Horse9",
-            Role::TenantUser,
+            TENANT_USER,
             Some(42),
         ),
     ))
@@ -1293,7 +1356,7 @@ async fn failed_writes_are_reported() {
     assert!(persisted.is_err());
     assert!(
         UserUseCase::new(UserGateway::new(mock().into_connection()))
-            .persist(new_user("", "", Role::TenantUser, None))
+            .persist(new_user("", "", TENANT_USER, None))
             .await
             .is_err()
     );
@@ -1303,19 +1366,19 @@ async fn failed_writes_are_reported() {
 async fn persisting_a_user_hashes_the_password() {
     let db = mock()
         .append_exec_results([inserted(6)])
-        .append_query_results([[user_row(
+        .users([user_row(
             6,
             "p@example.com",
-            "TenantUser",
+            TENANT_USER,
             Some(42),
             "$argon2id$x",
-        )]])
+        )])
         .into_connection();
     let saved = run_as_platform(
         UserUseCase::new(UserGateway::new(db.clone())).persist(new_user(
             "p@example.com",
             "Correct#Horse9",
-            Role::TenantUser,
+            TENANT_USER,
             Some(42),
         )),
     )
@@ -1332,17 +1395,17 @@ async fn updating_a_user_never_changes_the_password() {
     // ignored outright -- not hashed, not validated -- and the stored hash is
     // written back untouched. Changing a password happens through invitation
     // (PD-002), which is the only path that proves possession of the account.
-    let existing = user_row(5, "u@example.com", "TenantUser", Some(42), "$argon2id$old");
+    let existing = user_row(5, "u@example.com", TENANT_USER, Some(42), "$argon2id$old");
     let db = mock()
-        .append_query_results([[existing.clone()]])
+        .users([existing.clone()])
         .append_exec_results([inserted(5)])
-        .append_query_results([[existing]])
+        .users([existing])
         .into_connection();
     run_with_user(
         Some(owner(42)),
         UserUseCase::new(UserGateway::new(db.clone())).update(
             5,
-            new_user("u@example.com", "Brand#New99", Role::TenantUser, Some(42)),
+            new_user("u@example.com", "Brand#New99", TENANT_USER, Some(42)),
         ),
     )
     .await
@@ -1363,14 +1426,14 @@ async fn updating_a_user_never_changes_the_password() {
         Some(owner(42)),
         UserUseCase::new(UserGateway::new(
             mock()
-                .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "h")]])
+                .users([user_row(5, "u@example.com", TENANT_USER, Some(42), "h")])
                 .append_exec_results([inserted(5)])
-                .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "h")]])
+                .users([user_row(5, "u@example.com", TENANT_USER, Some(42), "h")])
                 .into_connection(),
         ))
         .update(
             5,
-            new_user("u@example.com", "short", Role::TenantUser, Some(42)),
+            new_user("u@example.com", "short", TENANT_USER, Some(42)),
         ),
     )
     .await;
@@ -1380,7 +1443,7 @@ async fn updating_a_user_never_changes_the_password() {
         run_with_user(
             Some(owner(42)),
             UserUseCase::new(UserGateway::new(failing(1)))
-                .update(5, new_user("u@example.com", "", Role::TenantUser, Some(42)))
+                .update(5, new_user("u@example.com", "", TENANT_USER, Some(42)))
         )
         .await
         .is_err()
@@ -1394,19 +1457,20 @@ async fn changing_sysadmin_email_repoints_the_same_account_instead_of_adding_one
         std::env::set_var("SYSADMIN_EMAIL", "admin@hermes.test");
         std::env::set_var("SYSADMIN_PASSWORD", "Seeded#Admin1");
     }
-    let old = user_row(1, "old-admin@hermes.test", "SysAdmin", None, "$argon2id$x");
+    let old = user_row(1, "old-admin@hermes.test", SYS_ADMIN, None, "$argon2id$x");
     let db = mock()
-        .append_query_results([[old]])
+        .append_query_results([[profile_row(profile_id_of(SYS_ADMIN))]])
+        .users([old])
         .append_exec_results([inserted(1)])
-        .append_query_results([[user_row(
+        .users([user_row(
             1,
             "admin@hermes.test",
-            "SysAdmin",
+            SYS_ADMIN,
             None,
             "$argon2id$x",
-        )]])
+        )])
         .into_connection();
-    let seeded = run_as_platform(UserUseCase::new(UserGateway::new(db.clone())).seed_sysadmin())
+    let seeded = run_as_platform(UserUseCase::new(UserGateway::new(db.clone())).seed_sysadmin(profile_id_of(SYS_ADMIN)))
         .await
         .expect("re-pointed");
     assert_eq!(
@@ -1811,14 +1875,14 @@ async fn only_an_active_driver_of_the_vehicles_own_tenant_can_be_assigned() {
     // driver all get the same answer, and nothing is written.
     use business::commons::entity_mapper::EntityMapper;
     let vehicle = VehicleEntityMapper::from_model(vehicle_row(10, 42, "ABC1D23", "Active"));
-    let mut disabled = user_row(5, "d@example.com", "Driver", Some(42), "x");
+    let mut disabled = user_row(5, "d@example.com", DRIVER, Some(42), "x");
     disabled.enabled = false;
     for candidate in [
-        user_row(5, "u@example.com", "TenantUser", Some(42), "x"),
-        user_row(5, "d@example.com", "Driver", Some(43), "x"),
+        user_row(5, "u@example.com", TENANT_USER, Some(42), "x"),
+        user_row(5, "d@example.com", DRIVER, Some(43), "x"),
         disabled,
     ] {
-        let db = mock().append_query_results([[candidate]]).into_connection();
+        let db = mock().users([candidate]).into_connection();
         let refused = run_with_user(
             Some(owner(42)),
             assignment_use_case(&db).assign(&vehicle, UUID.into()),
@@ -1836,7 +1900,7 @@ async fn a_vehicle_with_a_live_assignment_is_refused_a_second_one() {
     use business::commons::entity_mapper::EntityMapper;
     let vehicle = VehicleEntityMapper::from_model(vehicle_row(10, 42, "ABC1D23", "Active"));
     let db = mock()
-        .append_query_results([[user_row(6, "d2@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(6, "d2@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[live_assignment(10, 5)]])
         .into_connection();
     let refused = run_with_user(
@@ -1901,14 +1965,14 @@ fn new_demand(tenant_id: Option<i64>) -> TransportDemand {
 /// written.
 #[tokio::test]
 async fn only_an_active_driver_of_the_demands_own_tenant_may_be_named() {
-    let mut disabled = user_row(5, "d@example.com", "Driver", Some(42), "x");
+    let mut disabled = user_row(5, "d@example.com", DRIVER, Some(42), "x");
     disabled.enabled = false;
     for candidate in [
-        user_row(5, "u@example.com", "TenantUser", Some(42), "x"),
-        user_row(5, "d@example.com", "Driver", Some(43), "x"),
+        user_row(5, "u@example.com", TENANT_USER, Some(42), "x"),
+        user_row(5, "d@example.com", DRIVER, Some(43), "x"),
         disabled,
     ] {
-        let db = mock().append_query_results([[candidate]]).into_connection();
+        let db = mock().users([candidate]).into_connection();
         let mut demand = new_demand(Some(42));
         demand.specific_driver_id = Some(5);
         let refused = run_with_user(Some(owner(42)), demand_use_case(&db).create(demand))
@@ -1984,14 +2048,14 @@ fn new_allocation(tenant_id: Option<i64>) -> TransportDemandAllocation {
 /// check runs unconditionally rather than only when a value is present.
 #[tokio::test]
 async fn only_an_active_driver_of_the_allocations_own_tenant_may_be_named() {
-    let mut disabled = user_row(5, "d@example.com", "Driver", Some(42), "x");
+    let mut disabled = user_row(5, "d@example.com", DRIVER, Some(42), "x");
     disabled.enabled = false;
     for candidate in [
-        user_row(5, "u@example.com", "TenantUser", Some(42), "x"),
-        user_row(5, "d@example.com", "Driver", Some(43), "x"),
+        user_row(5, "u@example.com", TENANT_USER, Some(42), "x"),
+        user_row(5, "d@example.com", DRIVER, Some(43), "x"),
         disabled,
     ] {
-        let db = mock().append_query_results([[candidate]]).into_connection();
+        let db = mock().users([candidate]).into_connection();
         let allocation = new_allocation(Some(42));
         let refused = run_with_user(Some(owner(42)), allocation_use_case(&db).create(allocation))
             .await
@@ -2013,7 +2077,7 @@ async fn a_vehicle_outside_the_allocations_own_tenant_may_not_be_named() {
         enforce_tenant: false,
     };
     let db = mock()
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
     let allocation = new_allocation(Some(42));
@@ -2066,14 +2130,14 @@ fn new_schedule_entry(tenant_id: Option<i64>) -> DailySchedule {
 /// tenant_may_be_named` proves for `EPIC-SC-02-S02`.
 #[tokio::test]
 async fn only_an_active_driver_of_the_schedule_entrys_own_tenant_may_be_named() {
-    let mut disabled = user_row(5, "d@example.com", "Driver", Some(42), "x");
+    let mut disabled = user_row(5, "d@example.com", DRIVER, Some(42), "x");
     disabled.enabled = false;
     for candidate in [
-        user_row(5, "u@example.com", "TenantUser", Some(42), "x"),
-        user_row(5, "d@example.com", "Driver", Some(43), "x"),
+        user_row(5, "u@example.com", TENANT_USER, Some(42), "x"),
+        user_row(5, "d@example.com", DRIVER, Some(43), "x"),
         disabled,
     ] {
-        let db = mock().append_query_results([[candidate]]).into_connection();
+        let db = mock().users([candidate]).into_connection();
         let entry = new_schedule_entry(Some(42));
         let refused = run_with_user(Some(owner(42)), schedule_use_case(&db).create(entry))
             .await
@@ -2094,7 +2158,7 @@ async fn a_vehicle_outside_the_schedule_entrys_own_tenant_may_not_be_named() {
         enforce_tenant: false,
     };
     let db = mock()
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .into_connection();
     let entry = new_schedule_entry(Some(42));
@@ -2187,14 +2251,14 @@ fn schedule_exception_row(
 /// active-driver-of-this-tenant check every other use case here runs.
 #[tokio::test]
 async fn a_named_replacement_driver_must_be_an_active_driver_of_the_exceptions_own_tenant() {
-    let mut disabled = user_row(5, "d@example.com", "Driver", Some(42), "x");
+    let mut disabled = user_row(5, "d@example.com", DRIVER, Some(42), "x");
     disabled.enabled = false;
     for candidate in [
-        user_row(5, "u@example.com", "TenantUser", Some(42), "x"),
-        user_row(5, "d@example.com", "Driver", Some(43), "x"),
+        user_row(5, "u@example.com", TENANT_USER, Some(42), "x"),
+        user_row(5, "d@example.com", DRIVER, Some(43), "x"),
         disabled,
     ] {
-        let db = mock().append_query_results([[candidate]]).into_connection();
+        let db = mock().users([candidate]).into_connection();
         let mut exception = new_exception(Some(42));
         exception.new_driver_id = Some(5);
         let refused = run_with_user(Some(owner(42)), exception_use_case(&db).create(exception))
@@ -2512,7 +2576,7 @@ async fn importing_rows_collects_driver_vehicle_and_customer_reference_rejection
     invalid_customer.order_code = "ORD-CUSTOMER".into();
     invalid_customer.customer_id = Some(20);
     let db = mock()
-        .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "x")]])
+        .users([user_row(5, "u@example.com", TENANT_USER, Some(42), "x")])
         .append_query_results([[vehicle_row(10, 99, "ABC1D23", "Active")]])
         .append_query_results([[customer_row(20, 99)]])
         .into_connection();
@@ -2588,7 +2652,7 @@ async fn a_named_driver_in_either_seat_must_be_an_active_driver_of_the_trips_own
     let mut trip = new_trip(Some(42));
     trip.driver_id = Some(5);
     let db = mock()
-        .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "x")]])
+        .users([user_row(5, "u@example.com", TENANT_USER, Some(42), "x")])
         .into_connection();
     let refused = run_with_user(Some(owner(42)), trip_use_case(&db).create(trip))
         .await
@@ -2716,6 +2780,14 @@ fn customer_row(id: i64, tenant_id: i64) -> entity::customer_entity::Model {
         uuid: string_to_bytes(UUID),
         tenant_id: Some(tenant_id),
         name: "Acme Logistics".into(),
+        legal_name: None,
+        tax_id: None,
+        address_line1: None,
+        address_line2: None,
+        locality: None,
+        administrative_area: None,
+        postal_code: None,
+        country_code: None,
         status: "Active".into(),
         notes: None,
         created_at: at(),
@@ -3194,7 +3266,7 @@ async fn a_named_driver_must_be_an_active_driver_of_the_runs_own_tenant() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "u@example.com", "TenantUser", Some(42), "x")]])
+        .users([user_row(5, "u@example.com", TENANT_USER, Some(42), "x")])
         .into_connection();
     let refused = run_with_user(
         Some(owner(42)),
@@ -3213,7 +3285,7 @@ async fn a_departure_may_not_name_an_opening_checklist() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .into_connection();
     let refused = run_with_user(
         Some(owner(42)),
@@ -3231,7 +3303,7 @@ async fn a_return_must_name_the_departure_it_closes() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .into_connection();
     let refused = run_with_user(
         Some(owner(42)),
@@ -3252,7 +3324,7 @@ async fn a_return_naming_a_departure_of_a_different_vehicle_is_refused() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_run_row(1, 42, "Departure", 999, None)]])
         .into_connection();
     let refused = run_with_user(
@@ -3274,7 +3346,7 @@ async fn a_return_naming_an_already_closed_departure_is_refused() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_run_row(1, 42, "Departure", 10, None)]])
         .append_query_results([[checklist_run_row(2, 42, "Return", 10, Some(1))]])
         .into_connection();
@@ -3295,7 +3367,7 @@ async fn a_driver_who_already_holds_an_open_vehicle_may_not_open_a_second_one() 
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_run_row(1, 42, "Departure", 99, None)]]) // find_departures_by_driver
         .append_query_results([Vec::<entity::checklist_run_entity::Model>::new()]) // find_returns_closing: none close it
         .into_connection();
@@ -3318,7 +3390,7 @@ async fn a_checklist_with_no_answered_items_is_rejected_before_any_write() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .into_connection();
     let refused = run_with_user(
         Some(owner(42)),
@@ -3337,7 +3409,7 @@ async fn answering_the_same_item_twice_in_one_submission_is_refused() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_template_item_row(95, 42, 92, "Check tyres")]]) // first answer's item lookup; the second is the duplicate and never gets one
         .into_connection();
     let refused = run_with_user(
@@ -3359,7 +3431,7 @@ async fn an_answer_naming_an_item_of_a_different_template_is_refused() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_template_item_row(95, 42, 999, "Check tyres")]])
         .into_connection();
     let refused = run_with_user(
@@ -3385,7 +3457,7 @@ async fn a_valid_standalone_checklist_and_its_answer_are_recorded_and_write_the_
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]]) // template
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // vehicle
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]]) // driver
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")]) // driver
         .append_query_results([[checklist_template_item_row(95, 42, 92, "Check tyres")]]) // answer's own item
         .append_exec_results([inserted(94)]) // insert the run
         .append_query_results([[checklist_run_row(94, 42, "Standalone", 10, None)]]) // refetch after insert
@@ -3432,7 +3504,7 @@ async fn a_flagged_non_conforming_answer_opens_exactly_one_work_order() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]]) // template
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]]) // vehicle
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]]) // driver
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")]) // driver
         .append_query_results([[entity::checklist_template_item_entity::Model {
             generates_work_order: true,
             ..checklist_template_item_row(95, 42, 92, "Check brake pads")
@@ -3497,7 +3569,7 @@ async fn a_flagged_conforming_answer_does_not_open_a_work_order() {
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[entity::checklist_template_item_entity::Model {
             generates_work_order: true,
             ..checklist_template_item_row(95, 42, 92, "Check brake pads")
@@ -3536,7 +3608,7 @@ async fn a_non_conforming_answer_on_an_unflagged_item_does_not_open_a_work_order
     let db = mock()
         .append_query_results([[checklist_template_row(92, 42, "Departure inspection")]])
         .append_query_results([[vehicle_row(10, 42, "ABC1D23", "Active")]])
-        .append_query_results([[user_row(5, "d@example.com", "Driver", Some(42), "x")]])
+        .users([user_row(5, "d@example.com", DRIVER, Some(42), "x")])
         .append_query_results([[checklist_template_item_row(95, 42, 92, "Check tyres")]]) // not flagged
         .append_exec_results([inserted(94)])
         .append_query_results([[checklist_run_row(94, 42, "Standalone", 10, None)]])
@@ -6740,13 +6812,13 @@ fn receipt_vehicle() -> vehicle_entity::Model {
 }
 
 fn a_driver() -> entity::user_entity::Model {
-    user_row(5, "driver@example.com", "Driver", Some(42), "x")
+    user_row(5, "driver@example.com", DRIVER, Some(42), "x")
 }
 
 #[tokio::test]
 async fn a_receipt_whose_prefix_does_not_match_the_vehicle_is_refused() {
     let db = mock()
-        .append_query_results([[a_driver()]])
+        .users([a_driver()])
         .append_query_results([[receipt_vehicle()]])
         .into_connection();
     let mut receipt = a_receipt(None, false);
@@ -6760,7 +6832,7 @@ async fn a_receipt_whose_prefix_does_not_match_the_vehicle_is_refused() {
 #[tokio::test]
 async fn a_resubmitted_fuelling_answers_with_the_existing_record() {
     let db = mock()
-        .append_query_results([[a_driver()]])
+        .users([a_driver()])
         .append_query_results([[receipt_vehicle()]])
         .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()]) // default thresholds
         .append_query_results([[fuel_entry_row(900, 42, 10)]]) // 50 l within 10 minutes
@@ -6779,7 +6851,7 @@ async fn a_resubmitted_fuelling_answers_with_the_existing_record() {
 #[tokio::test]
 async fn a_divergent_odometer_is_refused_unless_the_driver_overrides_and_then_it_is_noted() {
     let queue = |db: MockDatabase| {
-        db.append_query_results([[a_driver()]])
+        db.users([a_driver()])
             .append_query_results([[receipt_vehicle()]])
             .append_query_results([Vec::<entity::tenant_rule_setting_entity::Model>::new()])
             .append_query_results([Vec::<entity::fuel_entry_entity::Model>::new()])

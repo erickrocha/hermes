@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { can, OWNER, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useResourceForm, useResourceState } from '../features/hooks'
 import { workOrders, type Row } from '../features/resources'
@@ -19,7 +19,6 @@ export { canSeeWorkOrders } from '../features/routeAccess'
 
 // C-026 EPIC-MT-01/02 (HRMS-700…705): ordens de serviço. Abrir, acrescentar item e retirar peça são do proprietário e do mecânico;
 // concluir e cancelar são só do proprietário. Cada botão segue a permissão que o servidor impõe.
-const READERS = ['TenantOwner', 'TenantUser', 'Mechanic'] as const
 
 const fields: FieldDef[] = [
   { name: 'vehicleUuid', labelKey: 'vehicle', type: 'lookup', lookup: 'vehicle', required: true },
@@ -44,7 +43,7 @@ export function WorkOrdersPage() {
     { id: 'status', header: () => t('status'), cell: ({ row }) => <Status status={String(row.original.status)} /> },
   ], [t])
   return <ResourceListPage resource={workOrders} titleKey="workOrders" subtitleKey="workOrdersSummary" columns={columns}
-    newTo={can(session, 'work-order.create', [...OWNER_MECHANIC]) ? '/work-orders/new' : undefined} newKey="newWorkOrder" />
+    newTo={can(session, 'work-order.create') ? '/work-orders/new' : undefined} newKey="newWorkOrder" />
 }
 
 export function WorkOrderNewPage() {
@@ -72,9 +71,9 @@ export function WorkOrderDetailPage() {
   return <>
     <PageHeader title={order ? `${order.number} — ${order.description}` : t('workOrders')} subtitle={String(order?.serviceType ?? '')} actions={<>
       <Link className="btn secondary" to="/work-orders">{t('back')}</Link>
-      {order && !closed && can(session, 'work-order.issue-part', [...OWNER_MECHANIC]) && <Link className="btn secondary" to={`/work-orders/${uuid}/issue-part`}>{t('issuePart')}</Link>}
-      {order && !closed && can(session, 'work-order.conclude', [...OWNER]) && <button className="btn primary" onClick={() => setConfirming('conclude')}>{t('conclude')}</button>}
-      {order && !closed && can(session, 'work-order.cancel', [...OWNER]) && <button className="btn secondary danger-text" onClick={() => setConfirming('cancel')}>{t('cancelWorkOrder')}</button>}</>} />
+      {order && !closed && can(session, 'work-order.issue-part') && <Link className="btn secondary" to={`/work-orders/${uuid}/issue-part`}>{t('issuePart')}</Link>}
+      {order && !closed && can(session, 'work-order.conclude') && <button className="btn primary" onClick={() => setConfirming('conclude')}>{t('conclude')}</button>}
+      {order && !closed && can(session, 'work-order.cancel') && <button className="btn secondary danger-text" onClick={() => setConfirming('cancel')}>{t('cancelWorkOrder')}</button>}</>} />
     <StateView loading={state.loading} error={state.error}>
       {order && <>
         <div className="table-card"><table><tbody>
@@ -89,9 +88,9 @@ export function WorkOrderDetailPage() {
           {(order.items ?? []).length === 0 ? <p className="form-hint">{t('noItems')}</p> : <div className="table-card"><table>
             <thead><tr><th>{t('description')}</th><th>{t('status')}</th></tr></thead>
             <tbody>{(order.items ?? []).map((i) => <tr key={String(i.uuid)}><td>{String(i.description)}{!!i.observation && <small>{String(i.observation)}</small>}</td><td><Status status={String(i.status ?? 'Pending')} /></td></tr>)}</tbody></table></div>}
-          {!closed && can(session, 'work-order.item.add', [...OWNER_MECHANIC]) && <div className="inline-actions"><Link className="btn secondary" to={`/work-orders/${uuid}/items/new`}><Plus size={16} />{t('newItem')}</Link></div>}
+          {!closed && can(session, 'work-order.item.add') && <div className="inline-actions"><Link className="btn secondary" to={`/work-orders/${uuid}/items/new`}><Plus size={16} />{t('newItem')}</Link></div>}
         </section>
-        {can(session, 'work-order.posting.read', [...READERS]) && <ChildList titleKey="partPostings" path={`/work-order/uuid/${uuid}/postings`} columns={[{ key: 'quantity', labelKey: 'quantity', kind: 'number' }, { key: 'unitValueCents', labelKey: 'unitValue', kind: 'money' }, { key: 'totalValueCents', labelKey: 'totalValue', kind: 'money' }, { key: 'costSource', labelKey: 'costSource', kind: 'badge', prefix: 'costSource' }]} />}</>}
+        {can(session, 'work-order.posting.read') && <ChildList titleKey="partPostings" path={`/work-order/uuid/${uuid}/postings`} columns={[{ key: 'quantity', labelKey: 'quantity', kind: 'number' }, { key: 'unitValueCents', labelKey: 'unitValue', kind: 'money' }, { key: 'totalValueCents', labelKey: 'totalValue', kind: 'money' }, { key: 'costSource', labelKey: 'costSource', kind: 'badge', prefix: 'costSource' }]} />}</>}
     </StateView>
     {confirming && <Confirm title={t(confirming === 'conclude' ? 'concludeTitle' : 'cancelWorkOrderTitle')} text={t(confirming === 'conclude' ? 'concludeText' : 'cancelWorkOrderText')} onCancel={() => setConfirming(null)} onConfirm={finish} />}</>
 }

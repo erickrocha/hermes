@@ -1,7 +1,7 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::Role;
 use business::domain::garage_device::GarageDevice;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{MECHANIC, TENANT_OWNER};
 use business::gateway::garage_device_gateway::GarageDeviceStore;
 use business::use_cases::garage_device_use_case::{
     DEVICE_CREDENTIAL_INVALID, DEVICE_NAME_REQUIRED, DEVICE_OWNER_REQUIRED, GarageDeviceUseCase,
@@ -120,9 +120,10 @@ fn owner() -> User {
         password: "unused".into(),
         enabled: true,
         tenant_id: Some(42),
-        role: Role::TenantOwner,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(TENANT_OWNER).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -214,7 +215,7 @@ async fn pairing_is_single_use_and_revocation_invalidates_the_live_device_token(
 async fn only_a_tenant_owner_can_issue_device_pairing_codes() {
     let use_case = GarageDeviceUseCase::new(MemoryStore::default());
     let mut mechanic = owner();
-    mechanic.role = Role::Mechanic;
+    mechanic.access = Access::of_system_profile(MECHANIC).expect("a system profile");
     let error = use_case
         .issue_pairing_code(&mechanic, "Garage wall".into())
         .await

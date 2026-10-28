@@ -32,7 +32,8 @@ class AuthApiTest {
 
     private val token = """
         {"accessToken":"access-1","tokenType":"Bearer","expireIn":1792000000,"refreshToken":"refresh-1",
-         "email":"d@x.test","uuid":"u","name":"Maria","userId":7,"role":"Driver"}
+         "email":"d@x.test","uuid":"u","name":"Maria","userId":7,"scope":"Tenant","profileKey":"Driver","profileName":"Motorista",
+         "permissions":["driver.act","vehicle.read@own","checklist-run.create@own"],"unknownField":1}
     """.trimIndent()
 
     @Test
@@ -49,9 +50,22 @@ class AuthApiTest {
         assertEquals("access-1", response.accessToken)
         assertEquals("refresh-1", response.refreshToken)
         assertEquals(1792000000L, response.expireIn)
-        assertEquals("Driver", response.role)
+        assertEquals("Tenant", response.scope)
+        assertEquals("Driver", response.profileKey)
+        assertEquals("Motorista", response.profileName)
+        assertEquals(listOf("driver.act", "vehicle.read@own", "checklist-run.create@own"), response.permissions)
         assertNull(response.tenantId)
         assertNull(response.tenantUuid)
+    }
+
+    @Test
+    fun aResponseWithoutProfileFieldsStillReadsAndCarriesNoGrants() = runTest {
+        val minimal = """{"accessToken":"access-1","expireIn":1792000000,"refreshToken":"refresh-1","name":"Maria"}"""
+        val engine = MockEngine { respond(minimal, HttpStatusCode.OK, json) }
+        val response = AuthApi(client(engine), "https://api.example.test").login("d@x.test", "s3cret")
+        assertEquals("Tenant", response.scope)
+        assertNull(response.profileKey)
+        assertEquals(emptyList<String>(), response.permissions)
     }
 
     @Test

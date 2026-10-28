@@ -18,7 +18,6 @@ use business::domain::authorization::{
 };
 use business::domain::user::User;
 use business::domain::vehicle::Vehicle;
-use business::domain::enums::Role;
 use business::gateway::vehicle_assignment_gateway::VehicleAssignmentGateway;
 use business::gateway::vehicle_gateway::{VehicleGateway, VehicleLookupStore};
 use business::domain::vehicle_tracking::VehicleTrackingStatus;
@@ -334,9 +333,10 @@ pub(crate) async fn find_visible(
     Ok(vehicle)
 }
 
-/// The vehicles a driver is currently assigned to; `None` for every other role (no own-records scope).
+/// The vehicles an own-records holder (`vehicle.read@own`) is currently assigned to; `None` for a caller
+/// who reads the whole tenant.
 pub(crate) async fn driver_vehicle_ids(state: &AppState, locale: &Locale, user: &User) -> Result<Option<Vec<i64>>, ExceptionResponse> {
-    let (Role::Driver, Some(driver_id)) = (&user.role, user.id) else {
+    let (true, Some(driver_id)) = (user.only_own("vehicle.read"), user.id) else {
         return Ok(None);
     };
     VehicleAssignmentGateway::new(state.conn.as_ref().clone())
