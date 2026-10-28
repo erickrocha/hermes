@@ -264,3 +264,11 @@ required-features = ["mock"]
 [[test]]
 name = "tenant_dashboard_gateway_test"
 required-features = ["mock"]
+
+[[test]]
+name = "access_profile_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "customer_gateway_test"
+required-features = ["mock"]
