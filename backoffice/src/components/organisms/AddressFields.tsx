@@ -15,7 +15,9 @@ import { Combobox } from '../Combobox'
 export function AddressFields() {
   const { t } = useTranslation()
   const dispatch = useDispatch<AppDispatch>()
-  const { provinces, cities } = useSelector((s: RootState) => s.data)
+  const { provinces: provinceRows, cities: cityRows } = useSelector((s: RootState) => s.data)
+  const provinces = Array.isArray(provinceRows) ? provinceRows : []
+  const cities = Array.isArray(cityRows) ? cityRows : []
   const { control, register, setValue, watch } = useFormContext<AddressValues>()
   const countryCode = watch('countryCode') || ''
   const administrativeArea = watch('administrativeArea') || ''
