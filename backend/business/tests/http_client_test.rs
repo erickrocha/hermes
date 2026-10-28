@@ -73,7 +73,10 @@ async fn ignition_events_arrive_gzipped_and_are_read() {
 #[tokio::test]
 #[ignore = "fala com o PinME real; precisa das credenciais no ambiente"]
 async fn real_pinme_answers_positions_and_gzipped_events() {
-    let provider = PinMeTrackingProvider::from_env().expect("TRACKING_API_* no ambiente");
+    let provider = {
+        let var = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("{key} no ambiente"));
+        PinMeTrackingProvider::new(&var("TRACKING_API_BASE_URL"), &var("TRACKING_API_EMAIL"), &var("TRACKING_API_PASSWORD"))
+    };
     let positions = provider.last_positions().await.expect("/positions");
     assert!(!positions.is_empty(), "o PinME devolveu zero posições");
     let device = positions[0].device_id;

@@ -28,9 +28,6 @@ done
 [ "$ACCESS_TOKEN_SECRET" != "$REFRESH_TOKEN_SECRET" ] || die "ACCESS_TOKEN_SECRET e REFRESH_TOKEN_SECRET precisam ser diferentes"
 case "$DATABASE_URL" in *TROQUE-PELA*) die "DATABASE_URL ainda tem a senha de exemplo";; esac
 case "$HERMES_URL" in */) die "HERMES_URL não pode terminar em /";; esac
-if [ -n "${TRACKING_API_BASE_URL:-}" ] && { [ -z "${TRACKING_API_EMAIL:-}" ] || [ -z "${TRACKING_API_PASSWORD:-}" ]; }; then
-    printf 'AVISO: TRACKING_API_EMAIL/TRACKING_API_PASSWORD vazios: o rastreamento (PinME) ficará desligado.\n' >&2
-fi
 
 log "Construindo as imagens (${IMAGE_TAG})"
 $COMPOSE --profile deploy build

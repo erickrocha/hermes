@@ -82,7 +82,7 @@ Nunca edite uma migração que já foi aplicada em qualquer lugar; corrija avan�
 Para rodar o Hermes completo (MariaDB, API e console) num servidor de rede confiável, sem Traefik nem domínio:
 
 1. `cd infra/prod && cp .env.internal.example .env` e preencha (senhas, segredos de token, administrador, endereço
-   `HERMES_URL`, credenciais do PinME em `TRACKING_API_EMAIL`/`TRACKING_API_PASSWORD`).
+   `HERMES_URL`; a conta do PinME é cadastrada depois, por tenant, no console).
 2. `./deploy-internal.sh` — constrói as imagens, faz o dump do banco, roda as migrações, sobe tudo e verifica.
 3. Abra `HERMES_URL` no navegador e entre com `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`.
 

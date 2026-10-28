@@ -175,6 +175,7 @@ def cleanup():
     sql(f"DELETE FROM inspection_model_item WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM inspection_model WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM tenant_rule_setting WHERE tenant_id IN ({tenants})")
+    sql(f"DELETE FROM tenant_tracking_setting WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM km_evolution WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")

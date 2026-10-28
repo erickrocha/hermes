@@ -5,10 +5,18 @@
     <color name="transmega_text_secondary">#5F6368</color>
     <color name="transmega_accent">#C2410C</color>
     <color name="transmega_error">#A43124</color>
+    <color name="transmega_surface">#FFFFFF</color>
+    <color name="transmega_outline">#E2DFDA</color>
+    <color name="transmega_ok">#1F7A4D</color>
+    <color name="transmega_warning">#B45309</color>
     <!-- Hermes: the vendor's own identity. -->
     <color name="hermes_screen_background">#E8F1EE</color>
     <color name="hermes_text_primary">#163A3A</color>
     <color name="hermes_text_secondary">#406A65</color>
     <color name="hermes_accent">#B96632</color>
     <color name="hermes_error">#A43124</color>
+    <color name="hermes_surface">#F7FBF9</color>
+    <color name="hermes_outline">#C5DAD3</color>
+    <color name="hermes_ok">#1F7A4D</color>
+    <color name="hermes_warning">#A8590F</color>
 </resources>

@@ -54,6 +54,7 @@ pub struct Model {
     pub garage_base_latitude: Option<f64>,
     pub garage_base_longitude: Option<f64>,
     pub garage_base_radius_meters: f64,
+    pub garage_map_radius_km: f64,
     pub garage_cycle_fallback_distance_km: f64,
     pub garage_odometer_max_single_jump_km: f64,
     pub non_execution_grace_minutes: i32,

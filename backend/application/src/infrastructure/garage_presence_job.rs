@@ -5,7 +5,8 @@ use business::domain::enums::{PresenceEventKind, PresenceSource};
 use business::gateway::garage_cycle_gateway::GarageCycleGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
-use business::gateway::tracking_provider::{TrackingProvider, configured_provider};
+use business::gateway::tenant_tracking_setting_gateway::{TenantTrackingSettingGateway, TenantTrackingSettingStore};
+use business::gateway::tracking_provider::{TrackingProvider, provider_for};
 use business::gateway::vehicle_gateway::{VehicleGateway, VehicleStore};
 use business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway;
 use business::use_cases::garage_cycle::GarageCycleSample;
@@ -21,28 +22,6 @@ use std::time::Duration;
 const ACTOR: &str = "garage-geofence";
 
 pub async fn run_presence_poll_once(state: &AppState) {
-    let provider = match configured_provider() {
-        Ok(provider) => provider,
-        Err(error) => {
-            log::error!(
-                "[{ACTOR}] tracking provider is unavailable: {}",
-                error.message
-            );
-            return;
-        }
-    };
-    let positions = match provider.last_positions().await {
-        Ok(positions) => positions,
-        Err(error) => {
-            log::error!("[{ACTOR}] positions could not be read: {}", error.message);
-            return;
-        }
-    };
-    let positions: HashMap<_, _> = positions
-        .into_iter()
-        .map(|position| (position.device_id, position))
-        .collect();
-
     let db = state.conn.as_ref().clone();
     let tenants =
         match entity::audit::run_as_platform(TenantGateway::new(db.clone()).find_all()).await {
@@ -56,12 +35,22 @@ pub async fn run_presence_poll_once(state: &AppState) {
     for tenant in tenants {
         let tenant_id = tenant.id;
         let result = entity::audit::run_for_tenant(tenant_id, ACTOR, async {
+            // Each tenant brings its own GPS account; one without it simply has no tracking.
+            let Some(credentials) = TenantTrackingSettingGateway::new(db.clone()).get(tenant_id).await? else {
+                return Ok::<usize, BusinessError>(0);
+            };
+            let positions: HashMap<_, _> = provider_for(&credentials)
+                .last_positions()
+                .await?
+                .into_iter()
+                .map(|position| (position.device_id, position))
+                .collect();
             let settings = TenantRuleSettingGateway::new(db.clone())
                 .settings_for(Some(tenant_id))
                 .await
                 .map_err(|error| BusinessError::new(format!("Garage settings error: {error}")))?;
             if settings.garage_base_latitude.is_none() || settings.garage_base_longitude.is_none() {
-                return Ok::<usize, BusinessError>(0);
+                return Ok(0);
             }
 
             let vehicles = VehicleGateway::new(db.clone()).list_all().await?;
@@ -174,17 +163,6 @@ pub async fn run_presence_poll_once(state: &AppState) {
 }
 
 pub fn spawn_presence_poll(state: AppState) {
-    let configured = [
-        "TRACKING_API_BASE_URL",
-        "TRACKING_API_EMAIL",
-        "TRACKING_API_PASSWORD",
-    ]
-    .iter()
-    .all(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()));
-    if !configured {
-        return log::info!("[{ACTOR}] disabled (tracking provider is not configured)");
-    }
-
     let seconds: u64 = std::env::var("GARAGE_PRESENCE_POLL_INTERVAL_SECONDS")
         .ok()
         .and_then(|value| value.parse().ok())

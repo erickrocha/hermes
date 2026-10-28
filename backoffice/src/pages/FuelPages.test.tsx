@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
 import { renderPage, signIn } from '../test/render'
-import { FuelEntryNewPage, FuelGaugePage, FuelPage, FuelReceiptPage, FuelReportPage, FuelRestorePage, InternalTankConfigPage, InternalTankPage, RuleSettingsPage } from './FuelPages'
+import { FuelEntryNewPage, FuelGaugePage, FuelPage, FuelReceiptPage, FuelReportPage, FuelRestorePage, InternalTankConfigPage, InternalTankPage, RuleSettingsPage, TrackingSettingsPage } from './FuelPages'
 
 const page = (items: unknown[]) => ({ data: { items, page: 0, pageSize: 25, totalItems: items.length, totalPages: 1 } }) as never
 const notFound = () => Promise.reject(Object.assign(new Error('nf'), { isAxiosError: true, response: { status: 404, data: { message: 'none' } } }))
@@ -131,7 +131,7 @@ describe('fuel (C-029, HRMS-942…955)', () => {
       preventiveAttentionKmMargin: 1000, preventiveAttentionDaysMargin: 15, preventiveMaxExtensionKm: 50000, avgPeerMinCount: 2, garageValidityHours: 36, garageMinTripAbsenceMinutes: 60,
       garageFuelPendingBelowPercent: 50, garageTripFuelExemptPercent: 75, garageAlertLowPercent: 40, garageAlertTripPercent: 80, garageMonitorUrgentMinutes: 60, garageMonitorTripWindowMinutes: 120, garageMonitorLineWindowMinutes: 30,
       garageMonitorCardLimit: 8, garageMonitorMatrixRows: 12, garageMonitorMatrixColumns: 10, garageFuellingFreshnessHours: 12, garageUtcOffsetMinutes: -180,
-      garageBaseLatitude: null, garageBaseLongitude: null, garageBaseRadiusMeters: 75, garageCycleFallbackDistanceKm: 2, garageOdometerMaxSingleJumpKm: 300, nonExecutionGraceMinutes: 60, nonExecutionMinDwellMinutes: 10 } } as never)
+      garageBaseLatitude: null, garageBaseLongitude: null, garageBaseRadiusMeters: 75, garageMapRadiusKm: 100, garageCycleFallbackDistanceKm: 2, garageOdometerMaxSingleJumpKm: 300, nonExecutionGraceMinutes: 60, nonExecutionMinDwellMinutes: 10 } } as never)
     const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
     signIn('TenantOwner')
     renderPage(<RuleSettingsPage />, '/tenants/tenant-1/manage', '/tenants/:uuid/manage')
@@ -141,5 +141,17 @@ describe('fuel (C-029, HRMS-942…955)', () => {
     fireEvent.change(screen.getByLabelText(/^minimum stay for a manual|^permanência mínima do registro|^permanencia mínima del registro/i), { target: { value: '15' } })
     fireEvent.click(screen.getByRole('button', { name: save }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/tenant-rule-settings', expect.objectContaining({ avgMinSegmentsForOwnAverage: 2, avgMaxSegmentKm: 4000, nonExecutionGraceMinutes: 90, nonExecutionMinDwellMinutes: 15 })))
+  })
+
+  it('saves the tenant GPS account and never asks for the stored password back', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { baseUrl: 'https://api.pinme.io/api', email: 'owner@example.com', passwordSet: true } } as never)
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ data: null } as never)
+    signIn('TenantOwner')
+    renderPage(<TrackingSettingsPage />, '/tenants/tenant-1/tracking', '/tenants/:uuid/tracking')
+    expect(await screen.findByDisplayValue('owner@example.com')).toBeInTheDocument()
+    expect(screen.getByLabelText(/^provider password|^senha do provedor|^contraseña del proveedor/i)).toHaveValue('')
+    fireEvent.change(screen.getByDisplayValue('owner@example.com'), { target: { value: 'fleet@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: save }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/tenant-rule-settings/tracking', expect.objectContaining({ baseUrl: 'https://api.pinme.io/api', email: 'fleet@example.com' })))
   })
 })

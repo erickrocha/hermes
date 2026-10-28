@@ -42,6 +42,7 @@ pub mod preventive_plan_extension_entity;
 pub mod inspection_model_entity;
 pub mod inspection_model_item_entity;
 pub mod tenant_rule_setting_entity;
+pub mod tenant_tracking_setting_entity;
 pub mod garage_service_model_entity;
 pub mod access_profile_entity;
 pub mod garage_call_entity;

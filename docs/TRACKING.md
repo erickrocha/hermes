@@ -99,9 +99,11 @@ política *do Hermes*; os nomes dos campos JSON são do provedor. Se vivessem ju
 provedor significaria redecidir a política, e a suíte de aceitação afirma a separação (`FT-003`)
 justamente porque fronteiras se erodem silenciosamente.
 
-A configuração é nomeada pelo papel e não pelo fornecedor — `TRACKING_API_BASE_URL`,
-`TRACKING_API_EMAIL`, `TRACKING_API_PASSWORD` — para que uma troca de provedor não seja uma mudança
-na configuração de implantação. As credenciais são codificadas em Base64 uma única vez no
+A conta do provedor é **configuração do tenant** (tabela `tenant_tracking_setting`; console:
+Tenants > Rastreamento; `GET`/`PUT /tenant-rule-settings/tracking`), não do ambiente: cada tenant
+traz a sua e um tenant sem conta simplesmente não tem rastreamento. A senha é só de escrita — a API
+nunca a devolve (`passwordSet` diz se há uma guardada) e, em branco no `PUT`, mantém a atual. Fica
+guardada sem criptografia no banco, porque a chamada HTTP Basic precisa dela de volta. As credenciais são codificadas em Base64 uma única vez no
 construtor e nunca aparecem em uma mensagem de erro nem em uma linha de log.
 
 ## Escopo de tenant

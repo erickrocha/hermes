@@ -59,6 +59,7 @@ pub mod preventive_plan_extension;
 pub mod inspection_model;
 pub mod inspection_model_item;
 pub mod tenant_rule_setting;
+pub mod tenant_tracking_setting;
 pub mod technical_inspection;
 pub mod technical_inspection_item;
 pub mod internal_tank;

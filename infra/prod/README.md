@@ -61,7 +61,7 @@ Campos obrigatórios:
 Opcionais (podem ficar em branco no teste):
 
 - `SMTP_*` — sem eles o usuário é criado, mas o convite **não é enviado**; o servidor avisa no log e você repassa o link manualmente.
-- `TRACKING_API_BASE_URL` + `TRACKING_API_EMAIL` + `TRACKING_API_PASSWORD` — rastreamento. Para **desligar**, deixe `TRACKING_API_BASE_URL` vazio (o exemplo traz a URL do PinME; sem e-mail/senha o `deploy-internal.sh` apenas avisa que ficará desligado).
+- Rastreamento (PinME/Traccar): a conta é **do tenant**, não do ambiente. O dono do tenant a cadastra no console (Tenants > Rastreamento: URL, e-mail e senha); sem ela o tenant fica sem mapa e sem leitura de presença.
 - `FUEL_API_*` — token vazio = sincronização de combustível indisponível (503).
 - `GARAGE_PRESENCE_POLL_INTERVAL_SECONDS` (60; `0` desliga), `NON_EXECUTION_EVALUATION_INTERVAL_SECONDS` (300; `0` desliga).
 
@@ -185,7 +185,6 @@ API_IMAGE=hermes-api
 CONSOLE_IMAGE=hermes-console
 IMAGE_TAG=rehearsal
 # + senhas, DATABASE_URL (com a mesma senha de MARIADB_PASSWORD), tokens, SYSADMIN_* como na variante A
-TRACKING_API_BASE_URL=              # vazio para desligar o rastreamento
 FUEL_API_BASE_URL=
 ```
 

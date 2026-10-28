@@ -142,6 +142,8 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("POST", "/tenant", "tenant.create"),
     ("GET", "/tenant-rule-settings", "tenant-rule-settings.read"),
     ("PUT", "/tenant-rule-settings", "tenant-rule-settings.update"),
+    ("GET", "/tenant-rule-settings/tracking", "tenant-rule-settings.read"),
+    ("PUT", "/tenant-rule-settings/tracking", "tenant-rule-settings.update"),
     ("GET", "/tenant/uuid/{uuid}", "tenant.read"),
     ("PUT", "/tenant/uuid/{uuid}", "tenant.update"),
     ("GET", "/tenant/uuid/{uuid}/plan", "tenant.plan"),
@@ -189,5 +191,6 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("PUT", "/work-order/uuid/{uuid}/conclude", "work-order.conclude"),
     ("POST", "/work-order/uuid/{uuid}/issue-part", "work-order.issue-part"),
     ("POST", "/work-order/uuid/{uuid}/item", "work-order.item.add"),
+    ("PUT", "/work-order/uuid/{uuid}/item/uuid/{item_uuid}/resolve", "work-order.item.resolve"),
     ("GET", "/work-order/uuid/{uuid}/postings", "work-order.posting.read"),
 ];

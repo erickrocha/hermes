@@ -78,12 +78,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      # PinME (rastreamento, D-15). O backend lê TRACKING_API_EMAIL (não _USER). Com as três variáveis
-      # preenchidas a leitura de presença da garagem passa a consultar o provedor a cada
-      # GARAGE_PRESENCE_POLL_INTERVAL_SECONDS (padrão do backend: 60; 0 desliga).
-      TRACKING_API_BASE_URL: ${TRACKING_API_BASE_URL:-}
-      TRACKING_API_EMAIL: ${TRACKING_API_EMAIL:-}
-      TRACKING_API_PASSWORD: ${TRACKING_API_PASSWORD:-}
+      # A conta do provedor de GPS é do tenant (console: Gerenciar > Rastreamento). A leitura de presença
+      # consulta cada tenant configurado a cada GARAGE_PRESENCE_POLL_INTERVAL_SECONDS (padrão: 60; 0 desliga).
       GARAGE_PRESENCE_POLL_INTERVAL_SECONDS: ${GARAGE_PRESENCE_POLL_INTERVAL_SECONDS:-60}
       NON_EXECUTION_EVALUATION_INTERVAL_SECONDS: ${NON_EXECUTION_EVALUATION_INTERVAL_SECONDS:-300}
       FUEL_API_BASE_URL: ${FUEL_API_BASE_URL:-}

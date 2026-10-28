@@ -3571,7 +3571,7 @@ use business::gateway::work_order_gateway::{WorkOrderGateway, WorkOrderWorkflowD
 use business::gateway::work_order_item_gateway::WorkOrderItemGateway;
 use business::use_cases::work_order_use_case::{
     DESCRIPTION_REQUIRED, ITEM_DESCRIPTION_REQUIRED as WO_ITEM_DESCRIPTION_REQUIRED,
-    ITEM_NOT_ON_THIS_WORK_ORDER, NEGATIVE_ODOMETER,
+    ITEM_NOT_ON_THIS_WORK_ORDER, NEGATIVE_ODOMETER, RESOLUTION_REQUIRED, WORK_ORDER_CLOSED,
     NOT_A_TENANT_VEHICLE as WO_NOT_A_TENANT_VEHICLE, WORK_ORDER_NOT_FOUND, WorkOrderUseCase,
 };
 
@@ -4039,6 +4039,60 @@ async fn cancelling_an_already_cancelled_work_order_is_a_no_op() {
         !format!("{:?}", log(db)).contains("UPDATE"),
         "a terminal order is not re-stamped"
     );
+}
+
+// ------------------------------------------------------- the mechanic resolves one pendency (TRM-205)
+/// The last pending item of an open order is resolved: the item carries who and what, and the order, with
+/// nothing left pending, keeps its status (concluding is administrative, `TRM-208`).
+#[tokio::test]
+async fn resolving_an_item_records_what_was_done_and_who_did_it() {
+    let db = mock()
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]]) // the work order
+        .append_query_results([[work_order_item_row(97, 42, 96, "Pending")]]) // the item
+        .append_exec_results([inserted(97)]) // item update
+        .append_query_results([[work_order_item_row(97, 42, 96, "Resolved")]]) // item refetch
+        .append_query_results([[work_order_item_row(97, 42, 96, "Resolved")]]) // all items
+        .into_connection();
+
+    let updated = run_with_user(
+        Some(owner(42)),
+        work_order_use_case(&db).resolve_item(96, 97, "  Trocada a lampada  ", "bruno@example.com"),
+    )
+    .await
+    .expect("resolving a pending item succeeds");
+    assert_eq!(updated.status, WorkOrderStatus::Open);
+}
+
+#[tokio::test]
+async fn a_resolution_without_text_is_refused_before_anything_is_read() {
+    let db = mock().into_connection();
+    let err = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_item(96, 97, "   ", "bruno@example.com"))
+        .await
+        .expect_err("a blank resolution is refused");
+    assert_eq!(err.message, RESOLUTION_REQUIRED);
+}
+
+#[tokio::test]
+async fn a_concluded_order_takes_no_more_resolutions() {
+    let db = mock()
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Concluded")]])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_item(96, 97, "feito", "bruno@example.com"))
+        .await
+        .expect_err("a closed order is refused");
+    assert_eq!(err.message, WORK_ORDER_CLOSED);
+}
+
+#[tokio::test]
+async fn an_item_of_another_order_cannot_be_resolved_through_this_one() {
+    let db = mock()
+        .append_query_results([[work_order_row_with_status(96, 42, 10, "Open")]])
+        .append_query_results([[work_order_item_row(97, 42, 999, "Pending")]])
+        .into_connection();
+    let err = run_with_user(Some(owner(42)), work_order_use_case(&db).resolve_item(96, 97, "feito", "bruno@example.com"))
+        .await
+        .expect_err("an item from another work order is refused");
+    assert_eq!(err.message, ITEM_NOT_ON_THIS_WORK_ORDER);
 }
 
 // ------------------------------------------------------- EPIC-SP-03-S02 purchase-order pendency wiring

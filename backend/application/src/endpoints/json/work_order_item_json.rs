@@ -33,3 +33,10 @@ pub struct WorkOrderItemJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preventive_plan_uuid: Option<String>,
 }
+
+/// `TRM-205`: what the mechanic did to settle a pendency.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkOrderItemResolveJson {
+    pub resolution_description: String,
+}

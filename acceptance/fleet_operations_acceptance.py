@@ -6,10 +6,10 @@ Interface-level, stdlib only: black-box HTTP against the running API (default
 http://127.0.0.1:8081), plus SQL / OpenAPI look-ups to confirm what was stored and
 what the contract says, plus two cargo test targets (`--skip-cargo` to omit them).
 
-EPIC-FO-02 needs a provider that answers. The dev API has no TRACKING_API_* configured (that is
+EPIC-FO-02 needs a provider that answers. The fixture tenants have no tracking account until the suite configures one (that is
 itself FO-025's 503 case), so the suite runs a stub Traccar/PinME server (http.server, loopback,
 random port) and starts a SCRATCH instance of the same binary on HERMES_FO_SCRATCH_PORT (default
-8095) against the same dev database, with TRACKING_API_BASE_URL pointing at the stub. It never
+8095) against the same dev database, with each fixture tenant's tracking account pointing at the stub. It never
 stops or restarts the dev API. `--skip-scratch` omits it (those scenarios report BLOCKED).
 
 Scenario IDs (FO-###) and story IDs trace to
@@ -171,6 +171,7 @@ def cleanup():
         f"(SELECT id FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%')")
     sql(f"DELETE FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql(f"DELETE FROM tenant_tracking_setting WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAFO%'")
 
 
@@ -702,8 +703,7 @@ def start_scratch(stub_url):
         raise RuntimeError(f"binary {BINARY} not built")
     env = dict(os.environ)
     env.update(dotenv())
-    env.update({"HOST": "127.0.0.1", "PORT": str(SCRATCH_PORT), "TRACKING_API_BASE_URL": stub_url,
-                "TRACKING_API_EMAIL": STUB_USER, "TRACKING_API_PASSWORD": STUB_PW})
+    env.update({"HOST": "127.0.0.1", "PORT": str(SCRATCH_PORT)})
     cwd = tempfile.mkdtemp(prefix="hermes-acc-fo-")
     log = open(os.path.join(cwd, "scratch.log"), "w+")
     proc = subprocess.Popen([BINARY], env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
@@ -847,7 +847,7 @@ def fo2_track(fx):
     with a stub provider answers the rest."""
     oa, ob, ut, adm = fx.ownerA["token"], fx.ownerB["token"], fx.userA["token"], fx.adm
     tv = fx.tv
-    dev503 = track(oa, tv["fresh"]["uuid"])                          # dev API: no TRACKING_API_* at all
+    dev503 = track(oa, tv["fresh"]["uuid"])                          # the tenants have no tracking account yet
     dev_unlinked = track(oa, tv["unlinked"]["uuid"])
     NOTES["FO-025 dev API unconfigured"] = (dev503[0], ek(dev503[1]))
     if fx.skip_scratch:
@@ -857,6 +857,9 @@ def fo2_track(fx):
     stub, proc, log = Stub(), None, None
     try:
         proc, log = start_scratch(stub.url)
+        # The provider account is the tenant's own now: both fixture tenants point at the stub.
+        for owner in (oa, ob):
+            http("PUT", "/tenant-rule-settings/tracking", {"baseUrl": stub.url, "email": STUB_USER, "password": STUB_PW}, owner)
         S = f"http://127.0.0.1:{SCRATCH_PORT}"
         NOTES["scratch"] = {"port": SCRATCH_PORT, "pid": proc.pid, "stub": stub.url}
 
@@ -1014,7 +1017,7 @@ def fo2_track(fx):
               f"columns {cols} (tracking-shaped beyond the allow-list: {telemetry_shaped}); tables {tbls}; reads {codes} provider calls {reads_made}; tables changed {changed}")
 
         # FO-025 (last: it ends by stopping the stub): the provider unconfigured or down is a 503, not a guess
-        outs = {"dev API, TRACKING_API_* unset": dev503}
+        outs = {"tenant without a tracking account": dev503}
         stub.mode = "500"
         outs["provider 500"] = track(oa, tv["fresh"]["uuid"], S)
         stub.mode = "html"

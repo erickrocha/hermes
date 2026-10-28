@@ -1,7 +1,7 @@
 import * as yup from 'yup'
 import type { LookupKind } from './lookupSlice'
 
-export type FieldType = 'text' | 'number' | 'date' | 'datetime' | 'time' | 'textarea' | 'checkbox' | 'select' | 'lookup' | 'money' | 'list' | 'hidden'
+export type FieldType = 'text' | 'number' | 'date' | 'datetime' | 'time' | 'textarea' | 'checkbox' | 'select' | 'lookup' | 'money' | 'list' | 'hidden' | 'password'
 export interface FieldDef {
   name: string; labelKey: string; type: FieldType; required?: boolean; min?: number
   /** Texto: tamanho máximo, igual ao do servidor. */

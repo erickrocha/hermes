@@ -63,5 +63,6 @@ pub mod preventive_plan_use_case;
 pub mod inspection_model_use_case;
 pub mod technical_inspection_use_case;
 pub mod tenant_rule_setting_use_case;
+pub mod tenant_tracking_setting_use_case;
 pub mod fuel_sync_use_case;
 pub mod internal_tank_use_case;

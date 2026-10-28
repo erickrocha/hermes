@@ -693,7 +693,8 @@ pub async fn monitor_map(
 ) -> HttpResponse<Json<GarageMonitorMapJson>> {
     use business::gateway::tenant_rule_setting_gateway::TenantRuleSettingGateway;
     use business::gateway::vehicle_gateway::VehicleStore;
-    use business::gateway::tracking_provider::{TrackingProvider, configured_provider};
+    use business::gateway::tenant_tracking_setting_gateway::{TenantTrackingSettingGateway, TenantTrackingSettingStore};
+    use business::gateway::tracking_provider::{TrackingProvider, provider_for};
     use business::use_cases::garage_geofence::position_is_fresh_and_valid;
     let unavailable = || ExceptionResponse::ServiceUnavailable(locale.clone(), ErrorKey::TrackingUnavailable);
     let failed = || ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError);
@@ -706,8 +707,12 @@ pub async fn monitor_map(
         .await
         .map_err(|_| failed())?;
     let vehicles = VehicleGateway::new(db).list_all().await.map_err(|_| failed())?;
-    let positions: std::collections::HashMap<_, _> = configured_provider()
-        .map_err(|_| unavailable())?
+    let credentials = TenantTrackingSettingGateway::new(state.conn.as_ref().clone())
+        .get(tenant_id.ok_or_else(unavailable)?)
+        .await
+        .map_err(|_| failed())?
+        .ok_or_else(unavailable)?;
+    let positions: std::collections::HashMap<_, _> = provider_for(&credentials)
         .last_positions()
         .await
         .map_err(|_| unavailable())?
@@ -734,6 +739,7 @@ pub async fn monitor_map(
         base_latitude: settings.garage_base_latitude,
         base_longitude: settings.garage_base_longitude,
         base_radius_meters: settings.garage_base_radius_meters,
+        map_radius_km: settings.garage_map_radius_km,
         vehicles,
     }))
 }

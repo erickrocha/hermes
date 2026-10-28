@@ -125,7 +125,7 @@ def cleanup():
     for table in ("garage_release_item", "garage_release", "garage_service_log", "garage_call", "garage_service", "garage_attendance",
                   "vehicle_presence_event", "extra_trip", "fuel_entry", "km_evolution",
                   "preventive_plan_alert", "preventive_plan_extension", "work_order_item",
-                  "work_order", "preventive_plan", "tenant_rule_setting", "garage_cycle_state"):
+                  "work_order", "preventive_plan", "tenant_rule_setting", "tenant_tracking_setting", "garage_cycle_state"):
         sql(f"DELETE FROM {table} WHERE {clauses}")
     sql(f"DELETE FROM garage_service_model WHERE {clauses}")
     sql(f"DELETE FROM vehicle WHERE {clauses}")

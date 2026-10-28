@@ -40,6 +40,7 @@ pub use super::preventive_plan_extension_entity::Entity as PreventivePlanExtensi
 pub use super::inspection_model_entity::Entity as InspectionModelEntity;
 pub use super::inspection_model_item_entity::Entity as InspectionModelItemEntity;
 pub use super::tenant_rule_setting_entity::Entity as TenantRuleSettingEntity;
+pub use super::tenant_tracking_setting_entity::Entity as TenantTrackingSettingEntity;
 pub use super::garage_service_model_entity::Entity as GarageServiceModelEntity;
 pub use super::access_profile_entity::Entity as AccessProfileEntity;
 pub use super::garage_call_entity::Entity as GarageCallEntity;

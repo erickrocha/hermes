@@ -181,6 +181,8 @@ pub struct GarageMonitorMapJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_longitude: Option<f64>,
     pub base_radius_meters: f64,
+    /// How far around the garage the map opens, from the tenant's rules
+    pub map_radius_km: f64,
     pub vehicles: Vec<GarageMonitorMapVehicleJson>,
 }
 

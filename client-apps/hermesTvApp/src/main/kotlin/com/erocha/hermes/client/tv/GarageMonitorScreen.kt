@@ -1,14 +1,13 @@
 package com.erocha.hermes.client.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,26 +15,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -45,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.erocha.hermes.client.shared.GarageCallListEntry
@@ -53,11 +50,13 @@ import com.erocha.hermes.client.shared.GarageMatrix
 import com.erocha.hermes.client.shared.GarageMonitorCard
 import com.erocha.hermes.client.shared.GarageMonitorEntry
 import com.erocha.hermes.client.shared.themeColor
+import androidx.compose.foundation.shape.RoundedCornerShape
 import java.text.DateFormat
 import java.util.Date
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.ceil
 
 internal data class GarageMonitorUiState(
     val queue: List<GarageMonitorEntry> = emptyList(),
@@ -74,6 +73,9 @@ internal data class GarageMonitorUiState(
 
 @Composable
 private fun themedColor(attr: Int) = Color(LocalContext.current.themeColor(attr))
+
+private val CardShape = RoundedCornerShape(6.dp)
+private val ChromeHeight = 36.dp
 
 @Composable
 internal fun GarageMonitorScreen(
@@ -95,6 +97,12 @@ internal fun GarageMonitorScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val firstTabRequester = remember { FocusRequester() }
 
+    // Back leaves a secondary tab for the first one; from the first, it leaves the app as usual.
+    BackHandler(enabled = selectedTab != 0) {
+        selectedTab = 0
+        firstTabRequester.requestFocus()
+    }
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             background = background,
@@ -115,7 +123,7 @@ internal fun GarageMonitorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(background)
-                .padding(horizontal = 48.dp, vertical = 30.dp),
+                .padding(horizontal = 32.dp, vertical = 14.dp),
         ) {
             Header(
                 state = state,
@@ -123,13 +131,12 @@ internal fun GarageMonitorScreen(
                 mutedText = mutedText,
                 warning = warning,
                 danger = danger,
-                accent = accent,
             )
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val tabLabels = listOf(
                     stringResource(R.string.monitor_tab_queue),
@@ -145,12 +152,11 @@ internal fun GarageMonitorScreen(
                         selectedColor = accent,
                         textColor = textColor,
                         outlineColor = outline,
-                        modifier = Modifier.weight(1f),
                         focusRequester = if (index == 0) firstTabRequester else null,
                         onSelect = { selectedTab = index },
                     )
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.weight(1f))
                 DashboardAction(
                     label = stringResource(R.string.monitor_refresh),
                     enabled = !state.isRefreshing,
@@ -176,25 +182,25 @@ internal fun GarageMonitorScreen(
                     onClick = onRePair,
                 )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(1.dp)
                     .background(outline),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(8.dp))
             if (state.errorMessage != null) {
                 Text(
                     text = state.errorMessage,
                     color = warning,
-                    fontSize = 18.sp,
+                    fontSize = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(6.dp))
             }
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
                 when {
                     state.lastUpdatedAtMillis == null && state.isRefreshing ->
                         EmptyState(stringResource(R.string.monitor_loading), mutedText)
@@ -205,7 +211,7 @@ internal fun GarageMonitorScreen(
                         1 -> FuelPage(state.cards, state.cardsNotShown, textColor, mutedText, surface, raisedSurface, accent, warning)
                         2 -> MatrixPage(state.matrix, textColor, mutedText, surface, raisedSurface, accent)
                         3 -> CallsPage(state.callList, textColor, mutedText, surface, raisedSurface, accent, warning)
-                        else -> MapPage(state.map, textColor, mutedText, surface, accent, warning, themedColor(R.attr.hermesMonitorOk))
+                        else -> MapPage(state.map, textColor, mutedText, surface, accent, warning, themedColor(R.attr.hermesMonitorOk), outline)
                     }
                 }
             }
@@ -220,7 +226,6 @@ private fun Header(
     mutedText: Color,
     warning: Color,
     danger: Color,
-    accent: Color,
 ) {
     val hasSnapshot = state.lastUpdatedAtMillis != null
     val status = when {
@@ -235,27 +240,22 @@ private fun Header(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 text = stringResource(R.string.monitor_title),
                 color = textColor,
-                fontSize = 34.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
                 text = stringResource(R.string.monitor_subtitle),
                 color = mutedText,
-                fontSize = 19.sp,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(bottom = 3.dp),
             )
         }
         Spacer(Modifier.weight(1f))
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = status,
-                color = if (state.errorMessage != null) danger else statusColor,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             state.lastUpdatedAtMillis?.let { updatedAt ->
                 val time = remember(updatedAt) {
                     DateFormat.getTimeInstance(DateFormat.SHORT, Locale("pt", "BR"))
@@ -264,9 +264,15 @@ private fun Header(
                 Text(
                     text = stringResource(R.string.monitor_last_updated, time),
                     color = mutedText,
-                    fontSize = 16.sp,
+                    fontSize = 13.sp,
                 )
             }
+            Text(
+                text = status,
+                color = if (state.errorMessage != null) danger else statusColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }
@@ -282,7 +288,7 @@ private fun DashboardTab(
     focusRequester: FocusRequester? = null,
     onSelect: () -> Unit,
 ) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val focusModifier = if (focusRequester == null) Modifier else Modifier.focusRequester(focusRequester)
     Box(
         modifier = modifier
@@ -293,12 +299,12 @@ private fun DashboardTab(
             }
             .focusable()
             .clickable(role = Role.Tab, onClick = onSelect)
-            .height(54.dp)
-            .background(if (focused || selected) selectedColor.copy(alpha = 0.18f) else Color.Transparent)
+            .height(ChromeHeight)
+            .background(if (focused || selected) selectedColor.copy(alpha = 0.18f) else Color.Transparent, CardShape)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused || selected) selectedColor else outlineColor,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                shape = CardShape,
             )
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
@@ -306,10 +312,9 @@ private fun DashboardTab(
         Text(
             text = label,
             color = if (focused || selected) selectedColor else textColor,
-            fontSize = 18.sp,
+            fontSize = 14.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -323,31 +328,72 @@ private fun DashboardAction(
     outlineColor: Color,
     onClick: () -> Unit,
 ) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
             .focusable(enabled = enabled)
             .clickable(enabled = enabled, onClick = onClick)
-            .height(54.dp)
-            .background(if (focused) accent.copy(alpha = 0.18f) else Color.Transparent)
+            .height(ChromeHeight)
+            .background(if (focused) accent.copy(alpha = 0.18f) else Color.Transparent, CardShape)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) accent else outlineColor,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                shape = CardShape,
             )
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             color = if (enabled) textColor else textColor.copy(alpha = 0.45f),
-            fontSize = 17.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
     }
 }
+
+/**
+ * Lays [items] out so that all of them are on screen at once: it adds columns (up to [maxColumns]) before it
+ * lets a row shrink below [minRowHeight]. A monitor on a wall has nobody to scroll it, so scrolling only
+ * remains as the last resort when even that does not fit.
+ */
+@Composable
+private fun <T> FitGrid(
+    items: List<T>,
+    minRowHeight: Dp,
+    maxRowHeight: Dp,
+    modifier: Modifier = Modifier,
+    maxColumns: Int = 3,
+    gap: Dp = 6.dp,
+    content: @Composable (T, Modifier) -> Unit,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val rowsThatFit = ((maxHeight + gap) / (minRowHeight + gap)).toInt().coerceAtLeast(1)
+        val columns = ceil(items.size / rowsThatFit.toDouble()).toInt().coerceIn(1, maxColumns)
+        val perColumn = ceil(items.size / columns.toDouble()).toInt().coerceAtLeast(1)
+        val rowHeight = ((maxHeight - gap * (perColumn - 1)) / perColumn).coerceIn(minRowHeight, maxRowHeight)
+        Row(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            items.chunked(perColumn).forEach { chunk ->
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    chunk.forEach { item -> content(item, Modifier.fillMaxWidth().height(rowHeight)) }
+                }
+            }
+            // A short last column keeps the others' width instead of stretching.
+            repeat(columns - items.chunked(perColumn).size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+}
+
+@Composable
+private fun focusCard(focused: Boolean, surface: Color, raisedSurface: Color, accent: Color): Modifier =
+    Modifier
+        .background(if (focused) raisedSurface else surface, CardShape)
+        .border(if (focused) 2.dp else 1.dp, if (focused) accent else Color.Transparent, CardShape)
 
 @Composable
 private fun QueuePage(
@@ -365,24 +411,18 @@ private fun QueuePage(
         return
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            Text(stringResource(R.string.monitor_vehicle_count, entries.size), color = mutedText, fontSize = 18.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Text(stringResource(R.string.monitor_vehicle_count, entries.size), color = mutedText, fontSize = 13.sp)
             Text(
                 stringResource(R.string.monitor_urgent_count, entries.count { it.urgent }),
                 color = warning,
-                fontSize = 18.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 12.dp),
-        ) {
-            itemsIndexed(entries, key = { index, entry -> "${entry.vehicleUuid}-$index" }) { _, entry ->
-                QueueRow(entry, textColor, mutedText, surface, raisedSurface, accent, warning, danger)
-            }
+        Spacer(Modifier.height(6.dp))
+        FitGrid(entries, minRowHeight = 40.dp, maxRowHeight = 56.dp, modifier = Modifier.weight(1f)) { entry, rowModifier ->
+            QueueRow(entry, rowModifier, textColor, mutedText, surface, raisedSurface, accent, warning, danger)
         }
     }
 }
@@ -390,6 +430,7 @@ private fun QueuePage(
 @Composable
 private fun QueueRow(
     entry: GarageMonitorEntry,
+    modifier: Modifier,
     textColor: Color,
     mutedText: Color,
     surface: Color,
@@ -398,7 +439,7 @@ private fun QueueRow(
     warning: Color,
     danger: Color,
 ) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val statusColor = when {
         entry.urgent -> danger
         entry.readiness.equals("Ready", ignoreCase = true) -> themedColor(R.attr.hermesMonitorOk)
@@ -406,46 +447,38 @@ private fun QueueRow(
         else -> mutedText
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .background(if (focused) raisedSurface else surface, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-            .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) accent else Color.Transparent,
-                androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-            )
-            .padding(horizontal = 20.dp, vertical = 13.dp),
+            .then(focusCard(focused, surface, raisedSurface, accent))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1.15f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(entry.prefix, color = textColor, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                if (entry.urgent) Text(stringResource(R.string.monitor_urgent), color = danger, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                if (entry.calledByManager) Text(stringResource(R.string.monitor_called), color = warning, fontSize = 15.sp)
-                if (entry.fillTankAlert) Text(stringResource(R.string.monitor_fill_tank), color = warning, fontSize = 15.sp)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(entry.prefix, color = textColor, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                if (entry.urgent) Text(stringResource(R.string.monitor_urgent), color = danger, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                if (entry.calledByManager) Text(stringResource(R.string.monitor_called), color = warning, fontSize = 11.sp)
+                if (entry.fillTankAlert) Text(stringResource(R.string.monitor_fill_tank), color = warning, fontSize = 11.sp)
             }
             Text(
                 text = entry.requiredPending.takeIf { it.isNotEmpty() }?.joinToString(" | ")
                     ?: stringResource(R.string.monitor_unknown),
                 color = mutedText,
-                fontSize = 17.sp,
+                fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Column(modifier = Modifier.weight(0.9f)) {
-            Text(stringResource(R.string.monitor_readiness), color = mutedText, fontSize = 14.sp)
-            Text(readinessLabel(entry.readiness), color = statusColor, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Column(modifier = Modifier.weight(0.85f)) {
-            Text(stringResource(R.string.monitor_departure), color = mutedText, fontSize = 14.sp)
-            Text(formatTimestamp(entry.nextDeparture), color = textColor, fontSize = 17.sp, maxLines = 1)
-        }
+        Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
-            Text(stringResource(R.string.monitor_priority), color = mutedText, fontSize = 14.sp)
-            Text(entry.manualPriority?.toString() ?: "—", color = if (entry.manualPriority == null) mutedText else accent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(readinessLabel(entry.readiness), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(
+                text = listOfNotNull(formatShort(entry.nextDeparture), entry.manualPriority?.let { "P$it" }).joinToString(" · "),
+                color = if (entry.manualPriority == null) mutedText else accent,
+                fontSize = 11.sp,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -466,19 +499,11 @@ private fun FuelPage(
         return
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 310.dp),
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 12.dp),
-        ) {
-            items(cards, key = { it.vehicleUuid }) { card ->
-                FuelCard(card, textColor, mutedText, surface, raisedSurface, accent, warning)
-            }
+        FitGrid(cards, minRowHeight = 92.dp, maxRowHeight = 150.dp, modifier = Modifier.weight(1f), gap = 10.dp) { card, cardModifier ->
+            FuelCard(card, cardModifier, textColor, mutedText, surface, raisedSurface, accent, warning)
         }
         if (notShown > 0) {
-            Text(stringResource(R.string.monitor_not_shown, notShown), color = mutedText, fontSize = 16.sp)
+            Text(stringResource(R.string.monitor_not_shown, notShown), color = mutedText, fontSize = 12.sp)
         }
     }
 }
@@ -486,6 +511,7 @@ private fun FuelPage(
 @Composable
 private fun FuelCard(
     card: GarageMonitorCard,
+    modifier: Modifier,
     textColor: Color,
     mutedText: Color,
     surface: Color,
@@ -493,32 +519,29 @@ private fun FuelCard(
     accent: Color,
     warning: Color,
 ) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
-    Surface(
-        color = if (focused) raisedSurface else surface,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) accent else Color.Transparent,
-                androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-            ),
+            .then(focusCard(focused, surface, raisedSurface, accent))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Text(card.prefix, color = textColor, fontSize = 27.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.monitor_tank), color = mutedText, fontSize = 16.sp)
-                Text(card.tankPercent?.let(::formatPercent) ?: stringResource(R.string.monitor_unknown), color = if (card.needsRefuel) warning else themedColor(R.attr.hermesMonitorOk), fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                if (card.needsRefuel) Text(stringResource(R.string.monitor_needs_refuel), color = warning, fontSize = 16.sp)
-            }
-            Spacer(Modifier.height(8.dp))
-            DataLine(stringResource(R.string.monitor_maintenance), card.maintenanceStatus, textColor, mutedText)
-            DataLine(stringResource(R.string.monitor_last_cycle), card.lastGarageCycleDistanceKm?.let(::formatDistance), textColor, mutedText)
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(card.prefix, color = textColor, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(stringResource(R.string.monitor_tank), color = mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 2.dp))
+            Text(
+                card.tankPercent?.let(::formatPercent) ?: stringResource(R.string.monitor_unknown),
+                color = if (card.needsRefuel) warning else themedColor(R.attr.hermesMonitorOk),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            if (card.needsRefuel) Text(stringResource(R.string.monitor_needs_refuel), color = warning, fontSize = 12.sp, modifier = Modifier.padding(bottom = 2.dp))
         }
+        Spacer(Modifier.height(4.dp))
+        DataLine(stringResource(R.string.monitor_maintenance), card.maintenanceStatus, textColor, mutedText)
+        DataLine(stringResource(R.string.monitor_last_cycle), card.lastGarageCycleDistanceKm?.let(::formatDistance), textColor, mutedText)
     }
 }
 
@@ -536,20 +559,15 @@ private fun CallsPage(
         EmptyState(stringResource(R.string.monitor_empty_calls), mutedText)
         return
     }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 12.dp),
-    ) {
-        itemsIndexed(entries, key = { index, entry -> "${entry.vehicleUuid}-$index" }) { _, entry ->
-            CallRow(entry, textColor, mutedText, surface, raisedSurface, accent, warning)
-        }
+    FitGrid(entries, minRowHeight = 40.dp, maxRowHeight = 56.dp) { entry, rowModifier ->
+        CallRow(entry, rowModifier, textColor, mutedText, surface, raisedSurface, accent, warning)
     }
 }
 
 @Composable
 private fun CallRow(
     entry: GarageCallListEntry,
+    modifier: Modifier,
     textColor: Color,
     mutedText: Color,
     surface: Color,
@@ -557,31 +575,30 @@ private fun CallRow(
     accent: Color,
     warning: Color,
 ) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val reasons = buildList {
         if (entry.calledByManager) add(stringResource(R.string.monitor_reason_manager))
         if (entry.hasDepartureAhead) add(stringResource(R.string.monitor_reason_departure))
         if (entry.tankCalls) add(stringResource(R.string.monitor_reason_tank))
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .background(if (focused) raisedSurface else surface, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-            .border(if (focused) 2.dp else 1.dp, if (focused) accent else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-            .padding(horizontal = 22.dp, vertical = 16.dp),
+            .then(focusCard(focused, surface, raisedSurface, accent))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(entry.prefix, modifier = Modifier.width(230.dp), color = textColor, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.monitor_call_reasons), color = mutedText, fontSize = 14.sp)
-            Text(reasons.joinToString("  |  ").ifEmpty { stringResource(R.string.monitor_unknown) }, color = if (entry.calledByManager) warning else textColor, fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Column(horizontalAlignment = Alignment.End) {
-            Text(stringResource(R.string.monitor_departure), color = mutedText, fontSize = 14.sp)
-            Text(formatTimestamp(entry.nextDeparture), color = textColor, fontSize = 17.sp)
-        }
+        Text(entry.prefix, modifier = Modifier.width(76.dp), color = textColor, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(
+            reasons.joinToString(" | ").ifEmpty { stringResource(R.string.monitor_unknown) },
+            modifier = Modifier.weight(1f),
+            color = if (entry.calledByManager) warning else textColor,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(formatShort(entry.nextDeparture), color = mutedText, fontSize = 11.sp, maxLines = 1)
     }
 }
 
@@ -598,72 +615,60 @@ private fun MatrixPage(
         EmptyState(stringResource(R.string.monitor_empty_matrix), mutedText)
         return
     }
-    val horizontalState = rememberScrollState()
-    val verticalState = rememberScrollState()
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .horizontalScroll(horizontalState),
-    ) {
-        Column(modifier = Modifier.verticalScroll(verticalState)) {
+    val prefixWidth = 72.dp
+    val headerHeight = 40.dp
+    val gap = 3.dp
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val footerHeight = if (matrix.rowsNotShown > 0 || matrix.columnsNotShown > 0) 18.dp else 0.dp
+        val columnWidth = (maxWidth - prefixWidth) / matrix.columns.size
+        val rowHeight = ((maxHeight - headerHeight - footerHeight - gap * matrix.rows.size) / matrix.rows.size).coerceIn(30.dp, 52.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
             Row(
-                modifier = Modifier.background(raisedSurface).padding(vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().height(headerHeight).background(raisedSurface, CardShape),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("PREFIXO", modifier = Modifier.width(170.dp).padding(start = 16.dp), color = mutedText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.monitor_matrix_prefix), modifier = Modifier.width(prefixWidth).padding(start = 8.dp), color = mutedText, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 matrix.columns.forEach { column ->
-                    Column(modifier = Modifier.width(190.dp).padding(horizontal = 10.dp)) {
-                        Text(column.name, color = textColor, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(stringResource(if (column.internal) R.string.monitor_internal else R.string.monitor_external), color = mutedText, fontSize = 13.sp)
+                    Column(modifier = Modifier.width(columnWidth).padding(horizontal = 4.dp)) {
+                        Text(column.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(stringResource(if (column.internal) R.string.monitor_internal else R.string.monitor_external), color = mutedText, fontSize = 10.sp, maxLines = 1)
                     }
                 }
             }
             matrix.rows.forEach { row ->
-                var focused by remember(row.vehicleUuid) { androidx.compose.runtime.mutableStateOf(false) }
+                var focused by remember(row.vehicleUuid) { mutableStateOf(false) }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(rowHeight)
                         .onFocusChanged { focused = it.isFocused }
                         .focusable()
-                        .background(if (focused) raisedSurface else surface)
-                        .border(if (focused) 2.dp else 1.dp, if (focused) accent else Color.Transparent)
-                        .padding(vertical = 12.dp),
+                        .then(focusCard(focused, surface, raisedSurface, accent)),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(row.prefix, modifier = Modifier.width(170.dp).padding(start = 16.dp), color = textColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(row.prefix, modifier = Modifier.width(prefixWidth).padding(start = 8.dp), color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     matrix.columns.indices.forEach { index ->
                         val cell = row.cells.getOrNull(index)
-                        var cellFocused by remember(row.vehicleUuid, index) { androidx.compose.runtime.mutableStateOf(false) }
+                        var cellFocused by remember(row.vehicleUuid, index) { mutableStateOf(false) }
                         Column(
                             modifier = Modifier
-                                .width(190.dp)
+                                .width(columnWidth)
                                 .onFocusChanged { cellFocused = it.isFocused }
                                 .focusable()
                                 .background(if (cellFocused) accent.copy(alpha = 0.12f) else Color.Transparent)
                                 .border(1.dp, if (cellFocused) accent else Color.Transparent)
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
                         ) {
-                            Text(cell?.effectiveState?.let { serviceStateLabel(it) } ?: "—", color = accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${stringResource(R.string.monitor_matrix_stamp)} ${formatTimestamp(cell?.stamp)}",
-                                color = mutedText,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                            )
-                            Text(
-                                "${stringResource(R.string.monitor_matrix_last_performed)} ${formatTimestamp(cell?.lastPerformedAt)}",
-                                color = mutedText,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                            )
+                            Text(cell?.effectiveState?.let { serviceStateLabel(it) } ?: "—", color = accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(formatShort(cell?.stamp), color = mutedText, fontSize = 10.sp, maxLines = 1)
                         }
                     }
                 }
             }
             if (matrix.rowsNotShown > 0 || matrix.columnsNotShown > 0) {
-                Row(modifier = Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    if (matrix.rowsNotShown > 0) Text(stringResource(R.string.monitor_rows_not_shown, matrix.rowsNotShown), color = mutedText, fontSize = 15.sp)
-                    if (matrix.columnsNotShown > 0) Text(stringResource(R.string.monitor_columns_not_shown, matrix.columnsNotShown), color = mutedText, fontSize = 15.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (matrix.rowsNotShown > 0) Text(stringResource(R.string.monitor_rows_not_shown, matrix.rowsNotShown), color = mutedText, fontSize = 11.sp)
+                    if (matrix.columnsNotShown > 0) Text(stringResource(R.string.monitor_columns_not_shown, matrix.columnsNotShown), color = mutedText, fontSize = 11.sp)
                 }
             }
         }
@@ -673,27 +678,28 @@ private fun MatrixPage(
 @Composable
 private fun DataLine(label: String, value: String?, textColor: Color, mutedText: Color) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f), color = mutedText, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(value ?: stringResource(R.string.monitor_unknown), color = textColor, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, modifier = Modifier.weight(1f), color = mutedText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value ?: stringResource(R.string.monitor_unknown), color = textColor, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 internal fun EmptyState(message: String, mutedText: Color) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(message, color = mutedText, fontSize = 24.sp, fontWeight = FontWeight.Medium)
+        Text(message, color = mutedText, fontSize = 20.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 // shortcut: the API sends zone-less UTC timestamps (ICD has no zone field); upgrade if it ever emits an offset.
-private fun formatTimestamp(value: String?): String {
+// Compact "dd/MM HH:mm" for the dense layouts.
+private fun formatShort(value: String?): String {
     if (value == null) return "--"
     val parsed = runCatching {
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.ROOT)
             .apply { timeZone = TimeZone.getTimeZone("UTC") }
             .parse(value.take(16))
     }.getOrNull() ?: return value.replace('T', ' ').take(16)
-    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(parsed)
+    return SimpleDateFormat("dd/MM HH:mm", Locale.ROOT).format(parsed)
 }
 
 @Composable

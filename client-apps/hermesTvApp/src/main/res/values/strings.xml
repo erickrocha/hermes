@@ -42,6 +42,10 @@
     <string name="monitor_empty_map">Nenhum veículo com posição de rastreador</string>
     <string name="monitor_map_unavailable">Rastreamento indisponível no momento</string>
     <string name="monitor_map_summary">%1$d veículos no mapa · %2$d sem sinal recente</string>
+    <string name="monitor_map_outside">%1$d fora do raio de %2$d km</string>
+    <string name="monitor_map_zoom_in">Aproximar</string>
+    <string name="monitor_map_zoom_out">Afastar</string>
+    <string name="monitor_map_garage">Garagem</string>
     <string name="monitor_map_attribution">© colaboradores do OpenStreetMap</string>
     <string name="monitor_vehicle_count">%1$d veículos</string>
     <string name="monitor_urgent_count">%1$d urgentes</string>
@@ -65,6 +69,7 @@
     <string name="monitor_internal">Interno</string>
     <string name="monitor_rows_not_shown">%1$d linhas não exibidas</string>
     <string name="monitor_columns_not_shown">%1$d serviços não exibidos</string>
+    <string name="monitor_matrix_prefix">PREFIXO</string>
     <string name="monitor_matrix_stamp">Registro</string>
     <string name="monitor_matrix_last_performed">Última execução</string>
     <string name="monitor_repair">Parear novamente</string>

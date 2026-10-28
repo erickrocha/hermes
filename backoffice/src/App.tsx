@@ -19,6 +19,7 @@ const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'Dashboard
 const PlanEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'PlanEditorPage')
 const PlansPage = lazyPage(() => import('./pages/ManagementPages'), 'PlansPage')
 const RuleSettingsPage = lazyPage(() => import('./pages/FuelPages'), 'RuleSettingsPage')
+const TrackingSettingsPage = lazyPage(() => import('./pages/FuelPages'), 'TrackingSettingsPage')
 const SubscriptionPage = lazyPage(() => import('./pages/ManagementPages'), 'SubscriptionPage')
 const TenantEditorPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantEditorPage')
 const TenantsPage = lazyPage(() => import('./pages/ManagementPages'), 'TenantsPage')
@@ -65,6 +66,7 @@ export function App() {
     <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
     <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:uuid/edit" element={<Protected allow={canSeeTenants}><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/tracking" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update', OWNER)}><TrackingSettingsPage /></Protected>} />
     <Route path="/tenants/:uuid/manage" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update', OWNER)}><RuleSettingsPage /></Protected>} />
     <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
     <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
