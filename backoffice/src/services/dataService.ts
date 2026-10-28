@@ -9,11 +9,14 @@ export const fetchPlans = async (request: PageRequest): Promise<Page<BusinessPla
   (await api.get<Page<BusinessPlan>>('/business-plan', pageParams(request))).data
 export const fetchUsers = async (request: PageRequest): Promise<Page<User>> =>
   (await api.get<Page<User>>('/user', pageParams(request))).data
+/// The reference lists are plain arrays; anything else (a paged body, an empty answer) reads as none, so a
+/// combobox never receives something it cannot map.
+const asList = <T>(body: unknown): T[] => (Array.isArray(body) ? (body as T[]) : [])
 export const fetchProvinces = async (countryCode: string): Promise<Province[]> =>
-  (await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data
+  asList<Province>((await api.get<Province[]>('/province', { params: { countryCode, country_code: countryCode } })).data)
 export const fetchCities = async (provinceId: number): Promise<City[]> =>
-  (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data
-export const fetchCountries = async (): Promise<string[]> => (await api.get<string[]>('/country')).data
+  asList<City>((await api.get<City[]>(`/cities/by-province/${provinceId}`)).data)
+export const fetchCountries = async (): Promise<string[]> => asList<string>((await api.get<string[]>('/country')).data)
 
 export type TenantDashboard = {
   activeVehicles: number
