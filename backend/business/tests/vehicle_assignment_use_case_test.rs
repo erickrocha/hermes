@@ -1,6 +1,7 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{Role, VehicleStatus};
-use business::domain::user::User;
+use business::domain::enums::{VehicleStatus};
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER, TENANT_USER};
 use business::domain::vehicle::Vehicle;
 use business::domain::vehicle_assignment::VehicleAssignment;
 use business::gateway::user_gateway::UserLookupStore;
@@ -152,9 +153,10 @@ fn driver() -> User {
         password: "hash".into(),
         enabled: true,
         tenant_id: Some(42),
-        role: Role::Driver,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(DRIVER).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -244,7 +246,7 @@ async fn a_second_live_assignment_maps_the_store_conflict_to_the_domain_error() 
 #[tokio::test]
 async fn a_user_who_is_not_a_driver_is_refused() {
     let mut not_driver = driver();
-    not_driver.role = Role::TenantOwner;
+    not_driver.access = Access::of_system_profile(TENANT_USER).expect("a system profile");
     let use_case = use_case(Some(not_driver));
 
     let error = use_case

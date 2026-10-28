@@ -100,7 +100,7 @@ pub enum ErrorKey {
     /// DEF-BO-05: a role that may not create users. Distinct from a malformed
     /// request, which is what the caller used to be told.
     UserCreationForbidden,
-    /// D-16/HRMS-418: device credentials belong to tenant owners, not users
+    /// D-16/HRMS-418: device credentials are managed by whoever holds `garage.device.manage` in the tenant
     /// who can only read or operate the garage.
     DeviceManagementForbidden,
     GarageDeviceNotFound,
@@ -265,7 +265,7 @@ pub enum ErrorKey {
     GarageServiceNotFound,
     /// `HRMS-956`: the tenant already has a garage service of this normalised name.
     DuplicateGarageService,
-    /// `HRMS-855`: only the tenant owner manages access profiles.
+    /// `HRMS-855`/`C-035`: the caller does not administer access profiles here, or grants more than they hold.
     AccessProfileForbidden,
     /// `HRMS-851`: no such profile, or it belongs to another tenant.
     AccessProfileNotFound,
@@ -273,6 +273,10 @@ pub enum ErrorKey {
     DuplicateAccessProfile,
     /// `HRMS-861`: another person of the tenant already holds this CPF.
     DuplicatePersonDocument,
+    /// `EPIC-SC-01-S04`: another customer of the tenant already holds this CPF/CNPJ.
+    DuplicateCustomerTaxId,
+    /// `EPIC-SC-01-S04`: the customer's CPF/CNPJ failed its country's check.
+    InvalidCustomerTaxId,
     /// `HRMS-804…810`: the cost reports are the office's to read.
     CostReportForbidden,
     /// `HRMS-853`/`854`: the caller's access profile does not hold the permission the operation asks for.
@@ -433,6 +437,8 @@ impl ErrorKey {
             ErrorKey::AccessProfileNotFound => "AccessProfileNotFound",
             ErrorKey::DuplicateAccessProfile => "DuplicateAccessProfile",
             ErrorKey::DuplicatePersonDocument => "DuplicatePersonDocument",
+            ErrorKey::DuplicateCustomerTaxId => "DuplicateCustomerTaxId",
+            ErrorKey::InvalidCustomerTaxId => "InvalidCustomerTaxId",
             ErrorKey::CostReportForbidden => "CostReportForbidden",
             ErrorKey::PermissionNotInProfile => "PermissionNotInProfile",
             ErrorKey::GarageAttendanceNotFound => "GarageAttendanceNotFound",
@@ -572,6 +578,8 @@ impl ErrorKey {
             ErrorKey::AccessProfileNotFound => "access-profile-not-found",
             ErrorKey::DuplicateAccessProfile => "duplicate-access-profile",
             ErrorKey::DuplicatePersonDocument => "duplicate-person-document",
+            ErrorKey::DuplicateCustomerTaxId => "duplicate-customer-tax-id",
+            ErrorKey::InvalidCustomerTaxId => "invalid-customer-tax-id",
             ErrorKey::CostReportForbidden => "cost-report-forbidden",
             ErrorKey::PermissionNotInProfile => "permission-not-in-profile",
             ErrorKey::GarageAttendanceNotFound => "garage-attendance-not-found",
@@ -816,6 +824,8 @@ mod tests {
             ErrorKey::NotADriver,
             ErrorKey::CustomerNotFound,
             ErrorKey::CustomerForbidden,
+            ErrorKey::DuplicateCustomerTaxId,
+            ErrorKey::InvalidCustomerTaxId,
             ErrorKey::DuplicateDayOff,
             ErrorKey::DayOffNotFound,
             ErrorKey::HolidayForbidden,

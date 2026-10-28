@@ -1,7 +1,8 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{Role, ScheduleExceptionType, VehicleStatus};
+use business::domain::enums::{ScheduleExceptionType, VehicleStatus};
 use business::domain::schedule_exception::ScheduleException;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER, MECHANIC};
 use business::domain::vehicle::Vehicle;
 use business::gateway::schedule_exception_gateway::ScheduleExceptionStore;
 use business::gateway::user_gateway::UserLookupStore;
@@ -141,7 +142,7 @@ fn exception() -> ScheduleException {
     }
 }
 
-fn driver(tenant_id: Option<i64>, role: Role, enabled: bool) -> User {
+fn driver(tenant_id: Option<i64>, profile_key: &str, enabled: bool) -> User {
     User {
         id: Some(7),
         uuid: Some("driver-7".into()),
@@ -150,9 +151,10 @@ fn driver(tenant_id: Option<i64>, role: Role, enabled: bool) -> User {
         password: "hash".into(),
         enabled,
         tenant_id,
-        role,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(profile_key).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -209,7 +211,7 @@ async fn schedule_exception_validates_driver_and_vehicle_then_saves() {
     new_exception.new_driver_id = Some(7);
     new_exception.new_vehicle_id = Some(10);
     let created = use_case(
-        Some(driver(Some(42), Role::Driver, true)),
+        Some(driver(Some(42), DRIVER, true)),
         Some(vehicle(Some(42))),
     )
     .create(new_exception)
@@ -225,7 +227,7 @@ async fn schedule_exception_rejects_a_driver_from_another_tenant() {
     let mut new_exception = exception();
     new_exception.new_driver_id = Some(7);
     let error = use_case(
-        Some(driver(Some(99), Role::Driver, true)),
+        Some(driver(Some(99), DRIVER, true)),
         Some(vehicle(Some(42))),
     )
     .create(new_exception)
@@ -240,7 +242,7 @@ async fn schedule_exception_rejects_a_vehicle_from_another_tenant() {
     let mut new_exception = exception();
     new_exception.new_vehicle_id = Some(10);
     let error = use_case(
-        Some(driver(Some(42), Role::Driver, true)),
+        Some(driver(Some(42), DRIVER, true)),
         Some(vehicle(Some(99))),
     )
     .create(new_exception)
@@ -291,7 +293,7 @@ async fn schedule_exception_requires_active_driver_role_and_tenant_vehicle() {
     replacement.new_driver_id = Some(7);
     assert_eq!(
         use_case(
-            Some(driver(Some(42), Role::Mechanic, true)),
+            Some(driver(Some(42), MECHANIC, true)),
             Some(vehicle(Some(42))),
         )
         .create(replacement.clone())
@@ -301,7 +303,7 @@ async fn schedule_exception_requires_active_driver_role_and_tenant_vehicle() {
         NOT_A_DRIVER
     );
 
-    let mut disabled = driver(Some(42), Role::Driver, true);
+    let mut disabled = driver(Some(42), DRIVER, true);
     disabled.enabled = false;
     assert_eq!(
         use_case(Some(disabled), Some(vehicle(Some(42))))

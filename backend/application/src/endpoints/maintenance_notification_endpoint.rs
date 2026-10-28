@@ -12,7 +12,7 @@ use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
-use business::domain::authorization::can_administer_purchase_order;
+use business::domain::authorization::can_work_maintenance;
 use business::domain::maintenance_notification::MaintenanceNotification;
 use business::domain::purchase_order::PurchaseOrder;
 use business::domain::user::User;
@@ -28,10 +28,10 @@ fn use_case(state: &AppState) -> MaintenanceNotificationUseCase {
     ))
 }
 
-/// The inbox is for the maintenance side: the platform administrator, the tenant owner and the mechanic -- the
-/// same people who may administer purchase orders. Tenant scoping of what they see is the gateway's.
+/// The inbox is for the maintenance side -- whoever holds the notification permissions (`C-035`). Tenant
+/// scoping of what they see is the gateway's.
 fn ensure_may_use_inbox(locale: &Locale, user: &User) -> Result<(), ExceptionResponse> {
-    if can_administer_purchase_order(user, user.tenant_id) {
+    if can_work_maintenance(user, user.tenant_id) {
         Ok(())
     } else {
         Err(ExceptionResponse::Forbidden(

@@ -22,6 +22,14 @@ pub fn normalize_name(text: &str) -> String {
     stripped.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Masks are presentation, not data: a postal code or a phone number is stored and exchanged as digits
+/// only, and a value with no digit at all is stored as absent. The console masks it back for display.
+pub fn digits_only(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.chars().filter(char::is_ascii_digit).collect::<String>())
+        .filter(|v| !v.is_empty())
+}
+
 #[cfg(test)]
 mod normalize_tests {
     use super::normalize_name;

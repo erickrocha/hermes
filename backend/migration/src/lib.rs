@@ -14,6 +14,9 @@ mod m20260917_000001_tenant_business_plan_fk;
 mod m20260917_000002_data_load_br_provinces_and_cities;
 mod m20261022_000001_data_load_br_ibge_places;
 mod m20261027_000001_add_map_radius_and_tracking_settings;
+mod m20261028_000001_profiles_replace_roles;
+mod m20261028_000002_customer_identity_and_address;
+mod m20261028_000003_strip_masks_from_tenant_contact;
 mod m20260917_000004_tenant_country_required_and_tax_id_unique;
 mod m20260918_000001_sysadmin_has_no_tenant;
 mod m20260918_000002_tenant_column_names;
@@ -193,6 +196,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20261015_000007_remove_business_plan_payment_date::Migration),
             Box::new(m20261022_000001_data_load_br_ibge_places::Migration),
             Box::new(m20261027_000001_add_map_radius_and_tracking_settings::Migration),
+            Box::new(m20261028_000001_profiles_replace_roles::Migration),
+            Box::new(m20261028_000002_customer_identity_and_address::Migration),
+            Box::new(m20261028_000003_strip_masks_from_tenant_contact::Migration),
         ]
     }
 }

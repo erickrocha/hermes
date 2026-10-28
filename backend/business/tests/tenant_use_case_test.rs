@@ -109,3 +109,29 @@ async fn tenant_use_case_returns_validation_errors_without_calling_storage() {
 
     assert_eq!(error.message, "Country code must contain two letters");
 }
+/// Masks are presentation, not data: the postal code and the phone are stored digits only, and a value
+/// with no digit is stored as absent -- on create and on update alike.
+#[tokio::test]
+async fn tenant_postal_code_and_phone_are_stored_as_digits() {
+    let use_case = TenantUseCase::new(MemoryTenantStore::default());
+    let created = use_case
+        .create(Tenant {
+            phone: Some("+1 (415) 555-0199".into()),
+            postal_code: Some("94105-1234".into()),
+            ..new_tenant()
+        })
+        .await
+        .expect("stored");
+    assert_eq!(created.phone.as_deref(), Some("14155550199"));
+    assert_eq!(created.postal_code.as_deref(), Some("941051234"));
+
+    let updated = use_case
+        .update(
+            created.id.expect("id"),
+            Tenant { phone: Some(" - ".into()), postal_code: Some("13000-000".into()), ..new_tenant() },
+        )
+        .await
+        .expect("updated");
+    assert_eq!(updated.phone, None);
+    assert_eq!(updated.postal_code.as_deref(), Some("13000000"));
+}

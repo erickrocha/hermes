@@ -94,6 +94,7 @@ internal sealed interface DriverScreen {
 
 /** The driver's screen state; every call goes through the host, which renews the session and reports refusals. */
 internal class DriverState(private val host: FleetHost) {
+    val access get() = host.access
     var screen by mutableStateOf<DriverScreen>(DriverScreen.Tabs)
     var rows by mutableStateOf<List<VehicleRow>?>(null)
     var homeMessage by mutableStateOf<String?>(null)

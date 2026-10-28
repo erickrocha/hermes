@@ -15,8 +15,8 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::authorization::{
     can_access_tenant, can_create_tenant, can_read_tenant_configuration, can_set_tenant_plan, can_update_tenant,
+    is_platform_actor,
 };
-use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
 use business::gateway::billing_gateway::BillingGateway;
@@ -142,7 +142,7 @@ pub async fn list_all(
             Err(_) => Err(unreadable_tenants(locale)),
         };
     }
-    if current_user.role != Role::SysAdmin {
+    if !is_platform_actor(&current_user) {
         return Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)));
     }
     match use_case.find_page(page, page_size, search.as_deref()).await {

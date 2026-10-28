@@ -5,11 +5,16 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import '../i18n'
 import { login, store } from '../store'
 import type { Session } from '../types'
+import { sessionAs, sessionWith, type SystemProfileKey } from './session'
 
-export const session = (role: Session['role'], permissions?: string[]): Session =>
-  ({ accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'a@b.c', uuid: 'u', name: 'n', userId: 1, role, tenantId: 42, tenantUuid: 't-42', permissions })
+export { sessionAs, sessionWith, systemGrants } from './session'
 
-export const signIn = (role: Session['role'], permissions?: string[]) => store.dispatch({ type: login.fulfilled.type, payload: session(role, permissions) })
+/// A session holding a system profile, or an explicit set of grants.
+export const session = (profile: SystemProfileKey, permissions?: string[]): Session =>
+  permissions ? sessionWith(permissions, profile === 'SysAdmin' ? 'Platform' : 'Tenant', { profileKey: profile }) : sessionAs(profile)
+
+export const signIn = (profile: SystemProfileKey, permissions?: string[]) => store.dispatch({ type: login.fulfilled.type, payload: session(profile, permissions) })
+export const signInWith = (who: Session) => store.dispatch({ type: login.fulfilled.type, payload: who })
 
 /// Monta a página sob o store real e o roteador, na rota pedida.
 export function renderPage(element: ReactElement, path = '/x', route = '/x') {

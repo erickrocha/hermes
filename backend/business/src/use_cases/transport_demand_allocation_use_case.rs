@@ -1,5 +1,5 @@
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
+use crate::domain::authorization::is_active_driver_of;
 use crate::domain::transport_demand_allocation::TransportDemandAllocation;
 use crate::gateway::transport_demand_allocation_gateway::TransportDemandAllocationStore;
 use crate::gateway::user_gateway::UserLookupStore;
@@ -91,7 +91,7 @@ impl TransportDemandAllocationUseCase {
         }
         let driver = self.users.get_by_id(allocation.driver_id).await?;
         let is_valid_driver = driver.is_some_and(|user| {
-            user.role == Role::Driver && user.enabled && user.tenant_id == allocation.tenant_id
+            is_active_driver_of(&user, allocation.tenant_id)
         });
         if !is_valid_driver {
             return Err(BusinessError::new(NOT_A_DRIVER.to_string()));

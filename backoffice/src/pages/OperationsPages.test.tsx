@@ -38,7 +38,7 @@ describe('operations screens', () => {
     vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
       if (url === '/checklist-template/uuid/t1') return { data: { uuid: 't1', name: 'Pre-trip', checklistType: 'Departure', items: [{ uuid: 'i1', description: 'Brakes' }, { uuid: 'i2', description: 'Horn' }] } } as never
       if (url === '/vehicle') return page([vehicle])
-      if (url === '/user') return page([{ uuid: 'd1', name: 'Dora', role: 'Driver' }])
+      if (url === '/user') return page([{ uuid: 'd1', name: 'Dora', profileKey: 'Driver', extraPermissions: [], permissions: ['driver.act', 'vehicle.read@own'] }])
       return page([])
     })
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)

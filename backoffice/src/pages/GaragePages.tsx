@@ -5,7 +5,8 @@ import * as yup from 'yup'
 import { Link, useParams } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
-import { can, OFFICE, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
+import { canManageGarageDevices } from '../features/routeAccess'
 import type { FieldDef } from '../features/fields'
 import { useAction, useActionForm, usePanel, useResourceForm, useResourceState } from '../features/hooks'
 import { loadLookup } from '../features/lookupSlice'
@@ -18,7 +19,6 @@ import { StateView } from '../components/molecules/StateView'
 import { ResourceFormPage } from '../components/organisms/ResourceFormPage'
 
 // C-028 (HRMS-956…970): a triagem do pátio, a fila, a lista de chamada à base e o painel do monitor de parede.
-const READERS = ['TenantOwner', 'TenantUser', 'Mechanic'] as const
 const openFields: FieldDef[] = [{ name: 'vehicleUuid', labelKey: 'vehicle', type: 'lookup', lookup: 'vehicle', required: true }, { name: 'manualPriority', labelKey: 'manualPriority', type: 'number', min: 0 }]
 const callFields: FieldDef[] = [{ name: 'vehicleUuid', labelKey: 'vehicle', type: 'lookup', lookup: 'vehicle', required: true }]
 const rows = (data: unknown): Row[] => (Array.isArray(data) ? data : []) as Row[]
@@ -34,12 +34,12 @@ export function GaragePage() {
   const queue = usePanel<Row[]>('/garage-attendance/queue')
   return <>
     <PageHeader title={t('garage')} subtitle={t('garageSummary')} actions={<>
-      {can(session, 'garage.triage.open', [...OWNER_MECHANIC]) && <Link className="btn primary" to="/garage/open">{t('openTriage')}</Link>}
-      {can(session, 'garage.call.create', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/garage/call">{t('callToBase')}</Link>}
-      {can(session, 'garage.call.cancel', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/garage/call/cancel">{t('cancelCall')}</Link>}
-      {can(session, 'garage.monitor.read', [...READERS]) && <Link className="btn secondary" to="/garage/monitor">{t('garageMonitor')}</Link>}
-      {session?.role === 'TenantOwner' && <Link className="btn secondary" to="/garage/devices">{t('garageDevices')}</Link>}
-      {can(session, 'garage.service-catalogue.read', [...OFFICE]) && <Link className="btn secondary" to="/garage-services">{t('garageServices')}</Link>}</>} />
+      {can(session, 'garage.triage.open') && <Link className="btn primary" to="/garage/open">{t('openTriage')}</Link>}
+      {can(session, 'garage.call.create') && <Link className="btn secondary" to="/garage/call">{t('callToBase')}</Link>}
+      {can(session, 'garage.call.cancel') && <Link className="btn secondary" to="/garage/call/cancel">{t('cancelCall')}</Link>}
+      {can(session, 'garage.monitor.read') && <Link className="btn secondary" to="/garage/monitor">{t('garageMonitor')}</Link>}
+      {session && canManageGarageDevices(session) && <Link className="btn secondary" to="/garage/devices">{t('garageDevices')}</Link>}
+      {can(session, 'garage.service-catalogue.read') && <Link className="btn secondary" to="/garage-services">{t('garageServices')}</Link>}</>} />
     <PanelSection titleKey="yardQueue" loading={queue.loading} error={queue.error} empty={rows(queue.data).length === 0}>
       <div className="table-card"><table>
         <thead><tr><th>{t('vehicle')}</th><th>{t('manualPriority')}</th><th>{t('nextDeparture')}</th><th>{t('requiredPending')}</th><th>{t('alerts')}</th></tr></thead>
@@ -94,8 +94,8 @@ export function GarageTriagePage() {
       dispatch(garageAttendances.fetchOne(String(uuid)))
     }
   })
-  const open = triage?.status === 'Open'; const mayMark = can(session, 'garage.triage.mark-service', [...OWNER_MECHANIC])
-  const mayRelease = can(session, 'garage.triage.check-out', [...OWNER_MECHANIC])
+  const open = triage?.status === 'Open'; const mayMark = can(session, 'garage.triage.mark-service')
+  const mayRelease = can(session, 'garage.triage.check-out')
   const pendencies = (triage?.services ?? []).filter((service) => ['Pending', 'NotDone'].includes(String(service.state)))
   return <>
     <PageHeader title={triage ? label(triage.vehicleUuid) : t('garage')} actions={<>

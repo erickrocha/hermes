@@ -290,6 +290,7 @@ impl AuthenticationUseCase {
             );
             BusinessError::new("Token generation failed".to_string())
         })?;
+        let access = user.access.clone();
         let refresh_token = Self::generate_refresh_token(user)?;
         Ok(AccessToken {
             access_token: token,
@@ -300,7 +301,10 @@ impl AuthenticationUseCase {
             uuid: claims.uuid.clone(),
             name: claims.name.clone(),
             user_id: claims.user_id,
-            role: claims.role,
+            scope: access.scope,
+            profile_key: access.profile_key,
+            profile_name: access.profile_name,
+            permissions: access.grants.codes(),
             tenant_id: claims.tenant_id,
             tenant_uuid: None,
         })
@@ -351,7 +355,6 @@ impl AuthenticationUseCase {
             .uuid(uuid)
             .name(user.name.clone().unwrap_or_default())
             .user_id(user_id)
-            .role(user.role.clone())
             .tenant_id(user.tenant_id)
             .build()
             .map_err(|message| {
@@ -361,15 +364,16 @@ impl AuthenticationUseCase {
 
     /// DEF-XF-09 (owner, 2026-09-18): identity and tenant scope come from the
     /// token. At login the user is found by email (unique across the platform),
-    /// the password verified, and the token minted with that user's role and
-    /// tenant -- empty only for a SysAdmin. Every protected request then decodes
-    /// the token and uses *those* claims; the database is never the source of
-    /// role or tenant here.
+    /// the password verified, and the token minted with that user's tenant --
+    /// empty only for a platform account. Every protected request then decodes
+    /// the token and uses *that* tenant; the database is never the source of
+    /// the tenant here.
     ///
-    /// The one database read left is HRM-042: the account must still exist and
-    /// be enabled, so disabling someone ends their session at once instead of
-    /// when the token expires. A role or tenant change takes effect at the next
-    /// login or refresh, which re-reads the account and mints fresh claims.
+    /// The database read left is HRM-042: the account must still exist and be
+    /// enabled, so disabling someone ends their session at once instead of when
+    /// the token expires. `C-035`: the same read resolves the account's access
+    /// (profile and extra grants), so a permission change takes effect on the
+    /// next request (`HRMS-853`); a tenant change at the next login or refresh.
     pub async fn validate(&self, token: String) -> Result<User, BusinessError> {
         log::info!("[AuthenticationUseCase::validate] Validating access token");
         let public_key = env::var("ACCESS_TOKEN_SECRET")
@@ -397,7 +401,6 @@ impl AuthenticationUseCase {
             .await?;
         Ok(User {
             id: Some(claims.user_id),
-            role: claims.role,
             tenant_id: claims.tenant_id,
             ..account
         })
@@ -428,7 +431,7 @@ impl AuthenticationUseCase {
 
         // DEF-IA-01: the refresh path mints a *new* session, so getting the
         // account wrong here is the worst of the two. Resolved by id, and the
-        // freshly read role and tenant (not the token's) go into the new claims.
+        // freshly read tenant (not the token's) goes into the new claims.
         self.load_enabled_account(claims.user_id, &claims.sub, "validate_refresh_token")
             .await
     }

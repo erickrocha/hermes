@@ -1,17 +1,17 @@
 import { Fuel, Wrench, CalendarClock, Siren, AlertTriangle, type LucideIcon } from 'lucide-react'
 import type { Session } from '../types'
-import { can, OFFICE } from './access'
+import { can } from './access'
 import { resourceConfigs } from './resources'
 
 export interface NavItem { to: string; labelKey: string; icon: LucideIcon; visible: (session: Session) => boolean; groupKey?: string }
 
 // Telas que não são cadastro genérico: ordens de serviço, combustível, garagem, escala, checklist, preventiva.
 const custom: NavItem[] = [
-  { to: '/work-orders', labelKey: 'workOrders', icon: Wrench, visible: (s) => can(s, 'work-order.read', ['TenantOwner', 'TenantUser', 'Mechanic']) },
-  { to: '/non-executions', labelKey: 'nonExecutions', icon: AlertTriangle, visible: (s) => can(s, 'non-execution.read', ['TenantOwner', 'TenantUser', 'Mechanic']) },
-  { to: '/fuel', labelKey: 'fuel', icon: Fuel, visible: (s) => can(s, 'fuel-entry.read', ['TenantOwner', 'TenantUser', 'Mechanic']) },
-  { to: '/schedule', labelKey: 'schedule', icon: CalendarClock, visible: (s) => can(s, 'schedule.effective.read', OFFICE) },
-  { to: '/garage', labelKey: 'garage', icon: Siren, visible: (s) => can(s, 'garage.queue.read', ['TenantOwner', 'TenantUser', 'Mechanic']) },
+  { to: '/work-orders', labelKey: 'workOrders', icon: Wrench, visible: (s) => can(s, 'work-order.read') },
+  { to: '/non-executions', labelKey: 'nonExecutions', icon: AlertTriangle, visible: (s) => can(s, 'non-execution.read') },
+  { to: '/fuel', labelKey: 'fuel', icon: Fuel, visible: (s) => can(s, 'fuel-entry.read') },
+  { to: '/schedule', labelKey: 'schedule', icon: CalendarClock, visible: (s) => can(s, 'schedule.effective.read') },
+  { to: '/garage', labelKey: 'garage', icon: Siren, visible: (s) => can(s, 'garage.queue.read') },
 ]
 
 // Agrupamento do menu: o mesmo mapa serve a quem lê (cabeçalhos) e aos testes.

@@ -7,8 +7,8 @@ import type { Session } from './types'
 import { Shell } from './components/Shell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Loading } from './components/UI'
-import { canCreateUsers, canSeeBilling, canSeeCosts, canSeeProfiles, canSeeTenants, canSeeUsers } from './features/routeAccess'
-import { can, OWNER } from './features/access'
+import { canCreateTenants, canCreateUsers, canManageSubscription, canSeeBilling, canSeeCosts, canSeePlans, canSeeProfiles, canSeeReferenceData, canSeeTenants, canSeeUsers } from './features/routeAccess'
+import { can, canPlatform, has } from './features/access'
 import { customRoutes, lazyPage } from './routes'
 import { resourceConfigs } from './features/resources'
 
@@ -36,12 +36,11 @@ const ResourceListRoute = lazyPage(() => import('./components/organisms/Resource
 const ResourceNewRoute = lazyPage(() => import('./components/organisms/ResourceRoutes'), 'ResourceNewRoute')
 const SystemSettingsPage = lazyPage(() => import('./pages/SystemSettingsPage'), 'SystemSettingsPage')
 
-function Protected({ children, sysAdmin = false, allow }: { children: ReactNode; sysAdmin?: boolean; allow?: (session: Session) => boolean }) {
+function Protected({ children, allow }: { children: ReactNode; allow?: (session: Session) => boolean }) {
   const session = useSelector((state: RootState) => state.auth.session)
   const location = useLocation()
   if (!session) return <Navigate to="/login" replace />
-  if (sysAdmin && session.role !== 'SysAdmin') return <Navigate to="/home" replace />
-  // DEF-BO-04: a role check that only lives in the page's action bar is a
+  // DEF-BO-04: a permission check that only lives in the page's action bar is a
   // suggestion -- the URL is still reachable by hand. The guard and the
   // button share one predicate so they cannot disagree.
   if (allow && !allow(session)) return <Navigate to="/home" replace />
@@ -62,30 +61,30 @@ export function App() {
     <Route path="/login" element={session ? <Navigate to="/home" replace /> : <Suspense fallback={<Loading />}><LoginPage /></Suspense>} />
     <Route path="/accept-invite" element={<Suspense fallback={<Loading />}><AcceptInvitePage /></Suspense>} />
     <Route path="/home" element={<Protected><DashboardPage /></Protected>} />
-    <Route path="/system-settings" element={<Protected sysAdmin><SystemSettingsPage /></Protected>} />
+    <Route path="/system-settings" element={<Protected allow={canSeeReferenceData}><SystemSettingsPage /></Protected>} />
     <Route path="/tenants" element={<Protected allow={canSeeTenants}><TenantsPage /></Protected>} />
-    <Route path="/tenants/new" element={<Protected sysAdmin><TenantEditorPage /></Protected>} />
+    <Route path="/tenants/new" element={<Protected allow={canCreateTenants}><TenantEditorPage /></Protected>} />
     <Route path="/tenants/:uuid/edit" element={<Protected allow={canSeeTenants}><TenantEditorPage /></Protected>} />
-    <Route path="/tenants/:uuid/tracking" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update', OWNER)}><TrackingSettingsPage /></Protected>} />
-    <Route path="/tenants/:uuid/manage" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update', OWNER)}><RuleSettingsPage /></Protected>} />
-    <Route path="/tenants/:uuid/subscription" element={<Protected sysAdmin><SubscriptionPage /></Protected>} />
-    <Route path="/plans" element={<Protected sysAdmin><PlansPage /></Protected>} />
-    <Route path="/plans/new" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
-    <Route path="/plans/:uuid/edit" element={<Protected sysAdmin><PlanEditorPage /></Protected>} />
+    <Route path="/tenants/:uuid/tracking" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update')}><TrackingSettingsPage /></Protected>} />
+    <Route path="/tenants/:uuid/manage" element={<Protected allow={(s) => can(s, 'tenant-rule-settings.update')}><RuleSettingsPage /></Protected>} />
+    <Route path="/tenants/:uuid/subscription" element={<Protected allow={canManageSubscription}><SubscriptionPage /></Protected>} />
+    <Route path="/plans" element={<Protected allow={canSeePlans}><PlansPage /></Protected>} />
+    <Route path="/plans/new" element={<Protected allow={(s) => canPlatform(s, 'business-plan.create')}><PlanEditorPage /></Protected>} />
+    <Route path="/plans/:uuid/edit" element={<Protected allow={(s) => canPlatform(s, 'business-plan.update')}><PlanEditorPage /></Protected>} />
     <Route path="/profiles" element={<Protected allow={canSeeProfiles}><ProfilesPage /></Protected>} />
-    <Route path="/profiles/new" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
+    <Route path="/profiles/new" element={<Protected allow={(s) => has(s, 'profile.create')}><ProfileEditorPage /></Protected>} />
     <Route path="/profiles/:uuid/edit" element={<Protected allow={canSeeProfiles}><ProfileEditorPage /></Protected>} />
     <Route path="/costs" element={<Protected allow={canSeeCosts}><CostReportsPage /></Protected>} />
     <Route path="/billing" element={<Protected allow={canSeeBilling}><BillingPage /></Protected>} />
     <Route path="/users" element={<Protected allow={canSeeUsers}><UsersPage /></Protected>} />
-    <Route path="/users/new" element={<Protected allow={(s) => canCreateUsers(s.role)}><UserEditorPage /></Protected>} />
+    <Route path="/users/new" element={<Protected allow={canCreateUsers}><UserEditorPage /></Protected>} />
     <Route path="/users/:uuid/edit" element={<Protected allow={canSeeUsers}><UserEditorPage /></Protected>} />
     <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
     {customRoutes.map((route) => <Route key={route.path} path={route.path} element={<Protected allow={route.allow}>{route.element}</Protected>} />)}
     {resourceConfigs.flatMap((config) => [
       <Route key={`${config.route}-list`} path={`/${config.route}`} element={<Protected allow={(s) => config.read(s)}><ResourceListRoute config={config} /></Protected>} />,
-      ...(config.create ? [<Route key={`${config.route}-new`} path={`/${config.route}/new`} element={<Protected allow={(s) => config.create!(s)}><ResourceNewRoute config={config} /></Protected>} />] : []),
-      ...(config.edit ? [<Route key={`${config.route}-edit`} path={`/${config.route}/:uuid/edit`} element={<Protected allow={(s) => config.edit!(s)}><ResourceEditRoute config={config} /></Protected>} />] : []),
+      ...(config.create && !config.customForm ? [<Route key={`${config.route}-new`} path={`/${config.route}/new`} element={<Protected allow={(s) => config.create!(s)}><ResourceNewRoute config={config} /></Protected>} />] : []),
+      ...(config.edit && !config.customForm ? [<Route key={`${config.route}-edit`} path={`/${config.route}/:uuid/edit`} element={<Protected allow={(s) => config.edit!(s)}><ResourceEditRoute config={config} /></Protected>} />] : []),
     ])}
     <Route path="*" element={session ? <Protected><NotFoundPage /></Protected> : <Navigate to="/login" replace />} />
   </Routes>

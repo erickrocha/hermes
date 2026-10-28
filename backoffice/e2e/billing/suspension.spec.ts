@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { openBilling, signIn, testValue } from './auth'
 
-test('SysAdmin suspends and restores a tenant from billing settings', async ({ page }) => {
+test('Platform administrator (SysAdmin profile) suspends and restores a tenant from billing settings', async ({ page }) => {
   await signIn(page, testValue('BILLING_TEST_ADMIN'), testValue('BILLING_TEST_ADMIN_PASSWORD'))
   await openBilling(page)
 

@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{Extension, Query, State};
 use business::commons::functions::bytes_para_string;
 use business::commons::gateway::Gateway;
-use business::domain::authorization::{can_access_tenant, is_unbound_sys_admin};
+use business::domain::authorization::{can_access_tenant, is_platform_actor};
 use business::domain::user::User;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::use_cases::tenant_use_case::TenantUseCase;
@@ -69,7 +69,7 @@ pub async fn effective(
     // The schedule is one tenant's. A tenant-bound caller is already confined to theirs;
     // the platform administrator has no tenant, so must name one -- otherwise one
     // tenant's holiday would suppress another tenant's lines in the same view.
-    if !is_unbound_sys_admin(&current_user) {
+    if !is_platform_actor(&current_user) {
         if let Some(uuid) = q.tenant_uuid.as_deref() {
             let tenant = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()))
                 .find_by_uuid(uuid.to_string())

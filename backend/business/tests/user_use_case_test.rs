@@ -1,7 +1,7 @@
 use business::commons::password;
 use business::domain::business_error::BusinessError;
-use business::domain::enums::Role;
-use business::domain::user::User;
+use business::domain::permission::{SYS_ADMIN, TENANT_USER};
+use business::domain::user::{Access, User};
 use business::gateway::user_gateway::{UserLookupStore, UserStore};
 use business::use_cases::user_use_case::UserUseCase;
 use sea_orm::prelude::async_trait::async_trait;
@@ -9,6 +9,20 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 struct MemoryUserStore(Arc<Mutex<Vec<User>>>);
+
+/// The two profile rows this store knows, standing in for the `access_profile` table.
+const TENANT_USER_PROFILE_ID: i64 = 1;
+const SYSADMIN_PROFILE_ID: i64 = 9;
+
+/// What `UserGateway` does on every read: resolve the account's access from its profile.
+fn resolved(mut user: User) -> User {
+    let key = match user.profile_id {
+        Some(SYSADMIN_PROFILE_ID) => SYS_ADMIN,
+        _ => TENANT_USER,
+    };
+    user.access = Access::of_system_profile(key).expect("a system profile");
+    user
+}
 
 #[async_trait]
 impl UserLookupStore for MemoryUserStore {
@@ -34,11 +48,12 @@ impl UserLookupStore for MemoryUserStore {
 
 #[async_trait]
 impl UserStore for MemoryUserStore {
-    async fn save(&self, mut user: User) -> Result<User, BusinessError> {
+    async fn save(&self, user: User) -> Result<User, BusinessError> {
         let mut users = self
             .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
+        let mut user = resolved(user);
         match user.id {
             Some(id) => {
                 if let Some(existing) = users.iter_mut().find(|existing| existing.id == Some(id)) {
@@ -65,12 +80,15 @@ impl UserStore for MemoryUserStore {
         Ok(users.iter().find(|user| user.email == email).cloned())
     }
 
-    async fn get_by_role(&self, role: Role) -> Result<Option<User>, BusinessError> {
+    async fn get_by_profile_key(&self, key: &str) -> Result<Option<User>, BusinessError> {
         let users = self
             .0
             .lock()
             .map_err(|_| BusinessError::new("memory store poisoned".into()))?;
-        Ok(users.iter().find(|user| user.role == role).cloned())
+        Ok(users
+            .iter()
+            .find(|user| user.access.profile_key.as_deref() == Some(key))
+            .cloned())
     }
 
     async fn list_page(
@@ -135,13 +153,14 @@ fn new_user(email: &str, password: &str) -> User {
         password: password.into(),
         enabled: true,
         tenant_id: Some(42),
-        role: Role::TenantUser,
+        profile_id: Some(TENANT_USER_PROFILE_ID),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
         created_at: None,
         created_by: None,
         updated_at: None,
         updated_by: None,
+        access: Access::of_system_profile(TENANT_USER).expect("a system profile"),
     }
 }
 
@@ -216,6 +235,32 @@ async fn user_creation_and_persist_validate_required_fields() {
             .is_err(),
         "password policy applies to newly created users"
     );
+    let mut without_profile = new_user("user@example.com", "Correct#Horse9");
+    without_profile.profile_id = None;
+    assert_eq!(
+        use_case
+            .create(without_profile)
+            .await
+            .expect_err("an account always holds a profile")
+            .message,
+        "User profile is required"
+    );
+    let mut unknown_grant = new_user("user@example.com", "Correct#Horse9");
+    unknown_grant.extra_permissions = vec!["wizard.cast".into()];
+    assert_eq!(
+        use_case
+            .create(unknown_grant)
+            .await
+            .expect_err("extras come from the catalogue")
+            .message,
+        "Unknown permission: wizard.cast"
+    );
+    let mut platform_grant = new_user("user@example.com", "Correct#Horse9");
+    platform_grant.extra_permissions = vec!["tenant.create".into()];
+    assert!(
+        use_case.create(platform_grant).await.is_err(),
+        "a tenant account never holds a platform permission"
+    );
     assert_eq!(
         use_case
             .persist(new_user("", "secret"))
@@ -223,6 +268,37 @@ async fn user_creation_and_persist_validate_required_fields() {
             .expect_err("persist requires email")
             .message,
         "Email and password are required"
+    );
+}
+
+#[tokio::test]
+async fn user_extra_permissions_are_normalised_on_create_and_kept_on_update() {
+    let use_case = use_case();
+    let mut requested = new_user("user@example.com", "Correct#Horse9");
+    requested.extra_permissions = vec!["vehicle.read@own".into(), "vehicle.read".into(), "fuel-entry.read@own".into()];
+    let created = use_case.create(requested).await.expect("user is created");
+    assert_eq!(created.extra_permissions, ["fuel-entry.read@own", "vehicle.read"]);
+
+    // an update without a profile keeps the one held; its extras are validated the same way
+    let mut edited = new_user("user@example.com", "");
+    edited.profile_id = None;
+    edited.extra_permissions = vec!["vehicle.update".into()];
+    let updated = use_case
+        .update(created.id.expect("store assigned id"), edited)
+        .await
+        .expect("user is updated");
+    assert_eq!(updated.profile_id, Some(TENANT_USER_PROFILE_ID));
+    assert_eq!(updated.extra_permissions, ["vehicle.update"]);
+
+    let mut bad = new_user("user@example.com", "");
+    bad.extra_permissions = vec!["nope".into()];
+    assert_eq!(
+        use_case
+            .update(created.id.expect("store assigned id"), bad)
+            .await
+            .expect_err("extras come from the catalogue")
+            .message,
+        "Unknown permission: nope"
     );
 }
 
@@ -312,7 +388,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert_eq!(
         use_case
-            .seed_sysadmin()
+            .seed_sysadmin(SYSADMIN_PROFILE_ID)
             .await
             .expect_err("email is required")
             .message,
@@ -323,7 +399,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert_eq!(
         use_case
-            .seed_sysadmin()
+            .seed_sysadmin(SYSADMIN_PROFILE_ID)
             .await
             .expect_err("password is required")
             .message,
@@ -334,7 +410,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert!(
         use_case
-            .seed_sysadmin()
+            .seed_sysadmin(SYSADMIN_PROFILE_ID)
             .await
             .expect_err("empty configuration is rejected")
             .message
@@ -346,10 +422,11 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
 
     let created = use_case
-        .seed_sysadmin()
+        .seed_sysadmin(SYSADMIN_PROFILE_ID)
         .await
         .expect("configured sysadmin is created");
-    assert_eq!(created.role, Role::SysAdmin);
+    assert_eq!(created.profile_id, Some(SYSADMIN_PROFILE_ID));
+    assert!(created.extra_permissions.is_empty());
     assert_eq!(created.tenant_id, None);
     assert!(password::verify("Initial#Password9", &created.password));
     let original_id = created.id;
@@ -360,7 +437,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
         std::env::set_var("SYSADMIN_PASSWORD", "Updated#Password10");
     }
     let updated = use_case
-        .seed_sysadmin()
+        .seed_sysadmin(SYSADMIN_PROFILE_ID)
         .await
         .expect("configured email updates the existing sysadmin");
     assert_eq!(updated.id, original_id);
@@ -372,7 +449,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
         std::env::set_var("SYSADMIN_PASSWORD", "Ignored#Password11");
     }
     let unchanged = use_case
-        .seed_sysadmin()
+        .seed_sysadmin(SYSADMIN_PROFILE_ID)
         .await
         .expect("matching email preserves the existing account");
     assert_eq!(unchanged.password, updated.password);

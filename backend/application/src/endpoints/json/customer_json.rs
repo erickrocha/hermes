@@ -13,7 +13,27 @@ pub struct CustomerJson {
     /// customers are always written into their own tenant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,
+    /// The trade name -- what the office calls the customer.
     pub name: String,
+    /// `EPIC-SC-01-S04`: the registered legal name; a person has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legal_name: Option<String>,
+    /// `EPIC-SC-01-S04`: CPF or CNPJ; stored digits-only after the country's check, unique per tenant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tax_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_line1: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_line2: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub administrative_area: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
+    /// Defaults to the tenant's country when omitted; the rule the document is checked by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
     #[serde(default)]
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

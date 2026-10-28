@@ -1,6 +1,7 @@
 package com.erocha.hermes.client.driver
 
 import android.content.Context
+import com.erocha.hermes.client.shared.AppAccess
 import com.erocha.hermes.client.shared.FleetApi
 import com.erocha.hermes.client.shared.GarageApi
 import com.erocha.hermes.client.shared.WorkshopApi
@@ -18,6 +19,9 @@ internal class SessionEnded(val messageRes: Int?) : Exception()
 internal interface FleetHost {
     val context: Context
     val userUuid: String
+
+    /** The session's grants, deciding which screens and buttons are offered (`C-035`). */
+    val access: AppAccess
 
     /**
      * Runs [work] off the main thread with a valid access token (one renewal and one repetition on `401`,

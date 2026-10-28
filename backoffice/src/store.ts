@@ -52,7 +52,13 @@ const authSlice = createSlice({
   extraReducers: (builder) => builder
     .addCase(login.pending, (state) => { state.loading = true; state.error = '' })
     .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
-    .addCase(loadPermissions.fulfilled, (state, action) => { if (state.session) { state.session.permissions = action.payload; localStorage.setItem('hermes.session', JSON.stringify(state.session)) } })
+    .addCase(loadPermissions.fulfilled, (state, action) => {
+      // Only a well-formed answer replaces what the token brought.
+      if (!state.session || !Array.isArray(action.payload?.permissions)) return
+      const { permissions, scope, profileKey, profileName } = action.payload
+      state.session = { ...state.session, permissions, scope: scope === 'Platform' ? 'Platform' : 'Tenant', profileKey, profileName }
+      localStorage.setItem('hermes.session', JSON.stringify(state.session))
+    })
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
     .addCase(acceptInvitation.rejected, (state, action) => { state.error = String(action.payload ?? '') })
 })

@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
-import { can, OWNER, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useAction, usePanel, useResourceForm } from '../features/hooks'
 import { checklistRuns, checklistTemplates, technicalInspections, type Row } from '../features/resources'
@@ -33,13 +33,13 @@ export function ChecklistTemplateDetailPage() {
   const run = useAction(checklistTemplates)
   const data = template.data
   // C-031: o modelo padrão do tipo é o que o app do motorista usa; só um modelo ativo de saída ou chegada pode sê-lo.
-  const canMakeDefault = can(session, 'checklist-template.create', OWNER) && data?.active && data.checklistType !== 'Standalone' && !data.isDefault
+  const canMakeDefault = can(session, 'checklist-template.create') && data?.active && data.checklistType !== 'Standalone' && !data.isDefault
   const makeDefault = async () => { if (await run('put', `/checklist-template/uuid/${uuid}/default`)) template.reload() }
   return <>
     <PageHeader title={data ? String(data.name) : t('checklistTemplates')} actions={<>
       <Link className="btn secondary" to="/checklist-templates">{t('back')}</Link>
       {canMakeDefault && <button type="button" className="btn secondary" onClick={makeDefault}>{t('setAsDefault')}</button>}
-      {can(session, 'checklist-run.create', [...OWNER, 'Driver']) && <Link className="btn primary" to={`/checklist-templates/${uuid}/run`}>{t('recordRun')}</Link>}</>} />
+      {can(session, 'checklist-run.create') && <Link className="btn primary" to={`/checklist-templates/${uuid}/run`}>{t('recordRun')}</Link>}</>} />
     <PanelSection titleKey="checklistTemplates" loading={template.loading} error={template.error} empty={!data}>
       {data && <><DetailCard rows={[{ label: t('checklistType'), value: t(`checklistType${String(data.checklistType)}`) }, { label: t('activeFlag'), value: data.active ? t('yes') : t('no') }, { label: t('defaultTemplate'), value: data.isDefault ? t('yes') : t('no') }]} />
         <div className="table-card"><table><thead><tr><th>{t('description')}</th><th>{t('generatesWorkOrder')}</th></tr></thead>
@@ -61,4 +61,4 @@ export function TechnicalInspectionNewPage() {
   return <ResourceFormPage titleKey="recordInspection" subtitleKey="recordInspectionText" fields={inspectionFields} backTo="/inspection-models" controller={useResourceForm(technicalInspections)} />
 }
 
-export const canRecordInspection = (session: RootState['auth']['session']) => can(session, 'technical-inspection.create', [...OWNER_MECHANIC])
+export const canRecordInspection = (session: RootState['auth']['session']) => can(session, 'technical-inspection.create')

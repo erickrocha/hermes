@@ -4,11 +4,11 @@ import { Link, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import type { AppDispatch, RootState } from '../../store'
-import { can, OWNER_MECHANIC } from '../../features/access'
+import { can } from '../../features/access'
 import { fetchUnreadCount } from '../../features/maintenanceNotificationSlice'
 import type { Session } from '../../types'
 
-export const canSeeMaintenanceNotifications = (session: Session) => can(session, 'maintenance-notification.read', OWNER_MECHANIC)
+export const canSeeMaintenanceNotifications = (session: Session) => can(session, 'maintenance-notification.read')
 
 /// EPIC-MT-06 (TRM-616): o sino do cabeçalho; o contador é relido a cada navegação.
 export function NotificationBell({ session }: { session: Session }) {

@@ -468,7 +468,16 @@ async fn start() -> anyhow::Result<()> {
     let sysadmin_use_case = business::use_cases::user_use_case::UserUseCase::new(
         business::gateway::user_gateway::UserGateway::new(connection.clone()),
     );
-    entity::audit::run_as_platform(sysadmin_use_case.seed_sysadmin()).await?;
+    // `C-035`: the system profiles hold what the catalogue says today, then the platform administrator
+    // is seeded holding the `SysAdmin` one.
+    let sysadmin_profile_id = entity::audit::run_as_platform(
+        business::use_cases::access_profile_use_case::AccessProfileUseCase::new(
+            business::gateway::access_profile_gateway::AccessProfileGateway::new(connection.clone()),
+        )
+        .sync_system_profiles(),
+    )
+    .await?;
+    entity::audit::run_as_platform(sysadmin_use_case.seed_sysadmin(sysadmin_profile_id)).await?;
 
     let state = AppState {
         conn: Arc::new(connection),
@@ -818,8 +827,7 @@ mod openapi_contract_tests {
         // Public, or reachable by every signed-in user, or owner/platform-only with no catalogue permission to
         // grant (device credentials, `HRMS-418`): these state "none" instead of a code.
         let ungrantable = [
-            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/dashboard", "/garage-device", "/garage-device/pair",
-            "/garage-device/pairing-code", "/garage-device/uuid/{uuid}", "/garage-device/uuid/{uuid}/pairing-code",
+            "/login", "/refresh", "/accept-invite", "/access-profile/mine", "/dashboard", "/garage-device/pair",
         ];
         let openapi = with_permissions(ApiDoc::openapi());
         let (mut unstated, mut unlisted) = (Vec::new(), Vec::new());

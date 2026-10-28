@@ -10,13 +10,14 @@
 use business::commons::functions::string_to_bytes;
 use business::commons::password;
 use business::domain::access_token::{AccessToken, Claims, DeviceClaims, PrincipalType};
-use business::domain::enums::Role;
-use business::domain::user::User;
+use business::domain::enums::ProfileScope;
+use business::domain::permission::{DRIVER, DRIVER_ACT, SYS_ADMIN, TENANT_OWNER, TENANT_USER, system_grants};
+use business::domain::user::{Access, User};
 use business::gateway::user_gateway::UserGateway;
 use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 use chrono::{TimeZone, Utc};
-use entity::user_entity;
+use entity::{access_profile_entity, user_entity};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use sea_orm::{DatabaseBackend, DatabaseConnection, DbErr, MockDatabase, MockExecResult};
 use std::sync::Once;
@@ -34,6 +35,38 @@ fn secrets() {
     });
 }
 
+/// The system profile rows the mock knows, by id -- `C-035`: `UserGateway` reads the holder's profile
+/// after every user read to resolve their access.
+const OWNER_PROFILE: i64 = 1;
+const DRIVER_PROFILE: i64 = 2;
+const TENANT_USER_PROFILE: i64 = 3;
+const SYSADMIN_PROFILE: i64 = 4;
+
+fn profile_row(id: i64) -> access_profile_entity::Model {
+    let (key, scope) = match id {
+        DRIVER_PROFILE => (DRIVER, ProfileScope::Tenant),
+        TENANT_USER_PROFILE => (TENANT_USER, ProfileScope::Tenant),
+        SYSADMIN_PROFILE => (SYS_ADMIN, ProfileScope::Platform),
+        _ => (TENANT_OWNER, ProfileScope::Tenant),
+    };
+    access_profile_entity::Model {
+        id,
+        uuid: string_to_bytes(&format!("00000000-0000-0000-0000-00000000000{id}")),
+        tenant_id: None,
+        name: key.into(),
+        name_key: key.to_lowercase(),
+        scope: scope.to_string(),
+        system: true,
+        key: Some(key.into()),
+        active: true,
+        permissions: serde_json::to_string(&system_grants(key)).unwrap(),
+        created_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),
+        created_by: None,
+        updated_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),
+        updated_by: None,
+    }
+}
+
 fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
     user_entity::Model {
         id: 5,
@@ -43,11 +76,10 @@ fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
         password: password_hash.into(),
         enabled,
         blocked_reason: None,
-        profile_id: None,
+        profile_id: OWNER_PROFILE,
+        extra_permissions: "[]".into(),
         cpf: None,
-        principal_function: None,
         tenant_id: Some(42),
-        role: "TenantOwner".into(),
         created_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),
         created_by: None,
         updated_at: Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap(),
@@ -55,10 +87,41 @@ fn row(password_hash: &str, enabled: bool) -> user_entity::Model {
     }
 }
 
+/// A mock database that answers user reads the way the real one is read: every non-empty user result
+/// is followed by the profile rows those users hold.
+struct Mock(MockDatabase);
+
+impl Mock {
+    fn new() -> Self {
+        Self(MockDatabase::new(DatabaseBackend::MySql))
+    }
+
+    fn users(self, rows: Vec<user_entity::Model>) -> Self {
+        let mut ids: Vec<i64> = rows.iter().map(|r| r.profile_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let db = self.0.append_query_results([rows]);
+        if ids.is_empty() {
+            Self(db)
+        } else {
+            Self(db.append_query_results([ids.into_iter().map(profile_row).collect::<Vec<_>>()]))
+        }
+    }
+
+    fn written(self) -> Self {
+        Self(self.0.append_exec_results([MockExecResult {
+            last_insert_id: 5,
+            rows_affected: 1,
+        }]))
+    }
+
+    fn build(self) -> DatabaseConnection {
+        self.0.into_connection()
+    }
+}
+
 fn db_returning(rows: Vec<Vec<user_entity::Model>>) -> DatabaseConnection {
-    MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results(rows)
-        .into_connection()
+    rows.into_iter().fold(Mock::new(), Mock::users).build()
 }
 
 fn authentication(db: &DatabaseConnection) -> AuthenticationUseCase {
@@ -84,7 +147,13 @@ async fn a_correct_password_issues_access_and_refresh_tokens() {
         .await
         .expect("correct credentials");
     assert_eq!(token.token_type, "Bearer");
-    assert_eq!(token.role, Role::TenantOwner);
+    assert_eq!(token.scope, ProfileScope::Tenant);
+    assert_eq!(token.profile_key.as_deref(), Some(TENANT_OWNER));
+    assert_eq!(token.profile_name.as_deref(), Some(TENANT_OWNER));
+    assert!(
+        token.permissions.contains(&"user.create".to_string()),
+        "the login answer carries the effective grants"
+    );
     assert_eq!(token.tenant_id, Some(42));
     assert_eq!(
         token.uuid, UUID,
@@ -103,13 +172,16 @@ async fn a_driver_logs_in_with_the_cpf_and_a_cpf_shared_across_tenants_is_refuse
     secrets();
     let mut driver = row(&argon(), true);
     driver.cpf = Some("52998224725".into());
-    driver.role = "Driver".into();
+    driver.profile_id = DRIVER_PROFILE;
     let db = db_returning(vec![vec![driver.clone()]]);
     let token = authentication(&db)
         .execute("529.982.247-25".into(), PASSWORD.into())
         .await
         .expect("CPF login");
-    assert_eq!(token.role, Role::Driver);
+    assert_eq!(token.profile_key.as_deref(), Some(DRIVER));
+    assert!(token.permissions.contains(&DRIVER_ACT.to_string()), "the driver app's gate");
+    assert!(token.permissions.contains(&"vehicle.read@own".to_string()));
+    assert!(!token.permissions.contains(&"user.create".to_string()));
 
     let db = db_returning(vec![vec![driver.clone(), driver]]);
     assert!(
@@ -170,14 +242,11 @@ async fn a_legacy_bcrypt_password_still_logs_in_and_is_rewritten_as_argon2id() {
     // the upgrade happens.
     secrets();
     let legacy = bcrypt::hash(PASSWORD, 4).unwrap();
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(&legacy, true)]])
-        .append_exec_results([MockExecResult {
-            last_insert_id: 5,
-            rows_affected: 1,
-        }])
-        .append_query_results([vec![row("$argon2id$upgraded", true)]])
-        .into_connection();
+    let db = Mock::new()
+        .users(vec![row(&legacy, true)])
+        .written()
+        .users(vec![row("$argon2id$upgraded", true)])
+        .build();
     authentication(&db)
         .execute("owner@example.com".into(), PASSWORD.into())
         .await
@@ -230,8 +299,9 @@ async fn authentication_database_failures_are_redacted_and_do_not_block_legacy_l
     );
 
     let legacy = bcrypt::hash(PASSWORD, 4).unwrap();
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(&legacy, true)]])
+    let db = Mock::new()
+        .users(vec![row(&legacy, true)])
+        .0
         .append_exec_errors([DbErr::Custom("write unavailable".into())])
         .into_connection();
     assert!(
@@ -251,10 +321,15 @@ async fn an_argon2id_password_is_not_rewritten_on_login() {
         .execute("owner@example.com".into(), PASSWORD.into())
         .await
         .unwrap();
+    let log = db.into_transaction_log();
     assert_eq!(
-        db.into_transaction_log().len(),
-        1,
-        "only the lookup; no write"
+        log.len(),
+        2,
+        "only the account lookup and its profile; no write"
+    );
+    assert!(
+        !format!("{log:?}").contains("UPDATE"),
+        "an argon2id hash is never rewritten"
     );
 }
 
@@ -269,13 +344,14 @@ fn user() -> User {
         password: argon(),
         enabled: true,
         cpf: None,
-        principal_function: None,
         tenant_id: Some(42),
-        role: Role::TenantOwner,
+        profile_id: Some(OWNER_PROFILE),
+        extra_permissions: Vec::new(),
         created_at: None,
         created_by: None,
         updated_at: None,
         updated_by: None,
+        access: Access::of_system_profile(TENANT_OWNER).expect("a system profile"),
     }
 }
 
@@ -290,7 +366,6 @@ fn issue_token_with_user_id(user_id: i64) -> String {
         .uuid(UUID)
         .name("Owner")
         .user_id(user_id)
-        .role(Role::TenantOwner)
         .tenant_id(Some(42))
         .build()
         .expect("claims are complete");
@@ -323,7 +398,6 @@ fn device_claims_are_distinct_from_user_claims() {
         .uuid(UUID)
         .name("Owner")
         .user_id(5)
-        .role(Role::TenantOwner)
         .tenant_id(Some(42))
         .build()
         .expect("user claims build");
@@ -499,14 +573,11 @@ async fn an_invitation_sets_the_password_once_and_then_stops_working() {
         "7-day validity"
     );
 
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(&provisional, true)]])
-        .append_exec_results([MockExecResult {
-            last_insert_id: 5,
-            rows_affected: 1,
-        }])
-        .append_query_results([vec![row(&argon(), true)]])
-        .into_connection();
+    let db = Mock::new()
+        .users(vec![row(&provisional, true)])
+        .written()
+        .users(vec![row(&argon(), true)])
+        .build();
     account_invites(&db)
         .accept(&invite.token, "Chosen#Pass99")
         .await
@@ -572,13 +643,10 @@ async fn re_issuing_replaces_the_secret_so_the_previous_invitation_dies() {
     invitee.password = provisional.clone();
     let first = AccountInviteUseCase::issue(&invitee).expect("invite issued");
 
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_exec_results([MockExecResult {
-            last_insert_id: 5,
-            rows_affected: 1,
-        }])
-        .append_query_results([vec![row(&provisional, true)]])
-        .into_connection();
+    let db = Mock::new()
+        .written()
+        .users(vec![row(&provisional, true)])
+        .build();
     let (refreshed, second) = entity::audit::run_with_user(
         Some(entity::audit::AuditUser {
             id: 1,
@@ -663,14 +731,15 @@ fn provisional_secrets_are_unguessable() {
 
 #[tokio::test]
 async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
-    // Owner decision 2026-09-18: the token minted at login carries role and
-    // tenant; a protected request uses those claims. The account was moved to
-    // tenant 99 and demoted after the token was issued -- the token still wins.
+    // Owner decision 2026-09-18: the token minted at login carries the tenant;
+    // a protected request uses that claim. The account was moved to tenant 99
+    // and demoted after the token was issued -- the token still wins for the
+    // tenant, while the access (`C-035`, HRMS-853) is re-read on every request.
     secrets();
     let issued = issue_token(user()); // TenantOwner, tenant 42
     let mut moved = row(&argon(), true);
     moved.tenant_id = Some(99);
-    moved.role = "TenantUser".into();
+    moved.profile_id = TENANT_USER_PROFILE;
 
     let caller = authentication(&db_returning(vec![vec![moved.clone()]]))
         .validate(issued.access_token)
@@ -682,10 +751,11 @@ async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
         "scope must come from the token claim"
     );
     assert_eq!(
-        caller.role,
-        Role::TenantOwner,
-        "role must come from the token claim"
+        caller.access.profile_key.as_deref(),
+        Some(TENANT_USER),
+        "access is resolved from the account on every request"
     );
+    assert!(!caller.allows("user.create"));
     assert_eq!(caller.id, Some(5));
 
     // The change reaches the caller at the next refresh, which re-reads the
@@ -695,25 +765,30 @@ async fn tenant_scope_comes_from_the_token_not_from_a_database_reread() {
         .await
         .unwrap();
     assert_eq!(refreshed.tenant_id, Some(99));
-    assert_eq!(refreshed.role, Role::TenantUser);
+    assert_eq!(refreshed.profile_key.as_deref(), Some(TENANT_USER));
 }
 
 #[tokio::test]
 async fn a_sysadmin_token_carries_no_tenant() {
     secrets();
     let mut admin = user();
-    admin.role = Role::SysAdmin;
+    admin.profile_id = Some(SYSADMIN_PROFILE);
+    admin.access = Access::of_system_profile(SYS_ADMIN).expect("a system profile");
     admin.tenant_id = None;
     let token = issue_token(admin);
     assert_eq!(token.tenant_id, None);
+    assert_eq!(token.scope, ProfileScope::Platform);
+    assert!(token.permissions.contains(&"tenant.create".to_string()));
     let mut row_admin = row(&argon(), true);
-    row_admin.role = "SysAdmin".into();
+    row_admin.profile_id = SYSADMIN_PROFILE;
     row_admin.tenant_id = None;
     let caller = authentication(&db_returning(vec![vec![row_admin]]))
         .validate(token.access_token)
         .await
         .unwrap();
-    assert_eq!((caller.role, caller.tenant_id), (Role::SysAdmin, None));
+    assert_eq!((caller.access.scope, caller.tenant_id), (ProfileScope::Platform, None));
+    assert!(caller.is_platform());
+    assert_eq!(caller.access.profile_key.as_deref(), Some(SYS_ADMIN));
 }
 
 #[test]

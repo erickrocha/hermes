@@ -5,12 +5,13 @@ import { listPage } from '../services/resourceService'
 export type LookupKind = 'vehicle' | 'customer' | 'part' | 'driver' | 'checklistTemplate' | 'garageService' | 'fuelEntry' | 'workOrder' | 'inspectionModelName'
 export interface LookupOption { value: string; label: string }
 
-interface Row { number?: string; description?: string; recordedAt?: string; station?: string; volumeLiters?: number; uuid?: string; plate?: string; model?: string; name?: string; code?: string; role?: string }
+interface Row { number?: string; description?: string; recordedAt?: string; station?: string; volumeLiters?: number; uuid?: string; plate?: string; model?: string; name?: string; code?: string; permissions?: string[] }
 const sources: Record<LookupKind, { path: string; label: (row: Row) => string; keep?: (row: Row) => boolean; value?: (row: Row) => string }> = {
   vehicle: { path: '/vehicle', label: (r) => (r.model ? `${r.plate} · ${r.model}` : String(r.plate)) },
   customer: { path: '/customer', label: (r) => String(r.name) },
   part: { path: '/part', label: (r) => `${r.code ?? ''} ${r.name}`.trim() },
-  driver: { path: '/user', label: (r) => String(r.name), keep: (r) => r.role === 'Driver' },
+  // C-035: a driver is whoever may act as one -- any profile or extra grant that holds `driver.act`.
+  driver: { path: '/user', label: (r) => String(r.name), keep: (r) => Array.isArray(r.permissions) && r.permissions.includes('driver.act') },
   checklistTemplate: { path: '/checklist-template', label: (r) => String(r.name) },
   garageService: { path: '/garage-service', label: (r) => String(r.name) },
   inspectionModelName: { path: '/inspection-model', label: (r) => String(r.name), value: (r) => String(r.name) },

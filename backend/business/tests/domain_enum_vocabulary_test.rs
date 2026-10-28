@@ -27,13 +27,7 @@ where
 
 #[test]
 fn persisted_enum_vocabularies_round_trip_every_variant() {
-    round_trip::<Role>(&[
-        "SysAdmin",
-        "TenantOwner",
-        "TenantUser",
-        "Driver",
-        "Mechanic",
-    ]);
+    round_trip::<ProfileScope>(&["Platform", "Tenant"]);
     round_trip::<VehicleStatus>(&["Active", "Maintenance", "Transit", "Reserved", "Inactive"]);
     round_trip::<GarageTagOrigin>(&["Manual", "Tracker", "Automatic"]);
     round_trip::<ScheduleExceptionType>(&["Cancellation", "Deallocation", "Substitution"]);

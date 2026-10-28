@@ -47,6 +47,7 @@ import com.erocha.hermes.client.shared.isOpen
 
 /** The work orders of the day: the open ones, one order at a time, adding items and issuing parts. */
 internal class MaintenanceState(private val host: FleetHost) {
+    val access get() = host.access
     var orders by mutableStateOf<List<WorkOrder>?>(null)
     var vehicleNames by mutableStateOf<Map<String, String>>(emptyMap())
     var refreshing by mutableStateOf(false)
@@ -228,19 +229,28 @@ internal fun ColumnScope.OrderScreen(state: MaintenanceState) {
     state.notice?.let {
         Text(it, color = token(R.attr.hermesOk), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
     }
+    val access = state.access
     LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(16.dp)) {
-        items(order.items, key = { it.uuid ?: it.description }) { item -> ItemCard(item, enabled = state.busy == null) { state.resolving = item } }
+        items(order.items, key = { it.uuid ?: it.description }) { item ->
+            ItemCard(item, enabled = state.busy == null, canResolve = access.resolveOrderItem) { state.resolving = item }
+        }
     }
-    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        val busy = state.busy != null
-        OutlinedButton(
-            onClick = { state.adding = true }, enabled = !busy, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, token(R.attr.hermesAccent)),
-        ) { Text(stringResource(R.string.orders_add_item), color = token(R.attr.hermesAccent), fontSize = 15.sp, maxLines = 1) }
-        Button(
-            onClick = { state.startIssuing() }, enabled = !busy, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = token(R.attr.hermesAccent), contentColor = Color.White),
-        ) { Text(stringResource(R.string.orders_issue_part), fontSize = 15.sp, maxLines = 1) }
+    if (access.addOrderItem || access.issuePart) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val busy = state.busy != null
+            if (access.addOrderItem) {
+                OutlinedButton(
+                    onClick = { state.adding = true }, enabled = !busy, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, token(R.attr.hermesAccent)),
+                ) { Text(stringResource(R.string.orders_add_item), color = token(R.attr.hermesAccent), fontSize = 15.sp, maxLines = 1) }
+            }
+            if (access.issuePart) {
+                Button(
+                    onClick = { state.startIssuing() }, enabled = !busy, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = token(R.attr.hermesAccent), contentColor = Color.White),
+                ) { Text(stringResource(R.string.orders_issue_part), fontSize = 15.sp, maxLines = 1) }
+            }
+        }
     }
     state.resolving?.let { ResolveDialog(state, it) }
     if (state.adding) AddItemDialog(state)
@@ -248,7 +258,7 @@ internal fun ColumnScope.OrderScreen(state: MaintenanceState) {
 }
 
 @Composable
-private fun ItemCard(item: WorkOrderItem, enabled: Boolean, onResolve: () -> Unit) {
+private fun ItemCard(item: WorkOrderItem, enabled: Boolean, canResolve: Boolean, onResolve: () -> Unit) {
     val color = itemStatusColor(item.status)
     Column(
         modifier = Modifier
@@ -267,7 +277,7 @@ private fun ItemCard(item: WorkOrderItem, enabled: Boolean, onResolve: () -> Uni
         item.resolutionDescription?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = token(R.attr.hermesOk), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        if (item.status == "Pending" || item.status == "AwaitingParts") {
+        if (canResolve && (item.status == "Pending" || item.status == "AwaitingParts")) {
             OutlinedButton(
                 onClick = onResolve, enabled = enabled, shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, token(R.attr.hermesOk)), modifier = Modifier.padding(top = 10.dp).fillMaxWidth().height(48.dp),

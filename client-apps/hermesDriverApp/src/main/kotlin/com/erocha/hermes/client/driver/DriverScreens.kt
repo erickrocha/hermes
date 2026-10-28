@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.erocha.hermes.client.shared.ANSWER_CONFORMING
 import com.erocha.hermes.client.shared.ANSWER_NON_CONFORMING
+import com.erocha.hermes.client.shared.AppAccess
 import com.erocha.hermes.client.shared.ExtraTrip
 import com.erocha.hermes.client.shared.FuelEntry
 import com.erocha.hermes.client.shared.FuelReceiptParser
@@ -68,15 +69,34 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-internal fun DriverApp(host: FleetHost, userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
-    HermesMaterialTheme { DriverBody(host, userName, themeLabel, onTheme, onSignOut) }
+internal fun DriverApp(host: FleetHost, userName: String, profileLabel: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
+    HermesMaterialTheme { DriverBody(host, userName, profileLabel, themeLabel, onTheme, onSignOut) }
+}
+
+/** The driver's tabs; trips and fuellings appear only for whoever may read them (`C-035`). */
+private enum class DriverTab(val label: Int, val icon: String) {
+    HOME(R.string.tab_home, "🚌"),
+    TRIPS(R.string.tab_trips, "🗺"),
+    FUEL(R.string.tab_fuel, "⛽"),
+}
+
+private fun driverTabs(access: AppAccess): List<DriverTab> = buildList {
+    add(DriverTab.HOME)
+    if (access.trips) add(DriverTab.TRIPS)
+    if (access.fuelEntries) add(DriverTab.FUEL)
 }
 
 @Composable
-private fun DriverBody(host: FleetHost, userName: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
+private fun DriverBody(host: FleetHost, userName: String, profileLabel: String, themeLabel: String, onTheme: () -> Unit, onSignOut: () -> Unit) {
     val state = remember { DriverState(host) }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) { state.loadHome(); state.loadTrips(); state.loadEntries() }
+    val tabs = remember(host.access) { driverTabs(host.access) }
+    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val tab = tabs[tabIndex.coerceIn(0, tabs.lastIndex)]
+    LaunchedEffect(Unit) {
+        state.loadHome()
+        if (DriverTab.TRIPS in tabs) state.loadTrips()
+        if (DriverTab.FUEL in tabs) state.loadEntries()
+    }
     BackHandler(enabled = state.screen !is DriverScreen.Tabs) { state.screen = DriverScreen.Tabs }
 
     Column(
@@ -92,19 +112,19 @@ private fun DriverBody(host: FleetHost, userName: String, themeLabel: String, on
             is DriverScreen.Receipt -> ReceiptScreen(state, screen.form)
             DriverScreen.Tabs -> {
                 val title = when (tab) {
-                    0 -> stringResource(R.string.authenticated_title, userName.substringBefore(' '))
-                    1 -> stringResource(R.string.trips_title)
-                    else -> stringResource(R.string.my_fuel_entries)
+                    DriverTab.HOME -> stringResource(R.string.authenticated_title, userName.substringBefore(' '))
+                    DriverTab.TRIPS -> stringResource(R.string.trips_title)
+                    DriverTab.FUEL -> stringResource(R.string.my_fuel_entries)
                 }
-                AppHeader(title, stringResource(R.string.authenticated_role), themeLabel, onTheme, onSignOut)
+                AppHeader(title, profileLabel, themeLabel, onTheme, onSignOut)
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
-                        0 -> HomeTab(state)
-                        1 -> TripsTab(state)
-                        else -> FuelTab(state)
+                        DriverTab.HOME -> HomeTab(state)
+                        DriverTab.TRIPS -> TripsTab(state)
+                        DriverTab.FUEL -> FuelTab(state)
                     }
                 }
-                BottomNav(listOf(R.string.tab_home to "🚌", R.string.tab_trips to "🗺", R.string.tab_fuel to "⛽"), tab) { tab = it }
+                if (tabs.size > 1) BottomNav(tabs.map { it.label to it.icon }, tabs.indexOf(tab)) { tabIndex = it }
             }
         }
     }
@@ -181,15 +201,18 @@ private fun VehicleCard(state: DriverState, row: VehicleRow) {
             Text(stringResource(R.string.vehicle_odometer, kmText(it)), color = token(R.attr.hermesTextSecondary), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.height(16.dp))
+        val access = state.access
         when (row.action) {
-            VehicleAction.Depart -> PrimaryButton(stringResource(R.string.register_departure), enabled = !state.busy) { state.openChecklist(row) }
-            is VehicleAction.Return -> PrimaryButton(stringResource(R.string.register_return), enabled = !state.busy) { state.openChecklist(row) }
+            VehicleAction.Depart -> if (access.checklist) PrimaryButton(stringResource(R.string.register_departure), enabled = !state.busy) { state.openChecklist(row) }
+            is VehicleAction.Return -> if (access.checklist) PrimaryButton(stringResource(R.string.register_return), enabled = !state.busy) { state.openChecklist(row) }
             VehicleAction.HeldByAnother -> Text(stringResource(R.string.held_by_another), color = token(R.attr.hermesError), fontSize = 15.sp)
         }
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SecondaryButton(stringResource(R.string.view_position), Modifier.weight(1f)) { state.openPosition(vehicle) }
-            SecondaryButton(stringResource(R.string.fuel_new), Modifier.weight(1f)) { state.openReceipt(vehicle) }
+        if (access.position || access.fuelReceipt) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (access.position) SecondaryButton(stringResource(R.string.view_position), Modifier.weight(1f)) { state.openPosition(vehicle) }
+                if (access.fuelReceipt) SecondaryButton(stringResource(R.string.fuel_new), Modifier.weight(1f)) { state.openReceipt(vehicle) }
+            }
         }
     }
 }
@@ -309,9 +332,11 @@ private fun tripStatusColor(status: String): Color = when (status) {
 private fun FuelTab(state: DriverState) {
     Column(modifier = Modifier.fillMaxSize()) {
         val hasVehicle = state.rows.orEmpty().isNotEmpty()
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            PrimaryButton(stringResource(R.string.fuel_new), enabled = hasVehicle) { state.openReceipt() }
-            if (state.rows != null && !hasVehicle) Text(stringResource(R.string.no_vehicle), color = token(R.attr.hermesTextSecondary), fontSize = 13.sp)
+        if (state.access.fuelReceipt) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                PrimaryButton(stringResource(R.string.fuel_new), enabled = hasVehicle) { state.openReceipt() }
+                if (state.rows != null && !hasVehicle) Text(stringResource(R.string.no_vehicle), color = token(R.attr.hermesTextSecondary), fontSize = 13.sp)
+            }
         }
         PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = { state.loadEntries() }, modifier = Modifier.fillMaxSize()) {
             LazyColumn(
@@ -501,7 +526,7 @@ private fun ColumnScope.ReceiptScreen(state: DriverState, form: ReceiptForm) {
                     color = token(if (form.scanFailed) R.attr.hermesWarning else R.attr.hermesOk),
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp),
                 )
-                if (!form.scanFailed && form.odometer.isBlank()) {
+                if (!form.scanFailed && form.odometer.isBlank() && state.access.odometer) {
                     Text(stringResource(R.string.scan_odometer_note), color = token(R.attr.hermesTextSecondary), fontSize = 13.sp)
                 }
             }
@@ -518,10 +543,13 @@ private fun ColumnScope.ReceiptScreen(state: DriverState, form: ReceiptForm) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), label = { Text(stringResource(R.string.value_hint)) },
             )
         }
-        OutlinedTextField(
-            value = form.odometer, onValueChange = { form.odometer = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), label = { Text(stringResource(R.string.fuel_odometer_hint)) },
-        )
+        // The reading is optional on a receipt; only whoever may record the odometer is asked for it.
+        if (state.access.odometer) {
+            OutlinedTextField(
+                value = form.odometer, onValueChange = { form.odometer = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), label = { Text(stringResource(R.string.fuel_odometer_hint)) },
+            )
+        }
         OutlinedTextField(value = form.station, onValueChange = { form.station = it }, singleLine = true, label = { Text(stringResource(R.string.station_hint)) }, modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = form.fullTank, onCheckedChange = { form.fullTank = it }, colors = CheckboxDefaults.colors(checkedColor = token(R.attr.hermesAccent)))

@@ -1,9 +1,9 @@
 import { lazy, type ComponentType, type LazyExoticComponent, type ReactElement } from 'react'
-import { can, OFFICE, OWNER, OWNER_MECHANIC } from './features/access'
-import type { Role, Session } from './types'
+import { can } from './features/access'
+import type { Session } from './types'
 import { MaintenanceNotificationsPage } from './pages/MaintenanceNotificationsPage'
 import { canSeeMaintenanceNotifications } from './components/molecules/NotificationBell'
-import { canSeeNonExecutions, canSeeWorkOrders } from './features/routeAccess'
+import { canManageGarageDevices, canSeeNonExecutions, canSeeWorkOrders } from './features/routeAccess'
 
 export function lazyPage<Module extends object, Name extends keyof Module>(
   load: () => Promise<Module>,
@@ -12,6 +12,7 @@ export function lazyPage<Module extends object, Name extends keyof Module>(
   return lazy(async () => ({ default: (await load())[name] as ComponentType<any> }))
 }
 
+const CustomerFormPage = lazyPage(() => import('./pages/CustomerPages'), 'CustomerFormPage')
 const CustomerDayOffPage = lazyPage(() => import('./pages/FleetPages'), 'CustomerDayOffPage')
 const CustomerDetailPage = lazyPage(() => import('./pages/FleetPages'), 'CustomerDetailPage')
 const DemandAllocationPage = lazyPage(() => import('./pages/FleetPages'), 'DemandAllocationPage')
@@ -60,57 +61,59 @@ const WorkOrderItemPage = lazyPage(() => import('./pages/WorkOrderPages'), 'Work
 const WorkOrderNewPage = lazyPage(() => import('./pages/WorkOrderPages'), 'WorkOrderNewPage')
 const WorkOrdersPage = lazyPage(() => import('./pages/WorkOrderPages'), 'WorkOrdersPage')
 
-const READERS: Role[] = ['TenantOwner', 'TenantUser', 'Mechanic']
 export interface AppRoute { path: string; element: ReactElement; allow: (session: Session) => boolean }
 
 // As telas que não são cadastro genérico. Cada rota carrega a permissão que a protege (a mesma do botão que leva até ela).
 export const customRoutes: AppRoute[] = [
   { path: '/work-orders', element: <WorkOrdersPage />, allow: canSeeWorkOrders },
-  { path: '/work-orders/new', element: <WorkOrderNewPage />, allow: (s) => can(s, 'work-order.create', OWNER_MECHANIC) },
+  { path: '/work-orders/new', element: <WorkOrderNewPage />, allow: (s) => can(s, 'work-order.create') },
   { path: '/work-orders/:uuid', element: <WorkOrderDetailPage />, allow: canSeeWorkOrders },
-  { path: '/work-orders/:uuid/items/new', element: <WorkOrderItemPage />, allow: (s) => can(s, 'work-order.item.add', OWNER_MECHANIC) },
-  { path: '/work-orders/:uuid/issue-part', element: <WorkOrderIssuePartPage />, allow: (s) => can(s, 'work-order.issue-part', OWNER_MECHANIC) },
+  { path: '/work-orders/:uuid/items/new', element: <WorkOrderItemPage />, allow: (s) => can(s, 'work-order.item.add') },
+  { path: '/work-orders/:uuid/issue-part', element: <WorkOrderIssuePartPage />, allow: (s) => can(s, 'work-order.issue-part') },
   { path: '/non-executions', element: <NonExecutionsPage />, allow: canSeeNonExecutions },
-  { path: '/non-executions/manual', element: <NonExecutionManualPage />, allow: (s) => can(s, 'non-execution.record-manual', OWNER_MECHANIC) },
-  { path: '/non-executions/:uuid/justify', element: <NonExecutionJustifyPage />, allow: (s) => can(s, 'non-execution.justify', OWNER_MECHANIC) },
+  { path: '/non-executions/manual', element: <NonExecutionManualPage />, allow: (s) => can(s, 'non-execution.record-manual') },
+  { path: '/non-executions/:uuid/justify', element: <NonExecutionJustifyPage />, allow: (s) => can(s, 'non-execution.justify') },
   { path: '/maintenance-notifications', element: <MaintenanceNotificationsPage />, allow: canSeeMaintenanceNotifications },
-  { path: '/vehicles/:uuid', element: <VehicleDetailPage />, allow: (s) => can(s, 'vehicle.read', OFFICE) },
-  { path: '/vehicles/:uuid/odometer', element: <VehicleOdometerPage />, allow: (s) => can(s, 'vehicle.odometer.record', OWNER) },
-  { path: '/vehicles/:uuid/assign', element: <VehicleAssignPage />, allow: (s) => can(s, 'vehicle.assign-driver', OWNER) },
-  { path: '/customers/:uuid', element: <CustomerDetailPage />, allow: (s) => can(s, 'customer.read', OFFICE) },
-  { path: '/customers/:uuid/day-offs/new', element: <CustomerDayOffPage />, allow: (s) => can(s, 'customer.day-off.create', OWNER) },
-  { path: '/transport-demands/:uuid', element: <DemandDetailPage />, allow: (s) => can(s, 'transport-demand.read', OFFICE) },
-  { path: '/transport-demands/:uuid/allocations/new', element: <DemandAllocationPage />, allow: (s) => can(s, 'transport-demand.allocation.create', OWNER) },
-  { path: '/transport-demands/:uuid/daily-schedules/new', element: <DemandDailyPage />, allow: (s) => can(s, 'transport-demand.daily-schedule.create', OWNER) },
-  { path: '/transport-demands/:uuid/exceptions/new', element: <DemandExceptionPage />, allow: (s) => can(s, 'transport-demand.exception.create', OWNER) },
-  { path: '/fuel', element: <FuelPage />, allow: (s) => can(s, 'fuel-entry.read', READERS) },
-  { path: '/fuel/new', element: <FuelEntryNewPage />, allow: (s) => can(s, 'fuel-entry.create', OWNER_MECHANIC) },
-  { path: '/fuel/receipt', element: <FuelReceiptPage />, allow: (s) => can(s, 'fuel-entry.register-receipt', [...OWNER_MECHANIC, 'Driver']) },
-  { path: '/fuel/unify', element: <FuelUnifyPage />, allow: (s) => can(s, 'fuel-entry.unify', OWNER_MECHANIC) },
-  { path: '/fuel/restore', element: <FuelRestorePage />, allow: (s) => can(s, 'fuel-entry.restore', OWNER_MECHANIC) },
-  { path: '/fuel/report', element: <FuelReportPage />, allow: (s) => can(s, 'fuel.report.read', OFFICE) },
-  { path: '/fuel/gauge', element: <FuelGaugePage />, allow: (s) => can(s, 'fuel.tank-gauge.read', OFFICE) },
-  { path: '/fuel/tank', element: <InternalTankPage />, allow: (s) => can(s, 'internal-tank.read', OFFICE) },
-  { path: '/fuel/tank/edit', element: <InternalTankConfigPage />, allow: (s) => can(s, 'internal-tank.update', OWNER) },
-  { path: '/fuel/settings', element: <FuelSettingsPage />, allow: (s) => can(s, 'fuel-gauge-settings.update', OWNER) },
-  { path: '/checklist-templates/:uuid', element: <ChecklistTemplateDetailPage />, allow: (s) => can(s, 'checklist-template.read', OFFICE) },
-  { path: '/checklist-templates/:uuid/run', element: <ChecklistRunNewPage />, allow: (s) => can(s, 'checklist-run.create', [...OWNER, 'Driver']) },
-  { path: '/inspections/new', element: <TechnicalInspectionNewPage />, allow: (s) => can(s, 'technical-inspection.create', OWNER_MECHANIC) },
-  { path: '/preventive-plans/:uuid', element: <PreventivePlanDetailPage />, allow: (s) => can(s, 'preventive-plan.read', OFFICE) },
-  { path: '/preventive-plans/:uuid/extension', element: <PreventiveExtensionPage />, allow: (s) => can(s, 'preventive-plan.extend', OWNER_MECHANIC) },
-  { path: '/preventive-plans/:uuid/alerts/new', element: <PreventiveAlertPage />, allow: (s) => can(s, 'preventive-plan.alert.read', OWNER_MECHANIC) },
-  { path: '/garage', element: <GaragePage />, allow: (s) => can(s, 'garage.queue.read', READERS) },
-  { path: '/garage/open', element: <GarageOpenPage />, allow: (s) => can(s, 'garage.triage.open', OWNER_MECHANIC) },
-  { path: '/garage/call', element: <GarageCallPage />, allow: (s) => can(s, 'garage.call.create', OWNER_MECHANIC) },
-  { path: '/garage/call/cancel', element: <GarageCallCancelPage />, allow: (s) => can(s, 'garage.call.cancel', OWNER_MECHANIC) },
-  { path: '/garage/monitor', element: <GarageMonitorPage />, allow: (s) => can(s, 'garage.monitor.read', READERS) },
-  { path: '/garage/devices', element: <GarageDevicesPage />, allow: (s) => s.role === 'TenantOwner' },
-  { path: '/garage/triage/:uuid', element: <GarageTriagePage />, allow: (s) => can(s, 'garage.triage.read', READERS) },
-  { path: '/schedule', element: <SchedulePage />, allow: (s) => can(s, 'schedule.effective.read', OFFICE) },
-  { path: '/extra-trips/import', element: <TripImportPage />, allow: (s) => can(s, 'extra-trip.import', OWNER) },
-  { path: '/parts/:uuid', element: <PartDetailPage />, allow: (s) => can(s, 'part.read', OFFICE) },
-  { path: '/parts/:uuid/entry', element: <PartEntryPage />, allow: (s) => can(s, 'part.stock-entry', OWNER_MECHANIC) },
-  { path: '/parts/:uuid/adjustment', element: <PartAdjustPage />, allow: (s) => can(s, 'part.stock-adjust', OWNER_MECHANIC) },
-  { path: '/purchase-orders/:uuid', element: <PurchaseOrderDetailPage />, allow: (s) => can(s, 'purchase-order.read', OFFICE) },
-  { path: '/purchase-orders/:uuid/ordered', element: <PurchaseOrderOrderedPage />, allow: (s) => can(s, 'purchase-order.mark-ordered', OWNER_MECHANIC) },
+  { path: '/vehicles/:uuid', element: <VehicleDetailPage />, allow: (s) => can(s, 'vehicle.read') },
+  { path: '/vehicles/:uuid/odometer', element: <VehicleOdometerPage />, allow: (s) => can(s, 'vehicle.odometer.record') },
+  { path: '/vehicles/:uuid/assign', element: <VehicleAssignPage />, allow: (s) => can(s, 'vehicle.assign-driver') },
+  // EPIC-SC-01-S05: the customer form is its own page (identity + address), not the config-driven one.
+  { path: '/customers/new', element: <CustomerFormPage />, allow: (s) => can(s, 'customer.create') },
+  { path: '/customers/:uuid/edit', element: <CustomerFormPage />, allow: (s) => can(s, 'customer.update') },
+  { path: '/customers/:uuid', element: <CustomerDetailPage />, allow: (s) => can(s, 'customer.read') },
+  { path: '/customers/:uuid/day-offs/new', element: <CustomerDayOffPage />, allow: (s) => can(s, 'customer.day-off.create') },
+  { path: '/transport-demands/:uuid', element: <DemandDetailPage />, allow: (s) => can(s, 'transport-demand.read') },
+  { path: '/transport-demands/:uuid/allocations/new', element: <DemandAllocationPage />, allow: (s) => can(s, 'transport-demand.allocation.create') },
+  { path: '/transport-demands/:uuid/daily-schedules/new', element: <DemandDailyPage />, allow: (s) => can(s, 'transport-demand.daily-schedule.create') },
+  { path: '/transport-demands/:uuid/exceptions/new', element: <DemandExceptionPage />, allow: (s) => can(s, 'transport-demand.exception.create') },
+  { path: '/fuel', element: <FuelPage />, allow: (s) => can(s, 'fuel-entry.read') },
+  { path: '/fuel/new', element: <FuelEntryNewPage />, allow: (s) => can(s, 'fuel-entry.create') },
+  { path: '/fuel/receipt', element: <FuelReceiptPage />, allow: (s) => can(s, 'fuel-entry.register-receipt') },
+  { path: '/fuel/unify', element: <FuelUnifyPage />, allow: (s) => can(s, 'fuel-entry.unify') },
+  { path: '/fuel/restore', element: <FuelRestorePage />, allow: (s) => can(s, 'fuel-entry.restore') },
+  { path: '/fuel/report', element: <FuelReportPage />, allow: (s) => can(s, 'fuel.report.read') },
+  { path: '/fuel/gauge', element: <FuelGaugePage />, allow: (s) => can(s, 'fuel.tank-gauge.read') },
+  { path: '/fuel/tank', element: <InternalTankPage />, allow: (s) => can(s, 'internal-tank.read') },
+  { path: '/fuel/tank/edit', element: <InternalTankConfigPage />, allow: (s) => can(s, 'internal-tank.update') },
+  { path: '/fuel/settings', element: <FuelSettingsPage />, allow: (s) => can(s, 'fuel-gauge-settings.update') },
+  { path: '/checklist-templates/:uuid', element: <ChecklistTemplateDetailPage />, allow: (s) => can(s, 'checklist-template.read') },
+  { path: '/checklist-templates/:uuid/run', element: <ChecklistRunNewPage />, allow: (s) => can(s, 'checklist-run.create') },
+  { path: '/inspections/new', element: <TechnicalInspectionNewPage />, allow: (s) => can(s, 'technical-inspection.create') },
+  { path: '/preventive-plans/:uuid', element: <PreventivePlanDetailPage />, allow: (s) => can(s, 'preventive-plan.read') },
+  { path: '/preventive-plans/:uuid/extension', element: <PreventiveExtensionPage />, allow: (s) => can(s, 'preventive-plan.extend') },
+  { path: '/preventive-plans/:uuid/alerts/new', element: <PreventiveAlertPage />, allow: (s) => can(s, 'preventive-plan.alert.read') },
+  { path: '/garage', element: <GaragePage />, allow: (s) => can(s, 'garage.queue.read') },
+  { path: '/garage/open', element: <GarageOpenPage />, allow: (s) => can(s, 'garage.triage.open') },
+  { path: '/garage/call', element: <GarageCallPage />, allow: (s) => can(s, 'garage.call.create') },
+  { path: '/garage/call/cancel', element: <GarageCallCancelPage />, allow: (s) => can(s, 'garage.call.cancel') },
+  { path: '/garage/monitor', element: <GarageMonitorPage />, allow: (s) => can(s, 'garage.monitor.read') },
+  { path: '/garage/devices', element: <GarageDevicesPage />, allow: canManageGarageDevices },
+  { path: '/garage/triage/:uuid', element: <GarageTriagePage />, allow: (s) => can(s, 'garage.triage.read') },
+  { path: '/schedule', element: <SchedulePage />, allow: (s) => can(s, 'schedule.effective.read') },
+  { path: '/extra-trips/import', element: <TripImportPage />, allow: (s) => can(s, 'extra-trip.import') },
+  { path: '/parts/:uuid', element: <PartDetailPage />, allow: (s) => can(s, 'part.read') },
+  { path: '/parts/:uuid/entry', element: <PartEntryPage />, allow: (s) => can(s, 'part.stock-entry') },
+  { path: '/parts/:uuid/adjustment', element: <PartAdjustPage />, allow: (s) => can(s, 'part.stock-adjust') },
+  { path: '/purchase-orders/:uuid', element: <PurchaseOrderDetailPage />, allow: (s) => can(s, 'purchase-order.read') },
+  { path: '/purchase-orders/:uuid/ordered', element: <PurchaseOrderOrderedPage />, allow: (s) => can(s, 'purchase-order.mark-ordered') },
 ]

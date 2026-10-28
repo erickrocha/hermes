@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
 import { Trash2 } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { can, OFFICE, OWNER, OWNER_MECHANIC } from '../features/access'
+import { can } from '../features/access'
 import type { FieldDef } from '../features/fields'
 import { useActionForm, usePanel, useResourceForm, useSingletonForm } from '../features/hooks'
 import { loadLookup } from '../features/lookupSlice'
@@ -79,7 +79,7 @@ export function FuelPage() {
   const [removing, setRemoving] = useState<string | null>(null); const [syncing, setSyncing] = useState(false); const [outcome, setOutcome] = useState<Row | null>(null); const [version, setVersion] = useState(0)
   useEffect(() => { dispatch(loadLookup('vehicle')) }, [dispatch])
   const extra = useMemo(() => ({ r: version }), [version])
-  const mayWrite = can(session, 'fuel-entry.create', [...OWNER_MECHANIC])
+  const mayWrite = can(session, 'fuel-entry.create')
   const plate = (uuid: unknown) => vehicles?.find((v) => v.value === uuid)?.label ?? String(uuid ?? '—')
   const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
     { id: 'recordedAt', header: () => t('recordedAt'), cell: ({ row }) => cell({ key: 'recordedAt', labelKey: '', kind: 'datetime' }, row.original.recordedAt) },
@@ -89,7 +89,7 @@ export function FuelPage() {
     { id: 'odometerKm', header: () => t('odometerKm'), cell: ({ row }) => cell({ key: 'odometerKm', labelKey: '' }, row.original.odometerKm) },
     { id: 'fullTank', header: () => t('fullTank'), cell: ({ row }) => (row.original.fullTank ? t('yes') : t('no')) },
     { id: 'origin', header: () => t('origin'), cell: ({ row }) => cell({ key: 'origin', labelKey: '', kind: 'badge', prefix: 'fuelOrigin' }, row.original.origin) },
-    ...(can(session, 'fuel-entry.delete', [...OWNER_MECHANIC]) ? [{ id: 'actions', header: () => t('actions'), cell: ({ row }: { row: { original: Row } }) => <div className="row-actions">
+    ...(can(session, 'fuel-entry.delete') ? [{ id: 'actions', header: () => t('actions'), cell: ({ row }: { row: { original: Row } }) => <div className="row-actions">
       <button className="danger-text" aria-label={t('delete')} onClick={() => setRemoving(String(row.original.uuid))}><Trash2 size={16} /></button></div> } as ColumnDef<Row, unknown>] : []),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [t, vehicles, session])
@@ -98,14 +98,14 @@ export function FuelPage() {
   return <>
     <ResourceListPage resource={fuelEntries} titleKey="fuel" subtitleKey="fuelSummary" columns={columns} extra={extra} newTo={mayWrite ? '/fuel/new' : undefined} newKey="newFuelEntry"
       toolbar={<div className="inline-actions">
-        {can(session, 'fuel.report.read', [...OFFICE]) && <Link className="btn secondary" to="/fuel/report">{t('fuelReport')}</Link>}
-        {can(session, 'fuel.tank-gauge.read', [...OFFICE]) && <Link className="btn secondary" to="/fuel/gauge">{t('tankGauge')}</Link>}
-        {can(session, 'internal-tank.read', [...OFFICE]) && <Link className="btn secondary" to="/fuel/tank">{t('internalTank')}</Link>}
-        {can(session, 'fuel-entry.register-receipt', [...OWNER_MECHANIC, 'Driver']) && <Link className="btn secondary" to="/fuel/receipt">{t('registerReceipt')}</Link>}
-        {can(session, 'fuel-entry.unify', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/fuel/unify">{t('unifyEntries')}</Link>}
-        {can(session, 'fuel-entry.restore', [...OWNER_MECHANIC]) && <Link className="btn secondary" to="/fuel/restore">{t('restoreEntry')}</Link>}
-        {can(session, 'fuel-entry.sync-provider', [...OWNER_MECHANIC]) && <button className="btn secondary" onClick={() => setSyncing(true)}>{t('syncProvider')}</button>}
-        {can(session, 'fuel-gauge-settings.update', [...OWNER]) && <Link className="btn secondary" to="/fuel/settings">{t('fuelSettings')}</Link>}</div>} />
+        {can(session, 'fuel.report.read') && <Link className="btn secondary" to="/fuel/report">{t('fuelReport')}</Link>}
+        {can(session, 'fuel.tank-gauge.read') && <Link className="btn secondary" to="/fuel/gauge">{t('tankGauge')}</Link>}
+        {can(session, 'internal-tank.read') && <Link className="btn secondary" to="/fuel/tank">{t('internalTank')}</Link>}
+        {can(session, 'fuel-entry.register-receipt') && <Link className="btn secondary" to="/fuel/receipt">{t('registerReceipt')}</Link>}
+        {can(session, 'fuel-entry.unify') && <Link className="btn secondary" to="/fuel/unify">{t('unifyEntries')}</Link>}
+        {can(session, 'fuel-entry.restore') && <Link className="btn secondary" to="/fuel/restore">{t('restoreEntry')}</Link>}
+        {can(session, 'fuel-entry.sync-provider') && <button className="btn secondary" onClick={() => setSyncing(true)}>{t('syncProvider')}</button>}
+        {can(session, 'fuel-gauge-settings.update') && <Link className="btn secondary" to="/fuel/settings">{t('fuelSettings')}</Link>}</div>} />
     {outcome && <p className="form-hint" role="status">{t('syncOutcome', { fetched: Number(outcome.fetched), imported: Number(outcome.imported), updated: Number(outcome.updated), reconciled: Number(outcome.reconciled), unmatched: Number(outcome.unmatched) })}</p>}
     {removing && <Confirm title={t('deleteTitle')} text={t('deleteText')} onCancel={() => setRemoving(null)} onConfirm={remove} />}
     {syncing && <Confirm title={t('syncProvider')} text={t('syncProviderText')} onCancel={() => setSyncing(false)} onConfirm={sync} />}</>
@@ -166,7 +166,7 @@ export function InternalTankPage() {
   return <>
     <PageHeader title={t('internalTank')} subtitle={t('internalTankText')} actions={<>
       <Link className="btn secondary" to="/fuel">{t('back')}</Link>
-      {can(session, 'internal-tank.update', [...OWNER]) && <Link className="btn primary" to="/fuel/tank/edit">{t('configure')}</Link>}</>} />
+      {can(session, 'internal-tank.update') && <Link className="btn primary" to="/fuel/tank/edit">{t('configure')}</Link>}</>} />
     <PanelSection titleKey="internalTank" loading={tank.loading} error={tank.error ? 'tankNotConfigured' : ''} empty={!tank.data}>
       {tank.data && <DetailCard rows={[
         { label: t('capacityLiters'), value: String(tank.data.capacityLiters) }, { label: t('referenceStockLiters'), value: String(tank.data.referenceStockLiters) },

@@ -237,7 +237,6 @@ impl AccountInviteUseCase {
 #[cfg(test)]
 mod tests {
     use super::{AccountInviteUseCase, INVITE_VALIDITY_DAYS};
-    use crate::domain::enums::Role;
     use crate::domain::user::User;
     use chrono::Utc;
 
@@ -262,13 +261,14 @@ mod tests {
             password: "$2b$12$abcdefghijklmnopqrstuv".to_string(),
             enabled: true,
             tenant_id: Some(1),
-            role: Role::TenantUser,
+            profile_id: Some(3),
+            extra_permissions: Vec::new(),
             cpf: None,
-            principal_function: None,
             created_at: None,
             created_by: None,
             updated_at: None,
             updated_by: None,
+            access: Default::default(),
         }
     }
 

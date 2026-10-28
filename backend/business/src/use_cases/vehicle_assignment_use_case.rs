@@ -1,5 +1,5 @@
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
+use crate::domain::authorization::is_active_driver_of;
 use crate::domain::user::User;
 use crate::domain::vehicle::Vehicle;
 use crate::domain::vehicle_assignment::VehicleAssignment;
@@ -40,7 +40,7 @@ impl<A: VehicleAssignmentStore, U: UserLookupStore> VehicleAssignmentUseCase<A, 
             .get_by_uuid(driver_uuid)
             .await?
             .filter(|user| {
-                user.role == Role::Driver && user.enabled && user.tenant_id == vehicle.tenant_id
+                is_active_driver_of(user, vehicle.tenant_id)
             })
             .ok_or_else(|| BusinessError::new(NOT_A_DRIVER.to_string()))?;
 

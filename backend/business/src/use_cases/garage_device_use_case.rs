@@ -1,6 +1,6 @@
 use crate::domain::access_token::{DeviceClaims, PrincipalType};
 use crate::domain::business_error::BusinessError;
-use crate::domain::enums::Role;
+use crate::domain::permission::GARAGE_DEVICE_MANAGE;
 use crate::domain::garage_device::GarageDevice;
 use crate::domain::user::User;
 use crate::gateway::garage_device_gateway::GarageDeviceStore;
@@ -17,7 +17,7 @@ pub const DEVICE_NOT_FOUND: &str = "Garage device not found";
 pub const INVALID_PAIRING_CODE: &str = "Pairing code is invalid or expired";
 pub const DEVICE_NOT_PAIRED: &str = "Garage device is not paired";
 pub const DEVICE_CREDENTIAL_INVALID: &str = "Device credential is invalid or revoked";
-pub const DEVICE_OWNER_REQUIRED: &str = "Only a tenant owner may manage garage devices";
+pub const DEVICE_OWNER_REQUIRED: &str = "Only a tenant account holding garage.device.manage may manage garage devices";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairingCode {
@@ -225,7 +225,7 @@ impl<S: GarageDeviceStore> GarageDeviceUseCase<S> {
 }
 
 fn tenant_owner_id(owner: &User) -> Result<i64, BusinessError> {
-    if owner.role != Role::TenantOwner {
+    if owner.is_platform() || !owner.allows(GARAGE_DEVICE_MANAGE) {
         return Err(BusinessError::new(DEVICE_OWNER_REQUIRED.to_string()));
     }
     owner

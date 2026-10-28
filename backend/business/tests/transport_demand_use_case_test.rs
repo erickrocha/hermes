@@ -1,7 +1,8 @@
 use business::domain::business_error::BusinessError;
-use business::domain::enums::{DemandKind, Role, VehicleStatus};
+use business::domain::enums::{DemandKind, VehicleStatus};
 use business::domain::transport_demand::TransportDemand;
-use business::domain::user::User;
+use business::domain::user::{Access, User};
+use business::domain::permission::{DRIVER};
 use business::domain::vehicle::Vehicle;
 use business::gateway::transport_demand_gateway::TransportDemandStore;
 use business::gateway::user_gateway::UserLookupStore;
@@ -170,7 +171,7 @@ fn vehicle(tenant_id: i64) -> Vehicle {
     }
 }
 
-fn driver(tenant_id: Option<i64>, role: Role) -> User {
+fn driver(tenant_id: Option<i64>, profile_key: &str) -> User {
     User {
         id: Some(7),
         uuid: Some("driver-7".into()),
@@ -179,9 +180,10 @@ fn driver(tenant_id: Option<i64>, role: Role) -> User {
         password: "hash".into(),
         enabled: true,
         tenant_id,
-        role,
+        profile_id: Some(1),
+        extra_permissions: Vec::new(),
         cpf: None,
-        principal_function: None,
+        access: Access::of_system_profile(profile_key).expect("a system profile"),
         created_at: None,
         created_by: None,
         updated_at: None,
@@ -213,7 +215,7 @@ async fn demand_use_case_validates_named_driver_and_vehicle_through_ports() {
     let mut demand = new_demand();
     demand.specific_driver_id = Some(7);
     demand.specific_vehicle_id = Some(10);
-    let created = use_case(Some(driver(Some(42), Role::Driver)), Some(vehicle(42)))
+    let created = use_case(Some(driver(Some(42), DRIVER)), Some(vehicle(42)))
         .create(demand)
         .await
         .expect("same-tenant driver and vehicle are accepted");
@@ -223,7 +225,7 @@ async fn demand_use_case_validates_named_driver_and_vehicle_through_ports() {
 
     let mut invalid = new_demand();
     invalid.specific_driver_id = Some(7);
-    let error = use_case(Some(driver(Some(99), Role::Driver)), None)
+    let error = use_case(Some(driver(Some(99), DRIVER)), None)
         .create(invalid)
         .await
         .expect_err("cross-tenant driver is refused");
@@ -285,7 +287,7 @@ async fn demand_use_case_accepts_valid_recurring_days_and_one_off_date() {
 
 #[tokio::test]
 async fn demand_use_case_rejects_disabled_drivers_and_cross_tenant_vehicles() {
-    let mut disabled = driver(Some(42), Role::Driver);
+    let mut disabled = driver(Some(42), DRIVER);
     disabled.enabled = false;
     let mut demand = new_demand();
     demand.specific_driver_id = Some(7);

@@ -1,7 +1,7 @@
 import { createAsyncThunk, createSlice, isAnyOf } from '@reduxjs/toolkit'
 import { apiMessage } from '../api'
 import * as profileService from '../services/profileService'
-import type { ProfileEditorData, UserProfileData } from '../services/profileService'
+import type { AccessOptions, AssignProfileRequest, ProfileEditorData, UserProfileData } from '../services/profileService'
 import type { AccessProfile } from '../types'
 
 const failure = (cause: unknown) => apiMessage(cause, '')
@@ -21,13 +21,18 @@ export const saveAccessProfile = createAsyncThunk<void, { uuid?: string; profile
     try { await profileService.saveProfile(request) } catch (cause) { return rejectWithValue(failure(cause)) }
   },
 )
+export const fetchAccessOptions = createAsyncThunk<AccessOptions, void, { rejectValue: string }>(
+  'profiles/accessOptions', async (_, { rejectWithValue }) => {
+    try { return await profileService.loadAccessOptions() } catch (cause) { return rejectWithValue(failure(cause)) }
+  },
+)
 export const fetchUserProfile = createAsyncThunk<UserProfileData, string, { rejectValue: string }>(
   'profiles/user', async (userUuid: string, { rejectWithValue }) => {
     try { return await profileService.loadUserProfile(userUuid) } catch (cause) { return rejectWithValue(failure(cause)) }
   },
 )
-export const saveUserProfile = createAsyncThunk<void, { userUuid: string; profileUuid: string }, { rejectValue: string }>(
-  'profiles/saveUser', async (request: { userUuid: string; profileUuid: string }, { rejectWithValue }) => {
+export const saveUserProfile = createAsyncThunk<void, AssignProfileRequest, { rejectValue: string }>(
+  'profiles/saveUser', async (request: AssignProfileRequest, { rejectWithValue }) => {
     try { await profileService.updateUserProfile(request) } catch (cause) { return rejectWithValue(failure(cause)) }
   },
 )
@@ -36,9 +41,9 @@ const initialState = { loading: false, saving: false, error: '' }
 const profileSlice = createSlice({
   name: 'profiles', initialState, reducers: { clearProfileError: (state) => { state.error = '' } },
   extraReducers: (builder) => builder
-    .addMatcher(isAnyOf(fetchProfiles.pending, fetchProfileEditor.pending, fetchUserProfile.pending), (state) => { state.loading = true; state.error = '' })
-    .addMatcher(isAnyOf(fetchProfiles.fulfilled, fetchProfileEditor.fulfilled, fetchUserProfile.fulfilled), (state) => { state.loading = false })
-    .addMatcher(isAnyOf(fetchProfiles.rejected, fetchProfileEditor.rejected, fetchUserProfile.rejected), (state, action) => { state.loading = false; state.error = action.payload || 'loadError' })
+    .addMatcher(isAnyOf(fetchProfiles.pending, fetchProfileEditor.pending, fetchAccessOptions.pending, fetchUserProfile.pending), (state) => { state.loading = true; state.error = '' })
+    .addMatcher(isAnyOf(fetchProfiles.fulfilled, fetchProfileEditor.fulfilled, fetchAccessOptions.fulfilled, fetchUserProfile.fulfilled), (state) => { state.loading = false })
+    .addMatcher(isAnyOf(fetchProfiles.rejected, fetchProfileEditor.rejected, fetchAccessOptions.rejected, fetchUserProfile.rejected), (state, action) => { state.loading = false; state.error = action.payload || 'loadError' })
     .addMatcher(isAnyOf(saveAccessProfile.pending, saveUserProfile.pending), (state) => { state.saving = true; state.error = '' })
     .addMatcher(isAnyOf(saveAccessProfile.fulfilled, saveUserProfile.fulfilled), (state) => { state.saving = false })
     .addMatcher(isAnyOf(saveAccessProfile.rejected, saveUserProfile.rejected), (state, action) => { state.saving = false; state.error = action.payload || 'genericError' }),

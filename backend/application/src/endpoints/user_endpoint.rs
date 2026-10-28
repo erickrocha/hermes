@@ -8,24 +8,53 @@ use crate::endpoints::json::error_response_json::{
 };
 use crate::endpoints::json::page_json::{PageJson, PageQuery};
 use crate::endpoints::json::user_json::UserJson;
-use crate::infrastructure::mapper::{Mapper, UserMapper, reject_unknown_role};
+use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::commons::email_sender::EmailSender;
+use business::domain::access_profile::AccessProfile;
 use business::domain::authorization::{
-    CreationTenant, can_administer_user, can_create_user_with_role, can_read_user_record,
-    can_reassign_role,
+    CreationTenant, can_administer_user, can_assign_profile, can_list_users, can_move_user_to_tenant,
+    can_read_user_record,
 };
 use business::commons::tax_id::{TaxIdOutcome, validate_and_normalize};
-use business::domain::enums::Role;
-use business::domain::user::User;
+use business::domain::enums::ProfileScope;
+use business::domain::user::{Access, User};
+use business::gateway::access_profile_gateway::AccessProfileGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::gateway::user_gateway::UserGateway;
+use business::use_cases::access_profile_use_case::{
+    AccessProfileUseCase, GRANT_EXCEEDS_ACTOR, PROFILE_DOES_NOT_FIT, PROFILE_NOT_FOUND, UNKNOWN_PERMISSION,
+};
 use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::tenant_use_case::TenantUseCase;
 use business::use_cases::user_use_case::UserUseCase;
 use std::env;
+
+/// `C-035`: resolves the profile the payload names (with its extras) into something `actor` may hand to an
+/// account in `target_tenant_id`. A profile out of reach, unfit for the tenant, or wider than the actor's
+/// own grants is refused: 403 for the hierarchy, 400 for an unknown grant, 404 for no such profile.
+async fn placeable_profile(
+    state: &AppState,
+    locale: &Locale,
+    actor: &User,
+    profile_uuid: String,
+    target_tenant_id: Option<i64>,
+    extras: &[String],
+) -> Result<(AccessProfile, Vec<String>), ExceptionResponse> {
+    AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone()))
+        .placeable(actor, profile_uuid, target_tenant_id, extras)
+        .await
+        .map_err(|e| match e.message.as_str() {
+            PROFILE_NOT_FOUND => ExceptionResponse::NotFound(locale.clone(), ErrorKey::AccessProfileNotFound),
+            UNKNOWN_PERMISSION => ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue),
+            PROFILE_DOES_NOT_FIT | GRANT_EXCEEDS_ACTOR => {
+                ExceptionResponse::Forbidden(locale.clone(), ErrorKey::UserCreationForbidden)
+            }
+            _ => ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue),
+        })
+}
 
 #[utoipa::path(
     post,
@@ -33,7 +62,7 @@ use std::env;
     path = "/user",
     request_body = UserJson,
     responses(
-        (status = 201, description = "User created. **Roles:** SysAdmin (unbound; creates SysAdmin or TenantOwner accounts), TenantOwner (creates TenantUser, Driver or Mechanic accounts in their own tenant).", body = UserJson),
+        (status = 201, description = "User created, holding the named profile and extra grants. **Roles:** `user.create` -- the platform hands out platform profiles (no tenant) and tenant profiles (naming the tenant); a tenant account hands out tenant profiles in its own tenant, never granting more than it holds (C-035).", body = UserJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -47,18 +76,22 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<(StatusCode, Json<UserJson>)> {
-    reject_unknown_role(&payload.role, &locale)?;
-    let mut domain = UserMapper::domain(payload);
+    let mut domain = UserMapper::domain(payload.clone());
+    let Some(profile_uuid) = payload.profile_uuid.filter(|u| !u.trim().is_empty()) else {
+        return Err(ExceptionResponse::BadRequest(locale, ErrorKey::RequiredParameterMissing));
+    };
 
-    // PD-019's creation hierarchy (EPIC-IA-04): an unbound platform
-    // administrator creates administrators and tenant owners; a tenant
-    // owner creates tenant users in their own tenant only. See
-    // business::domain::authorization for why this is not the rule the
-    // code used to implement.
-    let Some(creation_tenant) = can_create_user_with_role(&current_user, &domain.role) else {
+    // PD-019's creation hierarchy, restated for profiles (`C-035`): the platform hands out platform
+    // profiles and tenant profiles; a tenant account hands out tenant profiles in its own tenant. See
+    // business::domain::authorization.
+    let profile = AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone()))
+        .find_by_uuid(profile_uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::AccessProfileNotFound))?;
+    let Some(creation_tenant) = can_assign_profile(&current_user, &profile) else {
         // DEF-BO-05: the refusal used to be `RequiredHeaderValueMissing`, which
-        // described a malformed request rather than a role that may not create
-        // users — and the console showed that sentence to the person.
+        // described a malformed request rather than a profile that may not be
+        // handed out — and the console showed that sentence to the person.
         return Err(ExceptionResponse::Forbidden(
             locale,
             ErrorKey::UserCreationForbidden,
@@ -70,7 +103,7 @@ pub async fn add(
             // DEF-IA-08 (HRMS-116, D-08): the hierarchy decides this account's
             // tenant, so a caller who named a different one asked for something
             // the platform will not create. Overwriting it silently answered
-            // 201 to `{"role":"SysAdmin","tenantId":42}` and stored a
+            // 201 to `{"profileUuid":<SysAdmin>,"tenantId":42}` and stored a
             // *platform-wide* administrator -- the opposite of what was asked
             // for, with no warning.
             if domain.tenant_id.is_some() && domain.tenant_id != tenant_id {
@@ -99,6 +132,12 @@ pub async fn add(
             domain.tenant_id = Some(tenant_id);
         }
     }
+
+    let (profile, extras) =
+        placeable_profile(&state, &locale, &current_user, profile_uuid, domain.tenant_id, &domain.extra_permissions).await?;
+    domain.profile_id = profile.id;
+    domain.extra_permissions = extras;
+    domain.access = Access::resolve(&profile, &domain.extra_permissions);
 
     // EPIC-IA-07/D-07 (PD-002, HRM-050/HRMS-123): every account created
     // through this endpoint -- administrator or tenant user alike -- is
@@ -235,7 +274,7 @@ fn send_invite(user: &User, invite: business::use_cases::account_invite_use_case
     path = "/user",
     params(PageQuery),
     responses(
-        (status = 200, description = "A page of users (PD-028). **Roles:** SysAdmin, TenantOwner see their scope's users; TenantUser, Driver, Mechanic receive an empty page (no user-administration rights).", body = PageJson<UserJson>),
+        (status = 200, description = "A page of users (PD-028). **Roles:** whoever administers users (`user.create`, `user.update`, `user.invite` or `profile.assign`) sees their scope's users; anyone else receives an empty page.", body = PageJson<UserJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -251,14 +290,13 @@ pub async fn list_all(
     let (page, page_size) = (page_query.page(), page_query.page_size());
     let search = page_query.search();
 
-    // HRM-094/095: quem pode ver o quê não muda com a paginação. Um TenantOwner
-    // é filtrado pelo escopo do gateway (`tenant_select`), não por um segundo
-    // filtro aqui; um TenantUser continua sem administração de usuários.
-    let page_result = match current_user.role {
-        Role::SysAdmin | Role::TenantOwner => {
-            use_case.find_page(page, page_size, search.as_deref()).await
-        }
-        _ => Ok((Vec::new(), 0)),
+    // HRM-094/095: quem pode ver o quê não muda com a paginação. Um administrador de usuários
+    // é filtrado pelo escopo do gateway (`tenant_select`), não por um segundo filtro aqui; quem
+    // não administra usuários continua sem a lista.
+    let page_result = if can_list_users(&current_user) {
+        use_case.find_page(page, page_size, search.as_deref()).await
+    } else {
+        Ok((Vec::new(), 0))
     };
 
     match page_result {
@@ -323,7 +361,7 @@ pub async fn get_by_uuid(
     ),
     request_body = UserJson,
     responses(
-        (status = 200, description = "User updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only).", body = UserJson),
+        (status = 200, description = "User updated. **Roles:** `user.update` inside the account's tenant (the platform anywhere). A new `profileUuid` or `extraPermissions` must be within the caller's reach and grants; only the platform moves an account to another tenant (C-035).", body = UserJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "User not found, **or it exists outside the caller's boundary**", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -338,8 +376,7 @@ pub async fn update(
     Path(uuid): Path<String>,
     Json(payload): Json<UserJson>,
 ) -> HttpResponse<Json<UserJson>> {
-    reject_unknown_role(&payload.role, &locale)?;
-    let mut domain = UserMapper::domain(payload);
+    let mut domain = UserMapper::domain(payload.clone());
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
     let existing = use_case.find_by_uuid(uuid).await.map_err(|_| {
@@ -374,30 +411,53 @@ pub async fn update(
         ));
     }
 
-    // PD-019: reassigning the hierarchy is an unbound platform
-    // administrator's decision alone. Everyone else editing an account --
-    // including that account's own owner -- keeps its existing role and
-    // tenant; only the other fields in the payload take effect.
-    if can_reassign_role(&current_user, &domain.role, domain.tenant_id) {
-        if domain.role == Role::TenantOwner {
-            let Some(tenant_id) = domain.tenant_id else {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
-            };
-            let tenant_use_case =
-                TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-            if tenant_use_case.find_by_id(tenant_id).await.is_err() {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
+    // `C-035`: the profile and the extras change only through a placement the caller may make; an
+    // omitted `profileUuid` keeps the current profile. Moving the account to another tenant (PD-019) is
+    // the platform's decision alone; everyone else keeps the account where it is.
+    let profile_uuid = payload
+        .profile_uuid
+        .filter(|u| !u.trim().is_empty())
+        .or(existing.access.profile_uuid.clone())
+        .ok_or_else(|| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::RequiredParameterMissing))?;
+    let profiles = AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone()));
+    let requested = profiles
+        .find_by_uuid(profile_uuid.clone())
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::AccessProfileNotFound))?;
+    // An omitted `tenantId` keeps the account where it is; a platform profile places it outside any tenant.
+    let moving_to = match (domain.tenant_id, requested.scope) {
+        (Some(tenant_id), _) if Some(tenant_id) != existing.tenant_id => Some(Some(tenant_id)),
+        (None, ProfileScope::Platform) if existing.tenant_id.is_some() => Some(None),
+        _ => None,
+    };
+    let tenant_id = match moving_to {
+        Some(target) => {
+            if !can_move_user_to_tenant(&current_user, &requested, target) {
+                return Err(ExceptionResponse::Forbidden(locale, ErrorKey::UserCreationForbidden));
             }
+            if let Some(tenant_id) = target
+                && TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone())).find_by_id(tenant_id).await.is_err()
+            {
+                return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
+            }
+            target
         }
+        None => existing.tenant_id,
+    };
+    domain.tenant_id = tenant_id;
+    let access_changed = Some(&profile_uuid) != existing.access.profile_uuid.as_ref()
+        || domain.extra_permissions != existing.extra_permissions
+        || tenant_id != existing.tenant_id;
+    if access_changed {
+        let (profile, extras) =
+            placeable_profile(&state, &locale, &current_user, profile_uuid, tenant_id, &domain.extra_permissions).await?;
+        domain.profile_id = profile.id;
+        domain.extra_permissions = extras;
+        domain.access = Access::resolve(&profile, &domain.extra_permissions);
     } else {
-        domain.role = existing.role.clone();
-        domain.tenant_id = existing.tenant_id;
+        domain.profile_id = existing.profile_id;
+        domain.extra_permissions = existing.extra_permissions.clone();
+        domain.access = existing.access.clone();
     }
 
     check_person_cpf(&state, &use_case, &locale, Some(id), &mut domain).await?;

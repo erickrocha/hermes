@@ -1,13 +1,15 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
-use crate::domain::enums::Role;
+use crate::domain::enums::ProfileScope;
 use chrono::NaiveDateTime;
 use entity::access_profile_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
 use std::str::FromStr;
 
-/// `C-032` (`HRMS-851`): a tenant's access profile -- a named set of permission codes for one role
-/// below the owner. The codes are validated against `domain::permission` when saved.
+/// `C-032`/`C-035` (`HRMS-851`): an access profile -- a named set of grants. A system profile (`system`,
+/// with a `key` from `permission::SYSTEM_PROFILES`) belongs to no tenant and is visible to every tenant;
+/// a tenant's own profile carries its `tenant_id`. The grants are validated against `domain::permission`
+/// when saved.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccessProfile {
     pub id: Option<i64>,
@@ -15,7 +17,9 @@ pub struct AccessProfile {
     pub tenant_id: Option<i64>,
     pub name: String,
     pub name_key: String,
-    pub base_role: Role,
+    pub scope: ProfileScope,
+    pub system: bool,
+    pub key: Option<String>,
     pub active: bool,
     pub permissions: Vec<String>,
     pub created_at: Option<NaiveDateTime>,
@@ -44,7 +48,9 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
             tenant_id: Set(d.tenant_id),
             name: Set(d.name),
             name_key: Set(d.name_key),
-            base_role: Set(d.base_role.to_string()),
+            scope: Set(d.scope.to_string()),
+            system: Set(d.system),
+            key: Set(d.key),
             active: Set(d.active),
             permissions: Set(serde_json::to_string(&d.permissions).unwrap_or_else(|_| "[]".into())),
             created_at: NotSet,
@@ -61,7 +67,9 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
             tenant_id: e.tenant_id,
             name: e.name,
             name_key: e.name_key,
-            base_role: Role::from_str(&e.base_role).unwrap_or(Role::TenantUser),
+            scope: ProfileScope::from_str(&e.scope).unwrap_or_default(),
+            system: e.system,
+            key: e.key,
             active: e.active,
             permissions: parse_permissions(&e.permissions),
             created_at: Some(e.created_at.naive_utc()),
@@ -82,7 +90,9 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
                 tenant_id: e.tenant_id.take().flatten(),
                 name: e.name.take().unwrap_or_default(),
                 name_key: e.name_key.take().unwrap_or_default(),
-                base_role: e.base_role.take().and_then(|r| Role::from_str(&r).ok()).unwrap_or(Role::TenantUser),
+                scope: e.scope.take().and_then(|s| ProfileScope::from_str(&s).ok()).unwrap_or_default(),
+                system: e.system.take().unwrap_or(false),
+                key: e.key.take().flatten(),
                 active: e.active.take().unwrap_or(true),
                 permissions: e.permissions.take().map(|p| parse_permissions(&p)).unwrap_or_default(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),

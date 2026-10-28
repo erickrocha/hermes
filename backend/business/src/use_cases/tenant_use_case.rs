@@ -1,3 +1,4 @@
+use crate::commons::functions::digits_only;
 use crate::commons::tax_id::{self, TaxIdOutcome};
 use crate::domain::business_error::BusinessError;
 use crate::domain::tenant::Tenant;
@@ -75,6 +76,8 @@ impl<G: TenantStore> TenantUseCase<G> {
         let tenant = Tenant {
             business_plan_id: None,
             tax_id,
+            phone: digits_only(tenant.phone),
+            postal_code: digits_only(tenant.postal_code),
             ..tenant
         };
 
@@ -194,13 +197,13 @@ impl<G: TenantStore> TenantUseCase<G> {
             business_name: tenant.business_name,
             tax_id,
             email: tenant.email,
-            phone: tenant.phone,
+            phone: digits_only(tenant.phone),
             website: tenant.website,
             address_line1: tenant.address_line1,
             address_line2: tenant.address_line2,
             locality: tenant.locality,
             administrative_area: tenant.administrative_area,
-            postal_code: tenant.postal_code,
+            postal_code: digits_only(tenant.postal_code),
             country_code: tenant.country_code,
             // A tenant's plan is set only through `set_plan` (HRMS-224,
             // PD-021) — the general update path always keeps it as-is,

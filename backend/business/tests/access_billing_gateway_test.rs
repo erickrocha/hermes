@@ -2,7 +2,7 @@ use business::gateway::access_profile_gateway::{AccessProfileGateway, AccessProf
 use business::gateway::billing_gateway::{BillingGateway, BillingStore};
 use chrono::NaiveDate;
 use entity::audit::{AuditUser, run_with_user};
-use entity::{access_profile_entity, billing_charge_entity, tenant_billing_entity, user_entity};
+use entity::{access_profile_entity, billing_charge_entity, tenant_billing_entity};
 use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Value};
 use std::collections::BTreeMap;
 
@@ -21,7 +21,7 @@ async fn access_profile_and_billing_gateways_read_their_tenant_scoped_data() {
         .append_query_results([Vec::<access_profile_entity::Model>::new()])
         .append_query_results(count(4))
         .append_query_results([Vec::<access_profile_entity::Model>::new()])
-        .append_query_results([Vec::<user_entity::Model>::new()])
+        .append_query_results([Vec::<access_profile_entity::Model>::new()])
         .append_exec_results([MockExecResult {
             last_insert_id: 0,
             rows_affected: 1,
@@ -49,10 +49,10 @@ async fn access_profile_and_billing_gateways_read_their_tenant_scoped_data() {
         Ok::<_, business::domain::business_error::BusinessError>((
             profiles.get_by_id(4).await?,
             profiles.get_by_uuid("missing".into()).await?,
-            profiles.find_by_key("operator", Some(42)).await?,
+            profiles.find_by_name_key("operator", Some(42)).await?,
             profiles.list_page(0, 10).await?,
-            profiles.user_profile_id(9).await?,
-            profiles.set_user_profile(9, Some(4)).await?,
+            profiles.find_by_key("Driver").await?,
+            profiles.set_user_access(9, 4, &["vehicle.read".to_string()]).await?,
             profiles.users_holding(4).await?,
             billing.get_settings(42).await?,
             billing.count_active_human_users(42).await?,

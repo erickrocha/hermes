@@ -35,6 +35,20 @@ describe('routing', () => {
     expect(screen.queryByRole('button', { name: /^save$|^salvar$|^guardar$/i })).toBeNull()
   })
 
+  it('opens the dedicated customer form (identity + address) on the new and edit addresses', async () => {
+    signIn('TenantOwner')
+    const reference = async (url: string) => (url === '/province' || url.startsWith('/cities') ? { data: [] } : empty) as never
+    vi.spyOn(api, 'get').mockImplementation(reference)
+    const view = at('/customers/new')
+    expect(await screen.findByLabelText(/legal name|razão social|razón social/i)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /brazil|brasil/i })).toBeInTheDocument()
+    view.unmount()
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url === '/customer/uuid/abc' ? { data: { uuid: 'abc', name: 'Acme', status: 'Active' } } as never : reference(url)))
+    at('/customers/abc/edit')
+    expect(await screen.findByDisplayValue('Acme')).toBeInTheDocument()
+    expect(screen.getByLabelText(/legal name|razão social|razón social/i)).toBeInTheDocument()
+  })
+
   it('wires every list, form and detail route to a page that renders for the owner', async () => {
     signIn('TenantOwner')
     const paths = [...resourceConfigs.flatMap((c) => [`/${c.route}`, ...(c.create ? [`/${c.route}/new`] : [])]), ...customRoutes.map((r) => r.path.replace(/:uuid/g, 'abc'))]

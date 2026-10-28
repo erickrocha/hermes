@@ -3,42 +3,33 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use utoipa::ToSchema;
 
-#[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
-pub enum Role {
-    SysAdmin,
-    TenantOwner,
+/// `C-035`: where an access profile -- and so its holders -- lives. A `Platform` profile belongs to no
+/// tenant and its holders carry no `tenant_id`; a `Tenant` profile is held inside exactly one tenant.
+/// The five former roles (`SysAdmin`, `TenantOwner`, `TenantUser`, `Driver`, `Mechanic`) are now the
+/// system profiles seeded by `domain::permission::SYSTEM_PROFILES`; nothing authorizes on a role.
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub enum ProfileScope {
+    Platform,
     #[default]
-    TenantUser,
-    /// EPIC-IA-09 (HRMS-129, PD-026, D-22): works through the driver app;
-    /// tenant-bound, created by the tenant owner.
-    Driver,
-    /// EPIC-IA-09 (HRMS-129, PD-026, D-22): garage and maintenance only;
-    /// tenant-bound, created by the tenant owner.
-    Mechanic,
+    Tenant,
 }
 
-impl Display for Role {
+impl Display for ProfileScope {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Role::SysAdmin => write!(f, "SysAdmin"),
-            Role::TenantOwner => write!(f, "TenantOwner"),
-            Role::TenantUser => write!(f, "TenantUser"),
-            Role::Driver => write!(f, "Driver"),
-            Role::Mechanic => write!(f, "Mechanic"),
+            ProfileScope::Platform => write!(f, "Platform"),
+            ProfileScope::Tenant => write!(f, "Tenant"),
         }
     }
 }
 
-impl FromStr for Role {
+impl FromStr for ProfileScope {
     type Err = String;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim() {
-            "SysAdmin" => Ok(Self::SysAdmin),
-            "TenantOwner" => Ok(Self::TenantOwner),
-            "TenantUser" => Ok(Self::TenantUser),
-            "Driver" => Ok(Self::Driver),
-            "Mechanic" => Ok(Self::Mechanic),
-            _ => Err(format!("Invalid role: {}", value))?,
+            "Platform" => Ok(Self::Platform),
+            "Tenant" => Ok(Self::Tenant),
+            _ => Err(format!("Invalid profile scope: {}", value))?,
         }
     }
 }
@@ -50,7 +41,7 @@ impl FromStr for Role {
 ///
 /// Persisted as the variant's own name (see `vehicle_entity::Model::status`),
 /// deliberately without `DeriveActiveEnum` and without a database enum type,
-/// exactly like `Role`.
+/// exactly like `ProfileScope`.
 #[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub enum VehicleStatus {
     #[default]

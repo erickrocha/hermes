@@ -1,34 +1,24 @@
-import type { Role, Session, User } from '../types'
-import { can } from './access'
+import type { Session } from '../types'
+import { can, canPlatform, has, isPlatform } from './access'
 
-export const canCreateUsers = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
-export const tenantOwnerCreatableRoles: User['role'][] = ['TenantUser', 'Driver', 'Mechanic']
-export const canReachAdministration = (role: string) => role !== 'Driver' && role !== 'Mechanic'
-export const canManageTenant = (role: string) => role === 'SysAdmin' || role === 'TenantOwner'
-export const canManageProfiles = (role: string) => role === 'TenantOwner'
+// C-035: every guard names the permission the server enforces for the operation behind the screen
+// (`backend/business/src/domain/operation_permission.rs`); platform-only areas also ask for the platform scope.
+const USER_LIST_HOLDERS = ['user.create', 'user.update', 'user.invite', 'profile.assign']
 
-const holds = (session: Session, code: string, byRole: boolean) =>
-  session.permissions ? session.permissions.includes(code) : byRole
-
-export const canSeeUsers = (session: Session) =>
-  holds(session, 'user.create', canReachAdministration(session.role))
-export const canSeeTenants = (session: Session) =>
-  holds(session, 'tenant.update', canManageTenant(session.role))
-export const canSeeProfiles = (session: Session) =>
-  session.role !== 'SysAdmin' && holds(session, 'profile.read', canManageProfiles(session.role))
-
-export const canSeeCosts = (session: Session) =>
-  session.role !== 'SysAdmin' && (session.permissions
-    ? session.permissions.includes('cost-report.vehicle.read')
-    : session.role === 'TenantOwner' || session.role === 'TenantUser')
-
-export const canSeeBilling = (session: Session) =>
-  session.role === 'SysAdmin' || session.role === 'TenantOwner'
-
-const workOrderReaders: Role[] = ['TenantOwner', 'TenantUser', 'Mechanic']
-const nonExecutionReaders: Role[] = ['TenantOwner', 'TenantUser', 'Mechanic']
-
-export const canSeeWorkOrders = (session: Session) =>
-  can(session, 'work-order.read', workOrderReaders)
-export const canSeeNonExecutions = (session: Session) =>
-  can(session, 'non-execution.read', nonExecutionReaders)
+export const canCreateUsers = (session: Session) => has(session, 'user.create')
+/// `GET /user` answers whoever holds any of these; everybody else gets an empty page, so the screen is not offered.
+export const canSeeUsers = (session: Session) => USER_LIST_HOLDERS.some((code) => has(session, code))
+/// The tenant list: the platform runs every tenant; an owner finds their own tenant's card there.
+export const canSeeTenants = (session: Session) => has(session, 'tenant.update')
+export const canCreateTenants = (session: Session) => canPlatform(session, 'tenant.create')
+export const canManageSubscription = (session: Session) => canPlatform(session, 'tenant.plan')
+export const canSeePlans = (session: Session) => canPlatform(session, 'business-plan.read')
+export const canSeeReferenceData = (session: Session) => canPlatform(session, 'reference-data.province.manage-read')
+export const canSeeProfiles = (session: Session) => has(session, 'profile.read')
+export const canEditProfiles = (session: Session) => has(session, 'profile.create') || has(session, 'profile.update')
+export const canSeeCosts = (session: Session) => can(session, 'cost-report.vehicle.read')
+export const canSeeBilling = (session: Session) => has(session, 'billing.read')
+export const canAdministerBilling = (session: Session) => isPlatform(session) && (has(session, 'billing.confirm-payment') || has(session, 'billing.configure') || has(session, 'billing.suspend'))
+export const canManageGarageDevices = (session: Session) => can(session, 'garage.device.manage')
+export const canSeeWorkOrders = (session: Session) => can(session, 'work-order.read')
+export const canSeeNonExecutions = (session: Session) => can(session, 'non-execution.read')
