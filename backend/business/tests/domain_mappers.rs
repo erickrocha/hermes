@@ -977,6 +977,30 @@ fn customer_round_trips_through_the_mapper() {
     );
 }
 
+/// `EPIC-SC-01-S04` mapper fallback: a partial `ActiveModel` (the shape a failed `try_into_model`
+/// produces) still recovers the identity and address fields it carries, and leaves the rest absent.
+#[test]
+fn a_partial_customer_active_model_recovers_what_it_carries() {
+    let partial = customer_entity::ActiveModel {
+        name: ActiveValue::Set("Acme".into()),
+        legal_name: ActiveValue::Set(Some("Acme Ltda".into())),
+        tax_id: ActiveValue::Set(Some("11222333000181".into())),
+        locality: ActiveValue::Set(Some("Campinas".into())),
+        country_code: ActiveValue::Set(Some("BR".into())),
+        status: ActiveValue::Set("Active".into()),
+        ..Default::default()
+    };
+    let customer = CustomerEntityMapper::from_active_model(partial);
+    assert_eq!(customer.id, None);
+    assert_eq!(customer.name, "Acme");
+    assert_eq!(customer.legal_name.as_deref(), Some("Acme Ltda"));
+    assert_eq!(customer.tax_id.as_deref(), Some("11222333000181"));
+    assert_eq!(customer.locality.as_deref(), Some("Campinas"));
+    assert_eq!(customer.country_code.as_deref(), Some("BR"));
+    assert_eq!(customer.address_line1, None);
+    assert_eq!(customer.postal_code, None);
+}
+
 #[test]
 fn a_new_customer_leaves_id_and_uuid_for_the_database() {
     let mut customer = CustomerEntityMapper::from_model(customer_model());
