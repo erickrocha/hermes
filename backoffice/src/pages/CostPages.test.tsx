@@ -32,7 +32,7 @@ describe('cost reports (C-030, HRMS-804…810)', () => {
   it('offers the screen to the office and to nobody else', () => {
     expect(canSeeCosts(session('TenantOwner'))).toBe(true)
     expect(canSeeCosts(session('TenantUser'))).toBe(true)
-    for (const role of ['Driver', 'Mechanic', 'SysAdmin'] as const) expect(canSeeCosts(session(role))).toBe(false)
+    for (const role of ['Driver', 'Mechanic', 'SystemAdministrator'] as const) expect(canSeeCosts(session(role))).toBe(false)
     expect(canSeeCosts(session('TenantUser', ['vehicle.read']))).toBe(false)
     expect(canSeeCosts(session('TenantUser', ['cost-report.vehicle.read']))).toBe(true)
   })

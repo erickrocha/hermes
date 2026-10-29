@@ -19,7 +19,7 @@ fn use_case(state: &AppState) -> TenantDashboardUseCase {
 /// An unbound SysAdmin would otherwise see every tenant's operation. This
 /// overview is the caller's tenant, never the platform.
 fn ensure_tenant_bound(locale: &Locale, user: &User) -> Result<(), ExceptionResponse> {
-    if user.tenant_id.is_some() {
+    if user.bound_tenant().is_some() {
         Ok(())
     } else {
         Err(ExceptionResponse::Forbidden(

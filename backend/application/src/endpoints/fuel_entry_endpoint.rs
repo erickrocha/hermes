@@ -101,8 +101,8 @@ pub async fn add(
     }
 
     let mut tenant_id = payload.tenant_id;
-    if current_user.tenant_id.is_some() {
-        tenant_id = current_user.tenant_id;
+    if current_user.bound_tenant().is_some() {
+        tenant_id = current_user.bound_tenant();
     }
 
     let vehicle = find_visible(&state, &locale, &current_user, payload.vehicle_uuid).await?;
@@ -235,7 +235,7 @@ pub async fn sync(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<FuelSyncOutcomeJson>> {
-    let Some(tenant_id) = current_user.tenant_id else {
+    let Some(tenant_id) = current_user.bound_tenant() else {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelEntryForbidden));
     };
     if !can_create_fuel_entry(&current_user, Some(tenant_id)) {

@@ -100,7 +100,7 @@ pub async fn add(
     if !can_manage_garage_catalogue(&current_user, payload.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::GarageForbidden));
     }
-    let tenant_id = current_user.tenant_id.or(payload.tenant_id);
+    let tenant_id = current_user.target_tenant(payload.tenant_id);
     let model = domain(&locale, payload, tenant_id, None)?;
     match use_case(&state).create(model).await {
         Ok(saved) => Ok((StatusCode::CREATED, Json(json(saved)))),

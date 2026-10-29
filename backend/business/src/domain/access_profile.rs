@@ -1,10 +1,8 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
-use crate::domain::enums::ProfileScope;
 use chrono::NaiveDateTime;
 use entity::access_profile_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
-use std::str::FromStr;
 
 /// `C-032`/`C-035` (`HRMS-851`): an access profile -- a named set of grants. A system profile (`system`,
 /// with a `key` from `permission::SYSTEM_PROFILES`) belongs to no tenant and is visible to every tenant;
@@ -17,7 +15,6 @@ pub struct AccessProfile {
     pub tenant_id: Option<i64>,
     pub name: String,
     pub name_key: String,
-    pub scope: ProfileScope,
     pub system: bool,
     pub key: Option<String>,
     pub active: bool,
@@ -48,7 +45,6 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
             tenant_id: Set(d.tenant_id),
             name: Set(d.name),
             name_key: Set(d.name_key),
-            scope: Set(d.scope.to_string()),
             system: Set(d.system),
             key: Set(d.key),
             active: Set(d.active),
@@ -67,7 +63,6 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
             tenant_id: e.tenant_id,
             name: e.name,
             name_key: e.name_key,
-            scope: ProfileScope::from_str(&e.scope).unwrap_or_default(),
             system: e.system,
             key: e.key,
             active: e.active,
@@ -90,7 +85,6 @@ impl EntityMapper<AccessProfile, Model, ActiveModel> for AccessProfileEntityMapp
                 tenant_id: e.tenant_id.take().flatten(),
                 name: e.name.take().unwrap_or_default(),
                 name_key: e.name_key.take().unwrap_or_default(),
-                scope: e.scope.take().and_then(|s| ProfileScope::from_str(&s).ok()).unwrap_or_default(),
                 system: e.system.take().unwrap_or(false),
                 key: e.key.take().flatten(),
                 active: e.active.take().unwrap_or(true),

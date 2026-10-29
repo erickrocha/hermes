@@ -15,7 +15,7 @@ import { sessionAs, sessionWith, type SystemProfileKey } from '../test/session'
 const session = (profile: SystemProfileKey, tenantId: number | null): Session =>
   sessionAs(profile, { userId: 9, tenantId, tenantUuid: tenantId ? 'tenant-42-uuid' : null })
 
-const sysAdmin = session('SysAdmin', null)
+const sysAdmin = session('SystemAdministrator', null)
 const owner = session('TenantOwner', 42)
 const member = session('TenantUser', 42)
 
@@ -73,7 +73,7 @@ describe('access-appropriate surfaces (DEF-BO-09, HRMS-414, C-035)', () => {
 
   // C-035: holding a Platform code inside a tenant is not enough -- the platform areas also need the platform scope.
   it('keeps platform areas closed to a tenant session even if it somehow holds the platform codes', () => {
-    const { container } = renderAt('/', sessionWith(['business-plan.read', 'reference-data.province.manage-read', 'tenant.create']))
+    const { container } = renderAt('/', sessionWith(['business-plan.read', 'reference-data.province.manage-read', 'tenant.child.create']))
     const menu = within(container.querySelector('.sidebar nav') as HTMLElement)
     expect(menu.queryByRole('link', { name: /plans|planos/i })).not.toBeInTheDocument()
     expect(menu.queryByRole('link', { name: /system settings|configurações do sistema/i })).not.toBeInTheDocument()

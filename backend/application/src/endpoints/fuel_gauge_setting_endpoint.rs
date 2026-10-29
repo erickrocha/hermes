@@ -53,7 +53,7 @@ pub async fn configure(
     if !can_configure_fuel_gauge(&current_user, payload.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let tenant_id = current_user.tenant_id.or(payload.tenant_id);
+    let tenant_id = current_user.target_tenant(payload.tenant_id);
     let setting = FuelGaugeSetting {
         id: None,
         uuid: None,
@@ -103,7 +103,7 @@ pub async fn get_current(
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.tenant_id.or(query.tenant_id);
+    let target = current_user.target_tenant(query.tenant_id);
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),

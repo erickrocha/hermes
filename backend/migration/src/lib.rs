@@ -17,6 +17,10 @@ mod m20261027_000001_add_map_radius_and_tracking_settings;
 mod m20261028_000001_profiles_replace_roles;
 mod m20261028_000002_customer_identity_and_address;
 mod m20261028_000003_strip_masks_from_tenant_contact;
+mod m20261029_000001_tenant_hierarchy;
+mod m20261029_000002_create_cross_tenant_action;
+mod m20261029_000003_rename_system_administrator;
+mod m20261029_000004_drop_profile_scope;
 mod m20260917_000004_tenant_country_required_and_tax_id_unique;
 mod m20260918_000001_sysadmin_has_no_tenant;
 mod m20260918_000002_tenant_column_names;
@@ -199,6 +203,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20261028_000001_profiles_replace_roles::Migration),
             Box::new(m20261028_000002_customer_identity_and_address::Migration),
             Box::new(m20261028_000003_strip_masks_from_tenant_contact::Migration),
+            Box::new(m20261029_000001_tenant_hierarchy::Migration),
+            Box::new(m20261029_000002_create_cross_tenant_action::Migration),
+            Box::new(m20261029_000003_rename_system_administrator::Migration),
+            Box::new(m20261029_000004_drop_profile_scope::Migration),
         ]
     }
 }

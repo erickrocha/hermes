@@ -74,8 +74,8 @@ pub async fn configure(
     }
 
     let mut tenant_id = payload.tenant_id;
-    if current_user.tenant_id.is_some() {
-        tenant_id = current_user.tenant_id;
+    if current_user.bound_tenant().is_some() {
+        tenant_id = current_user.bound_tenant();
     }
 
     let tank = InternalTank {
@@ -118,7 +118,7 @@ pub async fn get_current(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<InternalTankJson>> {
-    let target_tenant_id = current_user.tenant_id.or(query.tenant_id);
+    let target_tenant_id = current_user.target_tenant(query.tenant_id);
     let tank = use_case(&state)
         .get_current(target_tenant_id)
         .await
@@ -154,7 +154,7 @@ pub async fn stock(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<TankStockJson>> {
-    let target_tenant_id = current_user.tenant_id.or(query.tenant_id);
+    let target_tenant_id = current_user.target_tenant(query.tenant_id);
     let (tank, stock) = use_case(&state).stock(target_tenant_id).await.map_err(|e| {
         if e.message == INTERNAL_TANK_NOT_CONFIGURED {
             ExceptionResponse::NotFound(locale.clone(), ErrorKey::InternalTankNotConfigured)

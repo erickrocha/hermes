@@ -144,8 +144,8 @@ impl AccountInviteUseCase {
                 .id
                 .ok_or_else(|| BusinessError::new("Invalid invite".to_string()))?,
             email: user.email.clone(),
-            tenant_id: user.tenant_id,
-            enforce_tenant: user.tenant_id.is_some(),
+            tenant_id: user.bound_tenant(),
+            enforce_tenant: user.bound_tenant().is_some(),
         };
         entity::audit::run_with_user(Some(actor), self.users.save(updated))
             .await

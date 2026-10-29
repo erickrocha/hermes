@@ -14,6 +14,7 @@ use crate::routes::business_plan_routes::business_plan_routes;
 use crate::routes::billing_routes::billing_routes;
 use crate::routes::tenant_dashboard_routes::tenant_dashboard_routes;
 use crate::routes::customer_routes::customer_routes;
+use crate::routes::cross_tenant_action_routes::cross_tenant_action_routes;
 use crate::routes::holiday_routes::holiday_routes;
 use crate::routes::checklist_template_routes::checklist_template_routes;
 use crate::routes::checklist_run_routes::checklist_run_routes;
@@ -125,6 +126,7 @@ impl Modify for SecurityAddon {
         endpoints::customer_day_off_endpoint::add,
         endpoints::customer_day_off_endpoint::history,
         endpoints::customer_day_off_endpoint::remove,
+        endpoints::cross_tenant_action_endpoint::list_all,
         endpoints::holiday_endpoint::add,
         endpoints::holiday_endpoint::list_all,
         endpoints::holiday_endpoint::remove,
@@ -310,6 +312,7 @@ impl Modify for SecurityAddon {
             endpoints::json::city_json::CityJson,
             endpoints::json::customer_json::CustomerJson,
             endpoints::json::customer_day_off_json::CustomerDayOffJson,
+            endpoints::json::cross_tenant_action_json::CrossTenantActionJson,
             endpoints::json::holiday_json::HolidayJson,
             endpoints::json::transport_demand_json::TransportDemandJson,
             endpoints::json::transport_demand_allocation_json::TransportDemandAllocationJson,
@@ -477,7 +480,17 @@ async fn start() -> anyhow::Result<()> {
         .sync_system_profiles(),
     )
     .await?;
-    entity::audit::run_as_platform(sysadmin_use_case.seed_sysadmin(sysadmin_profile_id)).await?;
+    let root_tenant = entity::audit::run_as_platform(
+        business::use_cases::tenant_use_case::TenantUseCase::new(business::gateway::tenant_gateway::TenantGateway::new(
+            connection.clone(),
+        ))
+        .find_root(),
+    )
+    .await?;
+    let root_tenant_id = root_tenant
+        .id
+        .ok_or_else(|| anyhow::anyhow!("the root tenant has no id"))?;
+    entity::audit::run_as_platform(sysadmin_use_case.seed_sysadmin(sysadmin_profile_id, root_tenant_id)).await?;
 
     let state = AppState {
         conn: Arc::new(connection),
@@ -511,6 +524,8 @@ async fn start() -> anyhow::Result<()> {
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
             header::ACCESS_CONTROL_ALLOW_METHODS,
             header::ACCESS_CONTROL_ALLOW_HEADERS,
+            // `C-036` (`DS-1`): the descendant tenant a request acts in.
+            header::HeaderName::from_static("x-tenant-uuid"),
         ]);
 
     let cors =
@@ -538,6 +553,7 @@ async fn start() -> anyhow::Result<()> {
         .nest("/billing", billing_routes(state.clone()))
         .nest("/dashboard", tenant_dashboard_routes(state.clone()))
         .nest("/customer", customer_routes(state.clone()))
+        .nest("/cross-tenant-action", cross_tenant_action_routes(state.clone()))
         .nest("/holiday", holiday_routes(state.clone()))
         .nest("/checklist-template", checklist_template_routes(state.clone()))
         .nest("/checklist-run", checklist_run_routes(state.clone()))
@@ -721,6 +737,7 @@ mod openapi_contract_tests {
             "user_routes" => "/user",
             "vehicle_routes" => "/vehicle",
             "customer_routes" => "/customer",
+            "cross_tenant_action_routes" => "/cross-tenant-action",
             "holiday_routes" => "/holiday",
             "checklist_template_routes" => "/checklist-template",
             "checklist_run_routes" => "/checklist-run",

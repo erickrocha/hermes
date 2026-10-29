@@ -43,11 +43,11 @@ const TENANT_USER_PROFILE: i64 = 3;
 const SYSADMIN_PROFILE: i64 = 4;
 
 fn profile_row(id: i64) -> access_profile_entity::Model {
-    let (key, scope) = match id {
-        DRIVER_PROFILE => (DRIVER, ProfileScope::Tenant),
-        TENANT_USER_PROFILE => (TENANT_USER, ProfileScope::Tenant),
-        SYSADMIN_PROFILE => (SYS_ADMIN, ProfileScope::Platform),
-        _ => (TENANT_OWNER, ProfileScope::Tenant),
+    let key = match id {
+        DRIVER_PROFILE => DRIVER,
+        TENANT_USER_PROFILE => TENANT_USER,
+        SYSADMIN_PROFILE => SYS_ADMIN,
+        _ => TENANT_OWNER,
     };
     access_profile_entity::Model {
         id,
@@ -55,7 +55,6 @@ fn profile_row(id: i64) -> access_profile_entity::Model {
         tenant_id: None,
         name: key.into(),
         name_key: key.to_lowercase(),
-        scope: scope.to_string(),
         system: true,
         key: Some(key.into()),
         active: true,
@@ -778,7 +777,7 @@ async fn a_sysadmin_token_carries_no_tenant() {
     let token = issue_token(admin);
     assert_eq!(token.tenant_id, None);
     assert_eq!(token.scope, ProfileScope::Platform);
-    assert!(token.permissions.contains(&"tenant.create".to_string()));
+    assert!(token.permissions.contains(&"tenant.child.create".to_string()));
     let mut row_admin = row(&argon(), true);
     row_admin.profile_id = SYSADMIN_PROFILE;
     row_admin.tenant_id = None;

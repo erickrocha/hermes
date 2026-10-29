@@ -11,11 +11,12 @@ import { nonExecutionReducer } from './features/nonExecutionSlice'
 import { billingReducer } from './features/billingSlice'
 import { publicPlanReducer } from './features/publicPlanSlice'
 import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { apiMessage, normalizeSession } from './api'
+import { TARGET_KEY, apiMessage, normalizeSession, readTarget } from './api'
 import * as authService from './services/authService'
 import * as dataService from './services/dataService'
 import { emptyPage } from './types'
-import type { BusinessPlan, City, Page, Province, Session, Tenant, User } from './types'
+import { crossTenantActionReducer } from './features/crossTenantActionSlice'
+import type { BusinessPlan, City, Page, Province, Session, TargetTenant, Tenant, User } from './types'
 
 const loadStoredSession = (): Session | null => {
   const stored = localStorage.getItem('hermes.session')
@@ -46,17 +47,29 @@ export const acceptInvitation = createAsyncThunk('auth/acceptInvitation', async 
   try { await authService.acceptInvitation(payload) } catch (error) { return rejectWithValue(apiMessage(error, '')) }
 })
 
+/// C-036 (`DS-1`): act inside a descendant tenant (or, with `null`, back in the signed-in one). The target is stored
+/// first, so the request that follows already carries it, and the effective permissions are read again -- inside a
+/// descendant they are what the caller's `tenant.child.*` grants stand for there, and the menus follow them.
+export const selectTargetTenant = createAsyncThunk('auth/target', async (target: TargetTenant | null, { dispatch }) => {
+  if (target) localStorage.setItem(TARGET_KEY, JSON.stringify(target)); else localStorage.removeItem(TARGET_KEY)
+  dispatch(authSlice.actions.setTarget(target))
+  await dispatch(loadPermissions())
+})
+
 const authSlice = createSlice({
-  name: 'auth', initialState: { session: initialSession, loading: false, error: '' },
-  reducers: { logout: (state) => { state.session = null; localStorage.removeItem('hermes.session') }, clearAuthError: (state) => { state.error = '' } },
+  name: 'auth', initialState: { session: initialSession, loading: false, error: '', target: initialSession ? readTarget() : null as TargetTenant | null },
+  reducers: { setTarget: (state, action: { payload: TargetTenant | null }) => { state.target = action.payload }, logout: (state) => { state.session = null; state.target = null; localStorage.removeItem('hermes.session'); localStorage.removeItem(TARGET_KEY) }, clearAuthError: (state) => { state.error = '' } },
   extraReducers: (builder) => builder
     .addCase(login.pending, (state) => { state.loading = true; state.error = '' })
-    .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
+    .addCase(login.fulfilled, (state, action) => { state.loading = false; state.session = action.payload; state.target = null; localStorage.removeItem(TARGET_KEY); localStorage.setItem('hermes.session', JSON.stringify(action.payload)) })
     .addCase(loadPermissions.fulfilled, (state, action) => {
       // Only a well-formed answer replaces what the token brought.
       if (!state.session || !Array.isArray(action.payload?.permissions)) return
       const { permissions, scope, profileKey, profileName } = action.payload
-      state.session = { ...state.session, permissions, scope: scope === 'Platform' ? 'Platform' : 'Tenant', profileKey, profileName }
+      // Inside a descendant the answer is the delegated one; whether the account may act there is its own, set at sign-in
+      // and worked out again only when no target is chosen.
+      const canTarget = state.target ? state.session.canTarget : permissions.includes('tenant.child.data.read')
+      state.session = { ...state.session, permissions, scope: scope === 'Platform' ? 'Platform' : 'Tenant', profileKey, profileName, canTarget }
       localStorage.setItem('hermes.session', JSON.stringify(state.session))
     })
     .addCase(login.rejected, (state, action) => { state.loading = false; state.error = String(action.payload ?? '') })
@@ -121,7 +134,7 @@ const dataSlice = createSlice({
 
 // Uma slice por feature (resourceSlice) mais os seletores (lookup): o registro único mantém o store e os testes de acordo.
 const featureReducers = Object.fromEntries(allResources.map((resource) => [resource.name, resource.reducer]))
-export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, billing: billingReducer, publicPlans: publicPlanReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, maintenanceNotifications: maintenanceNotificationReducer, nonExecutions: nonExecutionReducer, ...featureReducers } })
+export const store = configureStore({ reducer: { auth: authSlice.reducer, data: dataSlice.reducer, lookup: lookupReducer, panel: panelReducer, profiles: profileReducer, management: managementReducer, billing: billingReducer, publicPlans: publicPlanReducer, cost: costReducer, referenceData: referenceDataReducer, garageDevices: garageDeviceReducer, maintenanceNotifications: maintenanceNotificationReducer, nonExecutions: nonExecutionReducer, crossTenantActions: crossTenantActionReducer, ...featureReducers } })
 export const { logout, clearAuthError } = authSlice.actions
 export const { clearDataError, clearCities } = dataSlice.actions
 export type RootState = ReturnType<typeof store.getState>

@@ -5,12 +5,13 @@
 
 use business::domain::access_profile::AccessProfile;
 use business::domain::authorization::*;
-use business::domain::enums::ProfileScope;
 use business::domain::permission::{self, DRIVER, Grants, MECHANIC, SYS_ADMIN, TENANT_OWNER, TENANT_USER};
 use business::domain::user::{Access, User};
 
 const OWN: i64 = 42;
 const OTHER: i64 = 7;
+/// `C-036`: the root tenant; the platform actor belongs to it.
+const ROOT: i64 = 99;
 
 fn actor(key: &str, tenant_id: Option<i64>) -> User {
     User {
@@ -33,7 +34,7 @@ fn actor(key: &str, tenant_id: Option<i64>) -> User {
 }
 
 fn platform() -> User {
-    actor(SYS_ADMIN, None)
+    actor(SYS_ADMIN, Some(ROOT))
 }
 
 type Tenanted = fn(&User, Option<i64>) -> bool;
@@ -156,8 +157,8 @@ fn the_platform_actor_reaches_every_tenant_it_names_and_no_tenant_profile_reache
         for key in [TENANT_OWNER, TENANT_USER, DRIVER, MECHANIC] {
             assert!(!capability(&actor(key, Some(OWN))), "{key} never holds {name}");
         }
-        // A platform profile stamped with a tenant is not the platform actor (HRMS-133).
-        assert!(!capability(&actor(SYS_ADMIN, Some(OWN))), "a tenant-bound platform profile never holds {name}");
+        // A platform profile without a tenant is not an actor at all (`C-036`: every user has a tenant).
+        assert!(!capability(&actor(SYS_ADMIN, None)), "a tenant-less platform profile never holds {name}");
     }
 }
 
@@ -201,15 +202,15 @@ fn creation_needs_a_tenant_the_platform_names_and_a_tenant_actor_owns() {
 fn the_structural_rules_tenant_reach_and_the_generic_compositions() {
     let platform = platform();
     let owner = actor(TENANT_OWNER, Some(OWN));
-    assert!(is_platform_actor(&platform) && !is_platform_actor(&owner) && !is_platform_actor(&actor(SYS_ADMIN, Some(OWN))));
-    assert!(lacks_required_tenant(&actor(TENANT_USER, None)) && lacks_required_tenant(&actor(SYS_ADMIN, Some(OWN))));
+    assert!(is_platform_actor(&platform) && !is_platform_actor(&owner) && !is_platform_actor(&actor(SYS_ADMIN, None)));
+    assert!(lacks_required_tenant(&actor(TENANT_USER, None)) && lacks_required_tenant(&actor(SYS_ADMIN, None)));
     assert!(!lacks_required_tenant(&platform) && !lacks_required_tenant(&owner));
     assert!(can_access_tenant(&owner, OWN) && !can_access_tenant(&owner, OTHER) && can_access_tenant(&platform, OTHER));
     assert!(reaches(&owner, Some(OWN)) && !reaches(&owner, Some(OTHER)) && !reaches(&owner, None) && reaches(&platform, None));
-    assert!(may_act_on(&owner, "vehicle.update", Some(OWN)) && !may_act_on(&owner, "tenant.create", Some(OWN)));
+    assert!(may_act_on(&owner, "vehicle.update", Some(OWN)) && !may_act_on(&owner, "tenant.child.create", Some(OWN)));
     assert!(may_act_on_any(&owner, &["nothing.here", "vehicle.update"], Some(OWN)));
     assert!(!may_act_on_any(&actor(DRIVER, Some(OWN)), &["vehicle.update", "vehicle.create"], Some(OWN)));
-    assert!(may(&owner, "tenant.update") && !may(&actor(TENANT_OWNER, None), "tenant.update") && may(&platform, "tenant.create"));
+    assert!(may(&owner, "tenant.update") && !may(&actor(TENANT_OWNER, None), "tenant.update") && may(&platform, "tenant.child.create"));
     assert!(may_create_in(&owner, "vehicle.create", Some(OWN)) && !may_create_in(&owner, "vehicle.create", Some(OTHER)));
     assert!(!may_create_in(&actor(DRIVER, Some(OWN)), "vehicle.create", None));
     assert!(can_update_tenant(&owner, OWN) && !can_update_tenant(&owner, OTHER) && can_update_tenant(&platform, OTHER));
@@ -235,16 +236,16 @@ fn user_administration_follows_the_user_permissions_and_the_tenant() {
     assert!(!can_manage_access_profiles(&clerk, Some(OWN)));
 }
 
-fn profile(scope: ProfileScope, system: bool, tenant_id: Option<i64>, active: bool) -> AccessProfile {
+/// `administrator`: the *Administrador do Sistema* system profile.
+fn profile(administrator: bool, system: bool, tenant_id: Option<i64>, active: bool) -> AccessProfile {
     AccessProfile {
         id: Some(9),
         uuid: Some("p".into()),
         tenant_id,
         name: "P".into(),
         name_key: "p".into(),
-        scope,
         system,
-        key: None,
+        key: administrator.then(|| SYS_ADMIN.to_string()),
         active,
         permissions: Vec::new(),
         created_at: None,
@@ -258,13 +259,13 @@ fn profile(scope: ProfileScope, system: bool, tenant_id: Option<i64>, active: bo
 fn profile_placement_fit_moves_and_the_grant_guard() {
     let platform = platform();
     let owner = actor(TENANT_OWNER, Some(OWN));
-    let platform_profile = profile(ProfileScope::Platform, true, None, true);
-    let system_tenant = profile(ProfileScope::Tenant, true, None, true);
-    let own = profile(ProfileScope::Tenant, false, Some(OWN), true);
-    let foreign = profile(ProfileScope::Tenant, false, Some(OTHER), true);
-    let inactive = profile(ProfileScope::Tenant, false, Some(OWN), false);
+    let platform_profile = profile(true, true, None, true);
+    let system_tenant = profile(false, true, None, true);
+    let own = profile(false, false, Some(OWN), true);
+    let foreign = profile(false, false, Some(OTHER), true);
+    let inactive = profile(false, false, Some(OWN), false);
 
-    assert_eq!(can_assign_profile(&platform, &platform_profile), Some(CreationTenant::Fixed(None)));
+    assert_eq!(can_assign_profile(&platform, &platform_profile), Some(CreationTenant::Fixed(Some(ROOT))));
     assert_eq!(can_assign_profile(&platform, &system_tenant), Some(CreationTenant::CallerChosen));
     assert_eq!(can_assign_profile(&platform, &inactive), None);
     assert_eq!(can_assign_profile(&owner, &platform_profile), None);
@@ -273,7 +274,7 @@ fn profile_placement_fit_moves_and_the_grant_guard() {
     assert_eq!(can_assign_profile(&owner, &foreign), None);
     assert_eq!(can_assign_profile(&actor(TENANT_OWNER, None), &own), None);
 
-    assert!(profile_fits(&platform_profile, None) && !profile_fits(&platform_profile, Some(OWN)));
+    assert!(profile_fits(&platform_profile, Some(ROOT)) && !profile_fits(&platform_profile, None));
     assert!(profile_fits(&system_tenant, Some(OTHER)) && !profile_fits(&system_tenant, None));
     assert!(profile_fits(&own, Some(OWN)) && !profile_fits(&own, Some(OTHER)) && !profile_fits(&inactive, Some(OWN)));
 
@@ -283,7 +284,7 @@ fn profile_placement_fit_moves_and_the_grant_guard() {
     let driver_grants = Grants::from_codes(permission::system_grants(DRIVER));
     assert!(can_grant(&owner, &driver_grants) && can_grant(&platform, &driver_grants));
     assert!(!can_grant(&actor(MECHANIC, Some(OWN)), &Grants::from_codes(["user.create"])));
-    assert!(!can_grant(&owner, &Grants::from_codes(["tenant.create"])));
+    assert!(!can_grant(&owner, &Grants::from_codes(["tenant.child.create"])));
 }
 
 #[test]
@@ -299,4 +300,17 @@ fn a_driver_is_whoever_holds_driver_act_enabled_in_the_tenant() {
     clerk.access.grants.grant(permission::DRIVER_ACT, permission::GrantScope::Full);
     assert!(is_active_driver_of(&clerk, Some(OWN)), "an extra driver.act makes a driver of anyone");
     assert!(!is_active_driver_of(&actor(DRIVER, None), None), "a driver without a tenant drives nowhere");
+}
+
+/// `C-036`: the platform actor now belongs to the root tenant, but it is still not confined to one -- a request
+/// it makes acts in the tenant it names, and everyone else acts in their own.
+#[test]
+fn the_platform_actor_is_not_confined_to_its_own_tenant_and_names_the_one_it_acts_in() {
+    let platform = platform();
+    let owner = actor(TENANT_OWNER, Some(OWN));
+    assert_eq!(platform.bound_tenant(), None);
+    assert_eq!(owner.bound_tenant(), Some(OWN));
+    assert_eq!(platform.target_tenant(Some(OTHER)), Some(OTHER));
+    assert_eq!(platform.target_tenant(None), None, "the platform must name a tenant");
+    assert_eq!(owner.target_tenant(Some(OTHER)), Some(OWN), "a tenant account cannot name another tenant");
 }

@@ -58,6 +58,10 @@ name = "tenant_use_case_test"
 required-features = ["mock"]
 
 [[test]]
+name = "cross_tenant_action_use_case_test"
+required-features = ["mock"]
+
+[[test]]
 name = "business_plan_use_case_test"
 required-features = ["mock"]
 

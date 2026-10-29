@@ -67,8 +67,8 @@ pub async fn add(
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PreventivePlanForbidden));
     }
     let mut tenant_id = payload.tenant_id;
-    if current_user.tenant_id.is_some() {
-        tenant_id = current_user.tenant_id;
+    if current_user.bound_tenant().is_some() {
+        tenant_id = current_user.bound_tenant();
     }
     let model = InspectionModel {
         id: None,

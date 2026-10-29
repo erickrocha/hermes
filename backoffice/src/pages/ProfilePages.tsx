@@ -8,34 +8,30 @@ import { useTranslation } from 'react-i18next'
 import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch, RootState } from '../store'
 import { fetchProfileEditor, fetchProfiles, fetchUserProfile, saveAccessProfile, saveUserProfile } from '../features/profileSlice'
-import { grantCode, has, isPlatform, ownGrant } from '../features/access'
+import { has, isPlatform, ownGrant } from '../features/access'
 import { canEditProfiles } from '../features/routeAccess'
-import type { AccessProfile, Grant, Permission, ProfileScope, Session } from '../types'
+import type { AccessProfile, Grant, Permission, Session } from '../types'
 import { Combobox } from '../components/Combobox'
 import { Empty, Form, Loading, PageHeader } from '../components/UI'
 import { PermissionPicker } from '../components/molecules/PermissionPicker'
 
-// C-035 (replaces C-032's role-based profiles): an access profile is a named set of grants with a scope. The five
-// former roles are read-only system profiles; a tenant's own profiles are Tenant-scope, the platform's may be either.
-export const SCOPES: ProfileScope[] = ['Tenant', 'Platform']
+// C-035/C-036: an access profile is a named set of grants -- it has no scope. The former roles are read-only system
+// profiles; the catalogue the server offers is what the caller holds, which is what they may hand out.
 /// The system profiles a new profile can start from -- the ones below the owner, which `defaultFor` names.
 export const STARTING_POINTS = ['TenantUser', 'Driver', 'Mechanic']
-const blank: AccessProfile = { name: '', scope: 'Tenant', system: false, active: true, permissions: [] }
-
-/** The catalogue entries a profile of this scope may hold: a Tenant profile holds Tenant codes, a Platform one everything grantable. */
-export const grantableFor = (catalogue: Permission[], scope: ProfileScope) => (scope === 'Platform' ? catalogue : catalogue.filter((p) => p.scope === 'Tenant'))
+const blank: AccessProfile = { name: '', system: false, active: true, permissions: [] }
 
 /** The grants the given system profile holds, derived the way the server derives them: `@own` where the Driver's catalogue entry allows it. */
 export const systemGrantsFrom = (catalogue: Permission[], key: string): Grant[] =>
   catalogue.filter((p) => p.defaultFor.includes(key)).map((p) => (key === 'Driver' && p.own ? ownGrant(p.code) : p.code))
 
-/** The profiles a caller may hand out: active ones; a tenant caller never sees Platform profiles. */
+/** The profiles a caller may hand out: active ones; the system administrator's is only offered to its own kind. */
 export const profilesFor = (session: Session | null, profiles: AccessProfile[]) =>
-  profiles.filter((p) => p.active && (isPlatform(session) || p.scope === 'Tenant'))
+  profiles.filter((p) => p.active && (isPlatform(session) || p.key !== 'SystemAdministrator'))
 
-/** The catalogue for a user's extras: the profile's scope, minus what the profile already grants in full. */
+/** The catalogue for a user's extras: what the caller may grant, minus what the profile already grants in full. */
 export const extrasCatalogueFor = (catalogue: Permission[], profile: AccessProfile | undefined) =>
-  profile ? grantableFor(catalogue, profile.scope).filter((p) => !profile.permissions.includes(p.code)) : []
+  profile ? catalogue.filter((p) => !profile.permissions.includes(p.code)) : []
 
 /** System profiles first, as the server lists them, then by name. */
 export const sortProfiles = (profiles: AccessProfile[]) => [...profiles].sort((a, b) => Number(b.system) - Number(a.system) || a.name.localeCompare(b.name))
@@ -49,8 +45,8 @@ export function ProfilesPage() {
   const editable = (profile: AccessProfile) => !profile.system && canEditProfiles(session!)
   return <><PageHeader title={t('profiles')} subtitle={t('profilesSummary')} actions={has(session, 'profile.create') ? <Link className="btn primary" to="/profiles/new"><Plus size={17} />{t('newProfile')}</Link> : undefined} />
     {error && <p className="form-error">{error}</p>}
-    {!items ? <Loading /> : !items.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('scope')}</th><th>{t('permissions')}</th><th>{t('status')}</th><th /></tr></thead>
-      <tbody>{items.map((p) => <tr key={p.uuid}><td><b>{profileLabelOf(p, t)}</b>{p.system && <small><span className="badge yellow"><Lock size={12} />{t('systemProfile')} · <span className="profile-key">{p.key}</span></span></small>}</td><td><span className="badge blue">{t(`scope${p.scope}`)}</span></td><td>{p.permissions.length}</td><td>{p.active ? t('active') : t('inactive')}</td>
+    {!items ? <Loading /> : !items.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('permissions')}</th><th>{t('status')}</th><th /></tr></thead>
+      <tbody>{items.map((p) => <tr key={p.uuid}><td><b>{profileLabelOf(p, t)}</b>{p.system && <small><span className="badge yellow"><Lock size={12} />{t('systemProfile')} · <span className="profile-key">{p.key}</span></span></small>}</td><td>{p.permissions.length}</td><td>{p.active ? t('active') : t('inactive')}</td>
         <td>{p.uuid && <Link to={`/profiles/${p.uuid}/edit`}>{editable(p) ? <><Pencil size={15} />{t('edit')}</> : <><Eye size={15} />{t('view')}</>}</Link>}</td></tr>)}</tbody></table></div></div>}</>
 }
 
@@ -59,28 +55,22 @@ export function ProfileEditorPage() {
   const session = useSelector((s: RootState) => s.auth.session)
   const [catalogue, setCatalogue] = useState<Permission[]>([]); const [loaded, setLoaded] = useState<AccessProfile | null>(null)
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState('')
-  const schema = yup.object({ name: yup.string().required(t('genericError')), scope: yup.mixed<ProfileScope>().oneOf(SCOPES).required(), system: yup.boolean().required(), active: yup.boolean().required(), permissions: yup.array().of(yup.string().required()).required() })
+  const schema = yup.object({ name: yup.string().required(t('genericError')), system: yup.boolean().required(), active: yup.boolean().required(), permissions: yup.array().of(yup.string().required()).required() })
   const { control, register, handleSubmit, reset, setValue, watch, formState: { errors: validationErrors } } = useForm<AccessProfile>({ resolver: yupResolver(schema) as never, defaultValues: { ...blank } })
   useEffect(() => {
     dispatch(fetchProfileEditor(uuid)).unwrap()
       .then(({ catalogue: permissions, profile }) => { setCatalogue(permissions); if (profile) { setLoaded(profile); reset(profile) } }).catch((cause) => setError(String(cause || t('loadError')))).finally(() => setLoading(false))
   }, [dispatch, reset, uuid, t])
-  const scope = watch('scope'); const permissions = watch('permissions') ?? []
-  // A system profile is the server's: shown, never edited. A tenant caller's profiles are always Tenant-scope.
+  const permissions = watch('permissions') ?? []
+  // A system profile is the server's: shown, never edited.
   const readOnly = Boolean(loaded?.system) || (uuid ? !has(session, 'profile.update') : !has(session, 'profile.create'))
-  const scopeChoice = isPlatform(session) && !readOnly
-  const grantable = useMemo(() => grantableFor(catalogue, scope), [catalogue, scope])
-  // Narrowing to Tenant drops the Platform grants a Tenant profile cannot hold.
-  const changeScope = (next: ProfileScope) => { setValue('scope', next, { shouldDirty: true }); if (next === 'Tenant') { const tenantCodes = new Set(catalogue.filter((p) => p.scope === 'Tenant').map((p) => p.code)); setValue('permissions', permissions.filter((grant) => tenantCodes.has(grantCode(grant))), { shouldDirty: true }) } }
+  const grantable = catalogue
   const startFrom = (key: string) => { if (key) setValue('permissions', systemGrantsFrom(grantable, key), { shouldDirty: true }) }
   const save = handleSubmit(async (profile) => { setSaving(true); setError(''); try { await dispatch(saveAccessProfile({ uuid, profile })).unwrap(); navigate('/profiles') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
   if (loading) return <Loading />
   return <><PageHeader title={uuid ? (readOnly ? t('viewProfile') : t('editProfile')) : t('newProfile')} /><section className="page-form-card"><Form onSubmit={save} error={error} saving={saving} onCancel={() => navigate('/profiles')} readOnly={readOnly}>
     {loaded?.system && <p className="span-2 form-hint"><Lock size={14} /> {t('systemProfileHint')} · <span className="profile-key">{loaded.key}</span></p>}
     <label className="span-2">{t('name')}<input required readOnly={readOnly} {...register('name')} />{validationErrors.name?.message && <small className="form-error">{validationErrors.name.message}</small>}</label>
-    <label>{t('scope')}{scopeChoice
-      ? <Controller control={control} name="scope" render={({ field }) => <select value={field.value} onChange={(event) => changeScope(event.target.value as ProfileScope)}>{SCOPES.map((option) => <option key={option} value={option}>{t(`scope${option}`)}</option>)}</select>} />
-      : <input readOnly value={t(`scope${scope}`)} />}</label>
     <label className="checkbox"><Controller control={control} name="active" render={({ field }) => <input type="checkbox" disabled={readOnly} checked={field.value} onChange={field.onChange} />} />{t('active')}</label>
     {!readOnly && <label className="span-2">{t('startFrom')}<select value="" onChange={(event) => startFrom(event.target.value)}><option value="">{t('startFromPlaceholder')}</option>{STARTING_POINTS.map((key) => <option key={key} value={key}>{t(`profile${key}`)}</option>)}</select></label>}
     <PermissionPicker catalogue={grantable} value={permissions} readOnly={readOnly} onChange={(grants) => setValue('permissions', grants, { shouldDirty: true })} />
@@ -105,7 +95,7 @@ export function UserAccessFields({ profiles, catalogue, profileUuid, extraPermis
   const selected = offered.find((p) => p.uuid === profileUuid)
   const extras = useMemo(() => extrasCatalogueFor(catalogue, selected), [catalogue, selected])
   return <div className="access-fields">
-    <label className="span-2">{t('profile')}<Combobox filterable ariaLabel={t('profile')} disabled={disabled} value={profileUuid} options={offered.map((p) => ({ value: p.uuid!, label: `${profileLabelOf(p, t)} · ${t(`scope${p.scope}`)}` }))} onChange={(value) => onProfileChange(value, offered.find((p) => p.uuid === value))} />
+    <label className="span-2">{t('profile')}<Combobox filterable ariaLabel={t('profile')} disabled={disabled} value={profileUuid} options={offered.map((p) => ({ value: p.uuid!, label: profileLabelOf(p, t) }))} onChange={(value) => onProfileChange(value, offered.find((p) => p.uuid === value))} />
       {selected && <small className="form-hint">{selected.system ? `${t('systemProfile')} · ${selected.key}` : t('customProfile')} · {t('permissionsCount', { count: selected.permissions.length })}</small>}
       {error && <small className="form-error">{error}</small>}</label>
     {selected && <><p className="span-2 form-hint"><b>{t('extraPermissions')}</b> · {t('extraPermissionsHint')}</p>

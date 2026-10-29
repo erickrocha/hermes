@@ -175,7 +175,7 @@ pub async fn add(
     reject_unknown_trip_status(&payload.status, &locale)?;
     // HRMS-921's rule, applied here: for a tenant-bound caller the owning
     // tenant is the caller's own, never the payload's.
-    let tenant_id = current_user.tenant_id.or(payload.tenant_id);
+    let tenant_id = current_user.target_tenant(payload.tenant_id);
 
     let (customer_id, driver_id, second_driver_id, vehicle_id) =
         resolve_relations(&state, &locale, tenant_id, &payload).await?;
@@ -492,7 +492,7 @@ async fn import_rows(
 ) -> Result<TripImportBatch, ExceptionResponse> {
     let mut batch = TripImportBatch::default();
     for (index, item) in payload.into_iter().enumerate() {
-        let tenant_id = current_user.tenant_id.or(item.tenant_id);
+        let tenant_id = current_user.target_tenant(item.tenant_id);
         if !can_create_extra_trip(current_user, tenant_id) {
             return Err(ExceptionResponse::Forbidden(
                 locale.clone(),

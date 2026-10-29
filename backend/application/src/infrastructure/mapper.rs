@@ -163,6 +163,7 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             city,
             zipcode,
             business_plan_id: t.business_plan_id,
+            parent_tenant_id: t.parent_tenant_id,
             created_at: t.created_at,
             created_by: t.created_by,
             updated_at: t.updated_at,
@@ -195,6 +196,9 @@ impl Mapper<Tenant, TenantJson> for TenantMapper {
             // Never taken from the request body — see HRMS-224 and
             // `TenantUseCase::create`/`update`, which enforce this too.
             business_plan_id: None,
+            // Never taken from the request body here: create sets it from the creator's tenant (`HRMS-872`) and a
+            // move goes through `TenantUseCase::move_tenant` (`SR-AC-08-13`).
+            parent_tenant_id: None,
             created_at: u.created_at,
             created_by: u.created_by,
             updated_at: u.updated_at,
@@ -364,6 +368,28 @@ impl Mapper<Customer, CustomerJson> for CustomerMapper {
 
 /// `EPIC-SC-01-S03` (`HRMS-602`): the holiday registry's HTTP shape <-> domain
 /// seam.
+pub struct CrossTenantActionMapper;
+impl CrossTenantActionMapper {
+    pub fn json(t: business::domain::cross_tenant_action::CrossTenantAction) -> crate::endpoints::json::cross_tenant_action_json::CrossTenantActionJson {
+        crate::endpoints::json::cross_tenant_action_json::CrossTenantActionJson {
+            uuid: t.uuid,
+            actor_user_id: t.actor_user_id,
+            actor_email: t.actor_email,
+            actor_tenant_id: t.actor_tenant_id,
+            affected_tenant_id: t.affected_tenant_id,
+            kind: t.kind,
+            method: t.method,
+            operation: t.route,
+            path: t.path,
+            occurred_at: t.occurred_at,
+        }
+    }
+
+    pub fn json_vec(u: Vec<business::domain::cross_tenant_action::CrossTenantAction>) -> Vec<crate::endpoints::json::cross_tenant_action_json::CrossTenantActionJson> {
+        u.into_iter().map(Self::json).collect()
+    }
+}
+
 pub struct HolidayMapper;
 impl Mapper<Holiday, HolidayJson> for HolidayMapper {
     fn json(t: Holiday) -> HolidayJson {

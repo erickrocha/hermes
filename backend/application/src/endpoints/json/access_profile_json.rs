@@ -12,13 +12,10 @@ pub struct AccessProfileJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<i64>,
     pub name: String,
-    /// `Tenant` (default) or `Platform` -- the latter only created by the platform, for accounts with no tenant.
-    #[serde(default = "tenant_scope")]
-    pub scope: String,
     /// Read-only: seeded by the platform, never edited.
     #[serde(default)]
     pub system: bool,
-    /// Read-only: the system profile's key (`SysAdmin`, `TenantOwner`, `TenantUser`, `Driver`, `Mechanic`).
+    /// Read-only: the system profile's key (`SystemAdministrator`, `TenantOwner`, `TenantUser`, `Driver`, `Mechanic`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     #[serde(default = "yes")]
@@ -26,10 +23,6 @@ pub struct AccessProfileJson {
     /// Grants from `GET /access-profile/catalogue`: `code`, or `code@own` for a permission with `own`.
     #[serde(default)]
     pub permissions: Vec<String>,
-}
-
-fn tenant_scope() -> String {
-    "Tenant".to_string()
 }
 
 fn yes() -> bool {

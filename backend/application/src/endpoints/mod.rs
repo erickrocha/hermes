@@ -4,6 +4,7 @@ pub mod billing_endpoint;
 pub mod city_endpoint;
 pub mod customer_endpoint;
 pub mod customer_day_off_endpoint;
+pub mod cross_tenant_action_endpoint;
 pub mod holiday_endpoint;
 pub mod json;
 pub mod province_endpoint;

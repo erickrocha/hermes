@@ -265,7 +265,7 @@ pub async fn evaluate(
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<EvaluationJson>> {
     ensure(can_evaluate_non_execution(&current_user), &locale)?;
-    let outcome = if current_user.tenant_id.is_some() {
+    let outcome = if current_user.bound_tenant().is_some() {
         use_case(state.conn.as_ref())
             .evaluate(Utc::now().naive_utc())
             .await

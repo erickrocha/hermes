@@ -21,7 +21,7 @@ describe('work orders (C-026, HRMS-700…705)', () => {
   // the server's catalogue has it); the platform administrator has no tenant to read work orders in.
   it('offers the screen to whoever holds work-order.read inside a tenant, not to the platform administrator', () => {
     for (const profile of ['TenantOwner', 'TenantUser', 'Mechanic', 'Driver'] as const) expect(canSeeWorkOrders(session(profile))).toBe(true)
-    expect(canSeeWorkOrders(session('SysAdmin'))).toBe(false)
+    expect(canSeeWorkOrders(session('SystemAdministrator'))).toBe(false)
     expect(canSeeWorkOrders(session('Mechanic', ['vehicle.read']))).toBe(false)
   })
 

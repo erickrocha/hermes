@@ -58,8 +58,8 @@ pub async fn add(
         ));
     }
 
-    if current_user.tenant_id.is_some() {
-        domain.tenant_id = current_user.tenant_id;
+    if current_user.bound_tenant().is_some() {
+        domain.tenant_id = current_user.bound_tenant();
     }
 
     match use_case(&state).create(domain).await {

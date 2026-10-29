@@ -694,7 +694,7 @@ pub async fn monitor_map(
     let failed = || ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError);
     let tenant_id = device
         .map(|Extension(device)| device.tenant_id)
-        .or_else(|| current_user.and_then(|Extension(user)| user.tenant_id));
+        .or_else(|| current_user.and_then(|Extension(user)| user.bound_tenant()));
     let db = state.conn.as_ref().clone();
     let settings = TenantRuleSettingGateway::new(db.clone())
         .settings_for(tenant_id)

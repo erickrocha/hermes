@@ -27,6 +27,9 @@ pub struct TenantJson {
     /// `POST /tenant/{id}/plan` (PD-021); ignored on create/update.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub business_plan_id: Option<i64>,
+    /// `C-036`: the tenant that manages this one. Read-only: set from the creator's tenant on create.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tenant_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::NaiveDateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +57,7 @@ impl TenantJson {
         Self {
             id: None, uuid: None, business_name: None, company_name: None, tax_id: None, email: None, phone: None,
             website: None, address_line1: None, address_line2: None, locality: None, administrative_area: None,
-            postal_code: None, country_code: None, province: None, city: None, zipcode: None, business_plan_id: None,
+            postal_code: None, country_code: None, province: None, city: None, zipcode: None, business_plan_id: None, parent_tenant_id: None,
             created_at: None, created_by: None, updated_at: None, updated_by: None,
         }
     }

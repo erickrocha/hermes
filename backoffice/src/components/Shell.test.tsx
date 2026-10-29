@@ -20,7 +20,7 @@ describe('Shell', () => {
   })
 
   it('offers the vendor-only entries to the SysAdmin', async () => {
-    signIn('SysAdmin')
+    signIn('SystemAdministrator')
     renderPage(<Shell><p>x</p></Shell>)
     await screen.findByText('x')
     expect(screen.getAllByRole('link').some((link) => link.getAttribute('href') === '/plans')).toBe(true)

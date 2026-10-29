@@ -7,6 +7,17 @@ use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
 
+/// `C-036`: an account reaches every tenant it names -- the legacy platform reach -- only through the system
+/// administrator's profile, placed in the root tenant. Nothing else about a profile is a "scope"; any other
+/// account acts in its own tenant, or in a descendant through `X-Tenant-Uuid` and the `tenant.child.*` grants.
+fn reach_of(profile: &AccessProfile) -> ProfileScope {
+    if profile.system && profile.key.as_deref() == Some(crate::domain::permission::SYS_ADMIN) {
+        ProfileScope::Platform
+    } else {
+        ProfileScope::Tenant
+    }
+}
+
 /// `C-035`: what a user may do, resolved from their profile and their own extra grants. Never persisted:
 /// `UserGateway` fills it on every read, so a change to the profile or the extras takes effect on the
 /// holder's next request (`HRMS-853`). A `User` built without a store (tests, a payload) carries the
@@ -19,6 +30,9 @@ pub struct Access {
     /// The system profile's key (`SysAdmin`, `Driver`, ...) when the user holds one; `None` for a tenant-made profile.
     pub profile_key: Option<String>,
     pub grants: Grants,
+    /// `C-036`: the caller's own tenant while a request acts inside a descendant (`X-Tenant-Uuid`), where `tenant_id`
+    /// is the descendant's; `None` otherwise. Moving a tenant in the tree is judged from here.
+    pub acting_from: Option<i64>,
 }
 
 impl Default for Access {
@@ -29,6 +43,7 @@ impl Default for Access {
             profile_name: None,
             profile_key: None,
             grants: Grants::effective(&[], &[]),
+            acting_from: None,
         }
     }
 }
@@ -39,11 +54,12 @@ impl Access {
     pub fn resolve(profile: &AccessProfile, extras: &[String]) -> Self {
         let held: &[String] = if profile.active { &profile.permissions } else { &[] };
         Self {
-            scope: profile.scope,
+            scope: reach_of(profile),
             profile_uuid: profile.uuid.clone(),
             profile_name: Some(profile.name.clone()),
             profile_key: profile.key.clone(),
             grants: Grants::effective(held, extras),
+            acting_from: None,
         }
     }
 
@@ -51,10 +67,11 @@ impl Access {
     /// in-memory stores and anything else with no profile row at hand. `None` for an unknown key.
     pub fn of_system_profile(key: &str) -> Option<Self> {
         let system = crate::domain::permission::system_profile(key)?;
+        let scope = if system.key == crate::domain::permission::SYS_ADMIN { ProfileScope::Platform } else { ProfileScope::Tenant };
         Some(Self {
             profile_key: Some(system.key.to_string()),
             profile_name: Some(system.name.to_string()),
-            ..Self::from_grants(system.scope, crate::domain::permission::system_grants(system.key))
+            ..Self::from_grants(scope, crate::domain::permission::system_grants(system.key))
         })
     }
 
@@ -65,7 +82,7 @@ impl Access {
         S: AsRef<str>,
     {
         let codes: Vec<String> = grants.into_iter().map(|g| g.as_ref().to_string()).collect();
-        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]) }
+        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]), acting_from: None }
     }
 }
 
@@ -92,6 +109,20 @@ pub struct User {
 }
 
 impl User {
+    /// The tenant a request acts in: the platform actor names one (`requested`, `None` when it did not), everyone
+    /// else acts in their own. `C-036` gave the platform actor the root tenant, so `self.tenant_id.or(requested)`
+    /// would silently ignore the tenant it named.
+    pub fn target_tenant(&self, requested: Option<i64>) -> Option<i64> {
+        if self.access.scope == ProfileScope::Platform { requested } else { self.tenant_id }
+    }
+
+    /// The tenant a request is confined to: the account's own, except for the platform actor, who is not
+    /// confined to one (it reaches every tenant it names). Before `C-036` this was just `tenant_id`, which was
+    /// `None` for the platform actor; the root tenant it now belongs to must not read as a confinement.
+    pub fn bound_tenant(&self) -> Option<i64> {
+        if self.access.scope == ProfileScope::Platform { None } else { self.tenant_id }
+    }
+
     pub fn allows(&self, code: &str) -> bool {
         self.access.grants.allows(code)
     }

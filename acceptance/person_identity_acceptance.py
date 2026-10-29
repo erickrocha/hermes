@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 3 acceptance for C-032 EPIC-AC-05 (HRMS-861): CPF and principal function on the person. Scenarios AC-050...AC-052."""
+"""Gate 3 acceptance for C-032 EPIC-AC-05 (HRMS-861): CPF on the person (the principal function left the user with C-035: the profile says what a user does). Scenarios AC-050...AC-052."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import garage_monitor_acceptance as b  # noqa: E402
@@ -15,14 +15,14 @@ def run():
         admin, owner = b.seed()
         tid = b.TENANT_ID
         b.sql(f"UPDATE tenant SET country_code='BR' WHERE id={tid}")
-        mk = lambda n, extra: http("POST", "/user", {"email": f"qa-ga-{n}@hermes.test", "name": n, "role": "Driver", "enabled": True, **extra}, owner)
+        mk = lambda n, extra: http("POST", "/user", {"email": f"qa-ga-{n}@hermes.test", "name": n, "profileUuid": b.system_profile("Driver"), "enabled": True, **extra}, owner)
 
         # AC-050 -- recorded digits-only with the function; a bad check digit and a CNPJ are refused
-        s1, u1 = mk("p1", {"cpf": VALID, "principalFunction": " Motorista  "})
+        s1, u1 = mk("p1", {"cpf": VALID})
         s_bad, _ = mk("p2", {"cpf": BAD})
         s_cnpj, _ = mk("p3", {"cpf": "11.222.333/0001-81"})
         stored = b.one(f"SELECT cpf FROM user WHERE email='qa-ga-p1@hermes.test'")
-        record("AC-050", s1 == 201 and u1.get("cpf") == "52998224725" and u1.get("principalFunction") == "Motorista"
+        record("AC-050", s1 == 201 and u1.get("cpf") == "52998224725"
                and stored == "52998224725" and s_bad == 400 and s_cnpj == 400,
                f"created {s1} cpf {u1.get('cpf')} function {u1.get('principalFunction')!r}; bad digit {s_bad}; CNPJ {s_cnpj}")
 

@@ -14,7 +14,6 @@ pub struct Model {
     /// The normalised name, unique per tenant.
     pub name_key: String,
     /// `Platform` or `Tenant`: where the profile -- and its holders -- live.
-    pub scope: String,
     /// Seeded by the platform, read-only, permissions re-derived from the catalogue at boot.
     pub system: bool,
     /// The system profile's key (`SysAdmin`, `TenantOwner`, `TenantUser`, `Driver`, `Mechanic`); NULL otherwise.

@@ -6,6 +6,11 @@ use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
 use business::domain::authorization::{is_platform_actor, lacks_required_tenant};
 use business::domain::permission;
+use business::domain::cross_tenant_action::CrossTenantAction;
+use business::domain::tenant_tree;
+use business::gateway::cross_tenant_action_gateway::CrossTenantActionGateway;
+use business::use_cases::cross_tenant_action_use_case::CrossTenantActionUseCase;
+use business::gateway::tenant_gateway::{TenantGateway, TenantStore};
 use business::gateway::user_gateway::UserGateway;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
 use business::gateway::garage_device_gateway::GarageDeviceGateway;
@@ -69,6 +74,7 @@ pub async fn authentication(
         }
     };
 
+    let mut current_user = current_user;
     let user_id = current_user
         .id
         .filter(|id| *id > 0)
@@ -80,15 +86,28 @@ pub async fn authentication(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    if let Some(tenant_id) = current_user.tenant_id {
+    // `C-036` (`DS-1`): a request may act inside a descendant tenant by naming it in `X-Tenant-Uuid`. The
+    // caller becomes, for this request, a member of that tenant holding what their `tenant.child.*`
+    // permissions stand for there; everything downstream then works unchanged, tenant-confined.
+    let delegated: Option<bool> = match req.headers().get(TARGET_TENANT_HEADER).map(|v| v.to_str().map(str::to_string)) {
+        None => None,
+        Some(Err(_)) => return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)),
+        Some(Ok(uuid)) => {
+            let method = req.method().as_str().to_string();
+            let path = req.extensions().get::<MatchedPath>().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let concrete = original_path(&req).to_string();
+            enter_descendant(&state, &locale, &mut current_user, uuid.trim(), &method, &path, &concrete).await?
+        }
+    };
+    if let Some(tenant_id) = current_user.bound_tenant() {
         ensure_billing_active(&state, &locale, tenant_id).await?;
     }
 
     let audit_user = entity::audit::AuditUser {
         id: user_id,
         email: current_user.email.clone(),
-        tenant_id: current_user.tenant_id,
-        enforce_tenant: !is_platform_actor(&current_user),
+        tenant_id: current_user.bound_tenant(),
+        enforce_tenant: delegated.is_some() || !is_platform_actor(&current_user),
     };
 
     // `HRMS-853`/`HRMS-856` (`C-035`): every operation names the permission it asks for, and every caller
@@ -99,11 +118,98 @@ pub async fn authentication(
         && let Some(code) = permission::for_operation(req.method().as_str(), path.as_str())
         && !current_user.allows(code)
     {
+        if let Some(write_without_read) = delegated {
+            // Inside a descendant the refusal names the `tenant.child.*` permission that would stand for the route
+            // -- and when the caller holds the write but not the read, the read they are missing.
+            let child = if write_without_read {
+                permission::CHILD_DATA_READ
+            } else {
+                permission::child_permission_for(code, req.method().as_str())
+            };
+            return Err(ExceptionResponse::ForbiddenPermission(locale, ErrorKey::PermissionNotInProfile, child));
+        }
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PermissionNotInProfile));
     }
 
     req.extensions_mut().insert(current_user);
     Ok(entity::audit::run_with_user(Some(audit_user), next.run(req)).await)
+}
+
+const TARGET_TENANT_HEADER: &str = "x-tenant-uuid";
+
+/// Reads the console makes by itself on every screen -- the session's permissions, the notification badge's poll,
+/// and the trail's own listing -- are not something done *to the tenant's data*, so they leave no trace; they would
+/// bury the actions that matter. Everything else, read or write, is recorded.
+const UNAUDITED_READS: [&str; 3] = ["/access-profile/mine", "/maintenance-notification/unread-count", "/cross-tenant-action"];
+
+fn is_audited(method: &str, route: &str) -> bool {
+    !(method == "GET" && UNAUDITED_READS.contains(&route))
+}
+
+/// `DS-1`/`DS-3` (`SR-AC-08-03`): swaps `user` for a member of the descendant named by `uuid`. Naming the caller's
+/// own tenant changes nothing (`false`); a tenant that is not below the caller's is a 404, as for any tenant
+/// out of reach (`PD-034`); a caller with no `tenant.child.*` permission is refused naming the one to grant.
+/// Returns `None` when the request still acts in the caller's own tenant, else `Some(write_without_read)`:
+/// whether the caller holds `tenant.child.data.write` without the `data.read` it needs.
+async fn enter_descendant(
+    state: &AppState,
+    locale: &Locale,
+    user: &mut business::domain::user::User,
+    uuid: &str,
+    method: &str,
+    path: &str,
+    concrete_path: &str,
+) -> Result<Option<bool>, ExceptionResponse> {
+    let not_found = || ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound);
+    let Some(own) = user.tenant_id else { return Err(not_found()) };
+    let tenants = entity::audit::run_as_platform(TenantGateway::new(state.conn.as_ref().clone()).list_all())
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?;
+    let target = tenants.iter().find(|t| t.uuid.as_deref() == Some(uuid)).ok_or_else(not_found)?;
+    let target_id = target.id.ok_or_else(not_found)?;
+    if target_id == own {
+        return Ok(None);
+    }
+    if !tenant_tree::is_descendant(&tenants, own, target_id) {
+        return Err(not_found());
+    }
+    let Some(grants) = permission::child_context_grants(&user.access.grants) else {
+        // Writing without reading is the one case where a held permission is what is missing.
+        let wanted = if user.access.grants.allows(permission::CHILD_DATA_WRITE) {
+            permission::CHILD_DATA_READ
+        } else {
+            permission::child_permission_for(permission::for_operation(method, path).unwrap_or(""), method)
+        };
+        return Err(ExceptionResponse::ForbiddenPermission(locale.clone(), ErrorKey::PermissionNotInProfile, wanted));
+    };
+    let write_without_read = user.access.grants.allows(permission::CHILD_DATA_WRITE) && !user.access.grants.allows(permission::CHILD_DATA_READ);
+    user.access.acting_from = Some(own);
+    user.tenant_id = Some(target_id);
+    user.access.scope = business::domain::enums::ProfileScope::Tenant;
+    user.access.grants = grants;
+    if !is_audited(method, path) {
+        return Ok(Some(write_without_read));
+    }
+    // `HRMS-877`/`SR-AC-08-06`: the trail is written before the request runs -- if it cannot be, nothing is done.
+    let actor_user_id = user.id.unwrap_or_default();
+    let action = CrossTenantAction {
+        id: None,
+        uuid: None,
+        actor_user_id,
+        actor_email: user.email.clone(),
+        actor_tenant_id: own,
+        affected_tenant_id: target_id,
+        kind: CrossTenantAction::kind_of(method).to_string(),
+        method: method.to_string(),
+        route: path.to_string(),
+        path: concrete_path.to_string(),
+        occurred_at: chrono::Utc::now().naive_utc(),
+    };
+    CrossTenantActionUseCase::new(CrossTenantActionGateway::new(state.conn.as_ref().clone()))
+        .record(action)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?;
+    Ok(Some(write_without_read))
 }
 
 async fn ensure_billing_active(
@@ -227,5 +333,22 @@ mod tests {
         assert!(!is_device_monitor_path(&Method::POST, "/garage-attendance/monitor"));
         assert!(!is_device_monitor_path(&Method::GET, "/garage-attendance/queue"));
         assert!(!is_device_monitor_path(&Method::GET, "/garage-device"));
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::is_audited;
+
+    /// `HRMS-877`: the console's own housekeeping reads leave no trace; everything else does, read or write.
+    #[test]
+    fn only_the_consoles_housekeeping_reads_go_unrecorded() {
+        assert!(!is_audited("GET", "/access-profile/mine"));
+        assert!(!is_audited("GET", "/maintenance-notification/unread-count"));
+        assert!(!is_audited("GET", "/cross-tenant-action"));
+        assert!(is_audited("GET", "/vehicle"));
+        assert!(is_audited("GET", "/tenant/uuid/{uuid}"));
+        assert!(is_audited("PUT", "/vehicle/uuid/{uuid}"));
+        assert!(is_audited("POST", "/access-profile/mine"), "only reads are exempt");
     }
 }

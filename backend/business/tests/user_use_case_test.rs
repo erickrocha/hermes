@@ -255,12 +255,11 @@ async fn user_creation_and_persist_validate_required_fields() {
             .message,
         "Unknown permission: wizard.cast"
     );
+    // `C-036`: one catalogue -- whether the actor may hand out a given permission is `can_grant`'s question, asked by
+    // the endpoint; here only the shape is checked.
     let mut platform_grant = new_user("user@example.com", "Correct#Horse9");
-    platform_grant.extra_permissions = vec!["tenant.create".into()];
-    assert!(
-        use_case.create(platform_grant).await.is_err(),
-        "a tenant account never holds a platform permission"
-    );
+    platform_grant.extra_permissions = vec!["business-plan.read".into()];
+    assert!(use_case.create(platform_grant).await.is_ok());
     assert_eq!(
         use_case
             .persist(new_user("", "secret"))
@@ -388,7 +387,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert_eq!(
         use_case
-            .seed_sysadmin(SYSADMIN_PROFILE_ID)
+            .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
             .await
             .expect_err("email is required")
             .message,
@@ -399,7 +398,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert_eq!(
         use_case
-            .seed_sysadmin(SYSADMIN_PROFILE_ID)
+            .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
             .await
             .expect_err("password is required")
             .message,
@@ -410,7 +409,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
     assert!(
         use_case
-            .seed_sysadmin(SYSADMIN_PROFILE_ID)
+            .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
             .await
             .expect_err("empty configuration is rejected")
             .message
@@ -422,12 +421,12 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
     }
 
     let created = use_case
-        .seed_sysadmin(SYSADMIN_PROFILE_ID)
+        .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
         .await
         .expect("configured sysadmin is created");
     assert_eq!(created.profile_id, Some(SYSADMIN_PROFILE_ID));
     assert!(created.extra_permissions.is_empty());
-    assert_eq!(created.tenant_id, None);
+    assert_eq!(created.tenant_id, Some(5));
     assert!(password::verify("Initial#Password9", &created.password));
     let original_id = created.id;
     let original_uuid = created.uuid.clone();
@@ -437,7 +436,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
         std::env::set_var("SYSADMIN_PASSWORD", "Updated#Password10");
     }
     let updated = use_case
-        .seed_sysadmin(SYSADMIN_PROFILE_ID)
+        .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
         .await
         .expect("configured email updates the existing sysadmin");
     assert_eq!(updated.id, original_id);
@@ -449,7 +448,7 @@ async fn sysadmin_seed_creates_updates_and_preserves_the_existing_account() {
         std::env::set_var("SYSADMIN_PASSWORD", "Ignored#Password11");
     }
     let unchanged = use_case
-        .seed_sysadmin(SYSADMIN_PROFILE_ID)
+        .seed_sysadmin(SYSADMIN_PROFILE_ID, 5)
         .await
         .expect("matching email preserves the existing account");
     assert_eq!(unchanged.password, updated.password);

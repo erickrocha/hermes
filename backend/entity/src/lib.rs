@@ -8,6 +8,7 @@ pub mod prelude;
 pub mod province_entity;
 pub mod city_entity;
 pub mod customer_entity;
+pub mod cross_tenant_action_entity;
 pub mod customer_day_off_entity;
 pub mod holiday_entity;
 pub mod transport_demand_entity;

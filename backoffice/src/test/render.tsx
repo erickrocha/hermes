@@ -11,7 +11,7 @@ export { sessionAs, sessionWith, systemGrants } from './session'
 
 /// A session holding a system profile, or an explicit set of grants.
 export const session = (profile: SystemProfileKey, permissions?: string[]): Session =>
-  permissions ? sessionWith(permissions, profile === 'SysAdmin' ? 'Platform' : 'Tenant', { profileKey: profile }) : sessionAs(profile)
+  permissions ? sessionWith(permissions, profile === 'SystemAdministrator' ? 'Platform' : 'Tenant', { profileKey: profile }) : sessionAs(profile)
 
 export const signIn = (profile: SystemProfileKey, permissions?: string[]) => store.dispatch({ type: login.fulfilled.type, payload: session(profile, permissions) })
 export const signInWith = (who: Session) => store.dispatch({ type: login.fulfilled.type, payload: who })

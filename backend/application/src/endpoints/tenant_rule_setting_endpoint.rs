@@ -92,7 +92,7 @@ pub async fn configure(
     if !can_configure_fuel_gauge(&current_user, p.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let tenant_id = current_user.tenant_id.or(p.tenant_id);
+    let tenant_id = current_user.target_tenant(p.tenant_id);
     let settings = RuleSettings {
         avg_max_segment_km: p.avg_max_segment_km,
         avg_min_km_per_liter: p.avg_min_km_per_liter,
@@ -164,7 +164,7 @@ pub async fn get_current(
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.tenant_id.or(query.tenant_id);
+    let target = current_user.target_tenant(query.tenant_id);
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
@@ -193,7 +193,7 @@ pub async fn get_tracking(
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.tenant_id.or(query.tenant_id);
+    let target = current_user.target_tenant(query.tenant_id);
     let Some(tenant_id) = target else {
         return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
     };
@@ -232,7 +232,7 @@ pub async fn configure_tracking(
     if !can_configure_fuel_gauge(&current_user, p.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let Some(tenant_id) = current_user.tenant_id.or(p.tenant_id) else {
+    let Some(tenant_id) = current_user.target_tenant(p.tenant_id) else {
         return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
     };
     let use_case = TenantTrackingSettingUseCase::new(TenantTrackingSettingGateway::new(state.conn.as_ref().clone()));

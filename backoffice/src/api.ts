@@ -9,6 +9,16 @@ publicApi.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
+export const TARGET_KEY = 'hermes.target'
+/// The descendant tenant the console acts in, or `null` for the signed-in tenant. Browser storage can be empty or unreadable.
+export const readTarget = (): { uuid: string; name: string } | null => {
+  try {
+    const raw = localStorage.getItem(TARGET_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed.uuid === 'string' ? { uuid: parsed.uuid, name: String(parsed.name ?? '') } : null
+  } catch { return null }
+}
+
 const clearSession = () => { localStorage.removeItem('hermes.session'); window.dispatchEvent(new Event('hermes:logout')) }
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const raw = localStorage.getItem('hermes.session')
@@ -16,6 +26,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     const session = JSON.parse(raw)
     if (session.accessToken) config.headers.Authorization = `Bearer ${session.accessToken}`
   }
+  // C-036 (`DS-1`): while the console acts inside a descendant tenant, every request names it.
+  const target = readTarget()
+  if (target) config.headers['X-Tenant-Uuid'] = target.uuid
   config.headers['Accept-Language'] = localStorage.getItem('i18nextLng') || 'pt-BR'
   return config
 })
@@ -55,6 +68,9 @@ export const normalizeSession = (data: Record<string, unknown>) => ({
   // is the only thing that survives into the stored session, so a field missing
   // here is silently dropped on reload.
   tenantUuid: data.tenantUuid ?? data.tenant_uuid ?? null,
+  // C-036: who may act in a descendant is known from the account's own grants, so it is set at sign-in.
+  // A stored session keeps its own answer: inside a descendant the permissions are the delegated ones, which lack it.
+  canTarget: typeof data.canTarget === 'boolean' ? data.canTarget : Array.isArray(data.permissions) && data.permissions.map(String).includes('tenant.child.data.read'),
 })
 
 export const apiMessage = (error: unknown, fallback: string) => {

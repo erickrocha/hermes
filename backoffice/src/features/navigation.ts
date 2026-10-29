@@ -29,4 +29,4 @@ export const operationNav: NavItem[] = [
 ].map((item) => ({ ...item, groupKey: GROUPS[item.to] })).sort((a, b) => ORDER.indexOf(a.groupKey ?? '') - ORDER.indexOf(b.groupKey ?? ''))
 
 // Raiz de cada seção para o rastro de navegação; as telas de recurso derivam o resto do próprio caminho.
-export const sectionLabels: Record<string, string> = { ...Object.fromEntries(operationNav.map((item) => [item.to, item.labelKey])), '/inspections': 'recordInspection' }
+export const sectionLabels: Record<string, string> = { ...Object.fromEntries(operationNav.map((item) => [item.to, item.labelKey])), '/inspections': 'recordInspection', '/cross-tenant-actions': 'crossTenantActions' }

@@ -197,7 +197,8 @@ export function UserEditorPage() {
   const extraPermissions = watch('extraPermissions') ?? []
   const selectedTenantId = watch('tenantId')
   const selectedProfile = profiles.find((p) => p.uuid === profileUuid)
-  const tenantless = selectedProfile?.scope === 'Platform'
+  // C-036: every account has a tenant; the system administrator's profile is placed by the server in the platform's own.
+  const tenantless = selectedProfile?.key === 'SystemAdministrator'
   // O seletor de tenant precisa das opções, não de uma página: pede um lote
   // grande em vez de paginar um <select>.
   useEffect(() => { if (platform) dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch, platform])
@@ -211,7 +212,7 @@ export function UserEditorPage() {
   useEffect(() => { if (!uuid && platform && selectedProfile && !tenantless && !selectedTenantId && tenants.items[0]?.id) setValue('tenantId', tenants.items[0].id) }, [platform, selectedProfile, tenantless, selectedTenantId, setValue, uuid, tenants])
   const chooseProfile = (value: string | null, profile: AccessProfile | undefined) => {
     setValue('profileUuid', value ?? undefined, { shouldDirty: true, shouldValidate: true }); setValue('extraPermissions', [], { shouldDirty: true })
-    if (platform) setValue('tenantId', profile?.scope === 'Platform' ? null : selectedTenantId || tenants.items[0]?.id || null)
+    if (platform) setValue('tenantId', profile?.key === 'SystemAdministrator' ? null : selectedTenantId || tenants.items[0]?.id || null)
   }
   // EPIC-IA-07/D-07: `PUT /user/uuid/{uuid}` discards any password it is sent,
   // so the old "new password" field promised a reset that silently did nothing.

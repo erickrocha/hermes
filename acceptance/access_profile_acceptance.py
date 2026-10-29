@@ -12,7 +12,7 @@ http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 
 def activate(owner, role):
     email = f"qa-ga-{role.lower()}@hermes.test"
-    st, u = http("POST", "/user", {"email": email, "name": email, "role": role, "enabled": True}, owner)
+    st, u = http("POST", "/user", {"email": email, "name": email, "profileUuid": b.system_profile(role), "enabled": True}, owner)
     assert st == 201, (role, st, u)
     pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
     assert http("POST", "/accept-invite", {"token": b.invite_token(email, pw, b.load_env()["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204

@@ -13,7 +13,6 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::access_profile::AccessProfile;
 use business::domain::authorization::{can_administer_user, can_manage_access_profiles};
-use business::domain::enums::ProfileScope;
 use business::domain::permission;
 use business::domain::user::User;
 use business::gateway::access_profile_gateway::AccessProfileGateway;
@@ -22,7 +21,6 @@ use business::use_cases::access_profile_use_case::{
     AccessProfileUseCase, DUPLICATE_NAME, EffectivePermissions, GRANT_EXCEEDS_ACTOR, PROFILE_DOES_NOT_FIT,
     PROFILE_IN_USE, PROFILE_NOT_FOUND, SCOPE_NOT_ALLOWED, SYSTEM_PROFILE_READ_ONLY,
 };
-use std::str::FromStr;
 
 fn use_case(state: &AppState) -> AccessProfileUseCase<AccessProfileGateway> {
     AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone()))
@@ -45,7 +43,6 @@ fn json(p: AccessProfile) -> AccessProfileJson {
         uuid: p.uuid,
         tenant_id: p.tenant_id,
         name: p.name,
-        scope: p.scope.to_string(),
         system: p.system,
         key: p.key,
         active: p.active,
@@ -64,21 +61,13 @@ fn effective_json(e: EffectivePermissions) -> EffectivePermissionsJson {
     }
 }
 
-fn domain(
-    locale: &Locale,
-    payload: AccessProfileJson,
-    tenant_id: Option<i64>,
-    uuid: Option<String>,
-) -> Result<AccessProfile, ExceptionResponse> {
-    let scope = ProfileScope::from_str(&payload.scope)
-        .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue))?;
-    Ok(AccessProfile {
+fn domain(payload: AccessProfileJson, tenant_id: Option<i64>, uuid: Option<String>) -> AccessProfile {
+    AccessProfile {
         id: None,
         uuid,
         tenant_id,
         name: payload.name,
         name_key: String::new(),
-        scope,
         system: false,
         key: None,
         active: payload.active,
@@ -87,7 +76,7 @@ fn domain(
         created_by: None,
         updated_at: None,
         updated_by: None,
-    })
+    }
 }
 
 #[utoipa::path(
@@ -95,7 +84,7 @@ fn domain(
     tag = "AccessProfile",
     path = "/access-profile/catalogue",
     responses(
-        (status = 200, description = "The permissions the caller may grant, one per resource and action, grouped by module, each with the system profiles that hold it (HRMS-850). A tenant caller sees the tenant permissions; the platform also the platform's. **Roles:** `profile.read`.", body = Vec<PermissionJson>),
+        (status = 200, description = "The permissions the caller may grant, one per resource and action, grouped by module, each with the system profiles that hold it (HRMS-850). The caller sees the permissions they hold, which are the ones they may hand out (nobody grants what they do not hold). **Roles:** `profile.read`.", body = Vec<PermissionJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "The caller does not administer access profiles", body = ForbiddenErrorJson),
     ),
@@ -109,7 +98,10 @@ pub async fn catalogue(
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::AccessProfileForbidden));
     }
     Ok(Json(
-        permission::grantable_in(current_user.access.scope)
+        // `C-036`: one catalogue -- the caller sees what they could hand out, which is what they hold.
+        permission::CATALOGUE
+            .iter()
+            .filter(|p| p.scope != permission::Scope::Baseline && current_user.allows(p.code))
             .map(|p| PermissionJson {
                 code: p.code.to_string(),
                 module: p.module.to_string(),
@@ -160,11 +152,11 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<AccessProfileJson>,
 ) -> HttpResponse<(StatusCode, Json<AccessProfileJson>)> {
-    let tenant_id = current_user.tenant_id.or(payload.tenant_id);
+    let tenant_id = current_user.target_tenant(payload.tenant_id);
     if !can_manage_access_profiles(&current_user, tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::AccessProfileForbidden));
     }
-    let profile = domain(&locale, payload, tenant_id, None)?;
+    let profile = domain(payload, tenant_id, None);
     match use_case(&state).create(&current_user, profile).await {
         Ok(saved) => Ok((StatusCode::CREATED, Json(json(saved)))),
         Err(e) => Err(error(locale, &e.message)),
@@ -201,7 +193,7 @@ pub async fn update(
     if !can_manage_access_profiles(&current_user, current.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::AccessProfileForbidden));
     }
-    let edited = domain(&locale, payload, current.tenant_id, Some(uuid))?;
+    let edited = domain(payload, current.tenant_id, Some(uuid));
     match use_case(&state).update(&current_user, edited).await {
         Ok(saved) => Ok(Json(json(saved))),
         Err(e) => Err(error(locale, &e.message)),

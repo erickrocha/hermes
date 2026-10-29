@@ -7,7 +7,7 @@ import { store } from '../store'
 import '../i18n'
 import { signIn, signInWith, sessionWith } from '../test/render'
 import type { AccessProfile, Permission } from '../types'
-import { ProfileEditorPage, ProfilesPage, UserProfilePicker, extrasCatalogueFor, grantableFor, profilesFor, sortProfiles, systemGrantsFrom } from './ProfilePages'
+import { ProfileEditorPage, ProfilesPage, UserProfilePicker, extrasCatalogueFor, profilesFor, sortProfiles, systemGrantsFrom } from './ProfilePages'
 import { groupByModule } from '../components/molecules/PermissionPicker'
 
 const perm = (code: string, module: string, extra: Partial<Permission> = {}): Permission => ({ code, module, scope: 'Tenant', own: false, defaultFor: [], ...extra })
@@ -17,9 +17,9 @@ const catalogue: Permission[] = [
   perm('work-order.read', 'Maintenance', { defaultFor: ['TenantUser', 'Mechanic'] }),
   perm('business-plan.read', 'Platform', { scope: 'Platform' }),
 ]
-const system: AccessProfile = { uuid: 'sys-driver', name: 'Driver', scope: 'Tenant', system: true, key: 'Driver', active: true, permissions: ['vehicle.read@own'] }
-const custom: AccessProfile = { uuid: 'profile-1', tenantId: 42, name: 'Fleet operator', scope: 'Tenant', system: false, active: true, permissions: ['vehicle.read'] }
-const platformProfile: AccessProfile = { uuid: 'sys-admin', name: 'Platform administrator', scope: 'Platform', system: true, key: 'SysAdmin', active: true, permissions: ['business-plan.read'] }
+const system: AccessProfile = { uuid: 'sys-driver', name: 'Driver', system: true, key: 'Driver', active: true, permissions: ['vehicle.read@own'] }
+const custom: AccessProfile = { uuid: 'profile-1', tenantId: 42, name: 'Fleet operator', system: false, active: true, permissions: ['vehicle.read'] }
+const platformProfile: AccessProfile = { uuid: 'sys-admin', name: 'Platform administrator', system: true, key: 'SystemAdministrator', active: true, permissions: ['business-plan.read'] }
 const inactive: AccessProfile = { ...custom, uuid: 'profile-2', name: 'Retired', active: false }
 
 const at = (path: string, route: string, element: React.ReactElement) =>
@@ -33,9 +33,13 @@ describe('profile form helpers', () => {
     expect(g.Maintenance.map((p) => p.code)).toEqual(['work-order.read', 'work-order.create'])
   })
 
-  it('lets a Tenant profile hold Tenant codes only and a Platform profile everything', () => {
-    expect(grantableFor(catalogue, 'Tenant').map((p) => p.code)).not.toContain('business-plan.read')
-    expect(grantableFor(catalogue, 'Platform').map((p) => p.code)).toContain('business-plan.read')
+  // C-036: a profile has no scope -- the catalogue the server offers is what the caller holds, and an extra is
+  // whatever of it the profile does not already grant.
+  it('offers as extras what the profile does not already grant in full', () => {
+    const extras = extrasCatalogueFor(catalogue, custom).map((p) => p.code)
+    expect(extras).not.toContain('vehicle.read')
+    expect(extras).toContain('vehicle.create')
+    expect(extrasCatalogueFor(catalogue, undefined)).toEqual([])
   })
 
   it('derives a system profile the way the server does: the Driver gets @own where the catalogue allows it', () => {
@@ -49,8 +53,8 @@ describe('profile form helpers', () => {
     expect(profilesFor(sessionWith([], 'Platform'), all).map((p) => p.uuid)).toEqual(['sys-driver', 'profile-1', 'sys-admin'])
   })
 
-  it('offers as extras what the profile does not already grant in full, within the profile scope', () => {
-    expect(extrasCatalogueFor(catalogue, custom).map((p) => p.code)).toEqual(['vehicle.create', 'work-order.read'])
+  it('offers as extras what the profile does not already grant in full', () => {
+    expect(extrasCatalogueFor(catalogue, custom).map((p) => p.code)).toEqual(['vehicle.create', 'work-order.read', 'business-plan.read'])
     // an @own grant can still be widened to the full permission
     expect(extrasCatalogueFor(catalogue, system).map((p) => p.code)).toContain('vehicle.read')
     expect(extrasCatalogueFor(catalogue, undefined)).toEqual([])
@@ -100,26 +104,24 @@ describe('ProfileEditorPage', () => {
     expect(screen.getByRole('checkbox', { name: /^vehicle\.read$/ })).toBeDisabled()
   })
 
-  it('keeps a tenant caller on Tenant scope and sends grants with @own when "own records only" is toggled', async () => {
+  it('has no scope field and sends grants with @own when "own records only" is toggled', async () => {
     signIn('TenantOwner'); mockEditor(null)
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
     at('/profiles/new', '/profiles/new', <ProfileEditorPage />)
     await screen.findByRole('checkbox', { name: /^vehicle\.read$/ })
     expect(screen.queryByRole('combobox', { name: /scope|alcance/i })).not.toBeInTheDocument()
-    expect(screen.queryByText('business-plan.read')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'Yard driver' } })
     fireEvent.click(screen.getByRole('checkbox', { name: /^vehicle\.read$/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: /vehicle\.read .*own/i }))
     fireEvent.click(screen.getByRole('button', { name: /^save$|^salvar$/i }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/access-profile', expect.objectContaining({ name: 'Yard driver', scope: 'Tenant', permissions: ['vehicle.read@own'] })))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/access-profile', expect.objectContaining({ name: 'Yard driver', permissions: ['vehicle.read@own'] })))
   })
 
-  it('lets the platform choose the scope and offers Platform codes for a Platform profile', async () => {
-    signIn('SysAdmin'); mockEditor(null)
+  it('has no scope for anyone: the system administrator sees the same form and the platform codes the server offers', async () => {
+    signIn('SystemAdministrator'); mockEditor(null)
     at('/profiles/new', '/profiles/new', <ProfileEditorPage />)
-    const scope = await screen.findByRole('combobox', { name: /scope|alcance/i })
-    fireEvent.change(scope, { target: { value: 'Platform' } })
     expect(await screen.findByText('business-plan.read')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: /scope|alcance/i })).not.toBeInTheDocument()
   })
 
   it('copies a system profile as a starting point', async () => {
