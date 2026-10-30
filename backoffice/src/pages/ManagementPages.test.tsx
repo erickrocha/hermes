@@ -140,7 +140,7 @@ describe('UserEditorPage profile-based creation (C-035)', () => {
     expect(screen.queryByLabelText(/temporary password|senha tempor|new password|nova senha/i)).not.toBeInTheDocument()
     // the Driver profile already holds vehicle.read@own; vehicle.read is still offered (widening), vehicle.create too
     const extras = within(screen.getByTestId('extraPermissions'))
-    fireEvent.click(extras.getByRole('checkbox', { name: /^vehicle\.create$/ }))
+    fireEvent.click(extras.getByRole('checkbox', { name: /^(Vehicle registration|Cadastro de veículo)$/ }))
     fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'New Driver Coordinator' } })
     fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'coordinator@transmega.com' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))

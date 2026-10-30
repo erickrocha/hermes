@@ -219,7 +219,7 @@ export function UserEditorPage() {
   // Re-issuing the invitation is the action the API actually offers, so that
   // is the action the form offers.
   const resendInvite = async () => { if (!uuid) return; setInviting(true); setError(''); setInvited(false); try { await dispatch(sendUserInvite(uuid)).unwrap(); setInvited(true) } catch (cause) { setError(String(cause || t('genericError'))) } finally { setInviting(false) } }
-  const save = handleSubmit(async (user) => { setSaving(true); setError(''); try { await dispatch(saveManagedUser({ uuid, user })).unwrap(); navigate('/users') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
+  const save = handleSubmit(async (user) => { setSaving(true); setError(''); try { await dispatch(saveManagedUser({ uuid, user, tenantUuid: platform && !uuid ? tenants.items.find((tenant) => tenant.id === user.tenantId && tenant.uuid !== session.tenantUuid)?.uuid : undefined })).unwrap(); navigate('/users') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
   if (loading) return <Loading />
   // EPIC-IA-07/D-07 (PD-002): a new account is never given a caller-set
   // password -- the server discards it and emails an invitation instead. A

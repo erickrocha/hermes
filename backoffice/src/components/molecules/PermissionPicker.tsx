@@ -15,6 +15,10 @@ export interface PermissionPickerProps {
 }
 
 /** Permissions grouped by module, in catalogue order; the picker shows one group per module. */
+/** i18n keys for a permission's label and its module -- the code stays in the tooltip for whoever needs to cite it. */
+export const permissionKey = (code: string) => `perm_${code.replace(/\W/g, '_')}`
+export const moduleKey = (module: string) => `module_${module.toLowerCase().replace(/\W+/g, '_')}`
+
 export const groupByModule = (permissions: Permission[]) =>
   permissions.reduce<Record<string, Permission[]>>((groups, p) => ({ ...groups, [p.module]: [...(groups[p.module] ?? []), p] }), {})
 
@@ -36,18 +40,18 @@ export function PermissionPicker({ catalogue, value, onChange, readOnly = false,
     <div className="permission-tabs" role="tablist">
       {entries.map(([module, perms]) => {
         const count = perms.filter((p) => grantFor(value, p.code)).length
-        return <button type="button" role="tab" key={module} aria-selected={module === active} className={module === active ? 'active' : ''} onClick={() => setChosen(module)}>{module}<small>{count}/{perms.length}</small></button>
+        return <button type="button" role="tab" key={module} aria-selected={module === active} className={module === active ? 'active' : ''} onClick={() => setChosen(module)}>{t(moduleKey(module))}<small>{count}/{perms.length}</small></button>
       })}
     </div>
     {entries.filter(([module]) => module === active).map(([module, perms]) => <fieldset className="permission-group" key={module} disabled={readOnly}>
-      <legend>{module}</legend>
+      <legend>{t(moduleKey(module))}</legend>
       {perms.map((permission) => {
         const held = grantFor(value, permission.code)
         const own = held ? isOwnGrant(held) : false
         return <div className="permission-row" key={permission.code}>
           <label className="checkbox">
             <input type="checkbox" checked={Boolean(held)} onChange={() => replace(permission.code, held ? null : permission.code)} />
-            <span className="permission-code">{permission.code}</span>
+            <span className="permission-code" title={permission.code}>{t(permissionKey(permission.code), { defaultValue: permission.code })}</span>
           </label>
           {permission.own && held && <label className="checkbox permission-own">
             <input type="checkbox" checked={own} aria-label={`${permission.code} ${t('ownOnly')}`} onChange={() => replace(permission.code, own ? permission.code : ownGrant(permission.code))} />

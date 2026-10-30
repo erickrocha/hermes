@@ -46,12 +46,13 @@ export const setUserEnabled = async ({ user, enabled }: { user: User; enabled: b
 export const loadUser = async (uuid: string): Promise<User> => (await api.get<User>(`/user/uuid/${uuid}`)).data
 export const resendUserInvite = async (uuid: string): Promise<void> => { await api.post(`/user/uuid/${uuid}/invite`) }
 
-export const saveUser = async ({ uuid, user }: { uuid?: string; user: User }): Promise<void> => {
+// `tenantUuid`: the descendant tenant a new account is created in -- C-036 reaches it by acting inside it.
+export const saveUser = async ({ uuid, user, tenantUuid }: { uuid?: string; user: User; tenantUuid?: string }): Promise<void> => {
   const payload: Partial<User> = { ...user }
   delete payload.password
   // Read-only echoes never go back; on an existing user the access is changed through the assign flow
   // (`PUT /access-profile/user/uuid/{uuid}`), so the profile and extras are left out here (= keep).
   delete payload.profileName; delete payload.profileKey; delete payload.scope
   if (uuid) { delete payload.profileUuid; delete payload.extraPermissions; await api.put(`/user/uuid/${uuid}`, payload) }
-  else await api.post('/user', payload)
+  else await (tenantUuid ? api.post('/user', payload, acting(tenantUuid)) : api.post('/user', payload))
 }

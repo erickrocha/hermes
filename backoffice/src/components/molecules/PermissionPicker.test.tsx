@@ -12,12 +12,12 @@ describe('PermissionPicker', () => {
   it('renders one group per module with the default-for hint, and toggles a grant on and off', () => {
     const onChange = vi.fn()
     render(<PermissionPicker catalogue={catalogue} value={['work-order.read']} onChange={onChange} />)
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([expect.stringContaining('Fleet'), expect.stringContaining('Maintenance')])
-    expect(screen.getByText(/default for|padrão para/i)).toHaveTextContent(/Tenant user, Driver|Usuário do tenant, Motorista/)
-    fireEvent.click(screen.getByRole('checkbox', { name: /^vehicle\.create$/ }))
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([expect.stringMatching(/Fleet|Frota/), expect.stringMatching(/Maintenance|Manutenção/)])
+    expect(screen.getByText(/default for|padrão para/i)).toHaveTextContent(/Tenant user, Driver|Usuário, Motorista/)
+    fireEvent.click(screen.getByRole('checkbox', { name: /^(Vehicle registration|Cadastro de veículo)$/ }))
     expect(onChange).toHaveBeenLastCalledWith(['work-order.read', 'vehicle.create'])
-    fireEvent.click(screen.getByRole('tab', { name: /Maintenance/ }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /^work-order\.read$/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /Maintenance|Manutenção/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^(View work orders|Consulta de ordens de serviço)$/ }))
     expect(onChange).toHaveBeenLastCalledWith([])
   })
 
@@ -29,7 +29,7 @@ describe('PermissionPicker', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /vehicle\.read .*own/i }))
     expect(onChange).toHaveBeenLastCalledWith(['vehicle.read@own'])
     rerender(<PermissionPicker catalogue={catalogue} value={['vehicle.read@own']} onChange={onChange} />)
-    expect(screen.getByRole('checkbox', { name: /^vehicle\.read$/ })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /^(View vehicles|Consulta de veículos)$/ })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: /vehicle\.read .*own/i })).toBeChecked()
     fireEvent.click(screen.getByRole('checkbox', { name: /vehicle\.read .*own/i }))
     expect(onChange).toHaveBeenLastCalledWith(['vehicle.read'])
@@ -38,7 +38,7 @@ describe('PermissionPicker', () => {
   it('leaves excluded codes out and disables everything when read-only', () => {
     render(<PermissionPicker catalogue={catalogue} value={['vehicle.create']} onChange={() => {}} exclude={['work-order.read']} readOnly />)
     expect(screen.queryByText('work-order.read')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: /^vehicle\.create$/ })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: /^(Vehicle registration|Cadastro de veículo)$/ })).toBeDisabled()
     expect(within(screen.getByTestId('permissions')).getAllByRole('checkbox')).toHaveLength(2)
   })
 
