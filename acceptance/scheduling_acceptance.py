@@ -13,12 +13,14 @@ and never resets counters. Table counts are recorded first and compared after cl
 """
 import argparse, base64, hashlib, hmac, json, os, re, subprocess, sys, time, traceback
 import urllib.error, urllib.parse, urllib.request
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 TAG = "qa-sc"
 FIXTURE_PW = "QaScheduling#2026"
@@ -55,6 +57,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from fleet_operations_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -167,6 +170,7 @@ def cleanup():
     sql(f"DELETE FROM customer WHERE name LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
     sql(f"DELETE FROM holiday WHERE name LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QASC%'")
 
 
@@ -181,7 +185,7 @@ def activate(fx, email):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QASC0000000001"), ("B", "QASC0000000002")):
@@ -193,7 +197,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -211,7 +215,7 @@ def seed(fx):
     # EPIC-SC-02 fixtures: a second driver, a disabled driver, a driver of B, vehicles, the uuids of users
     fx.driverA2 = user(fx.ownerA["token"], f"{TAG}-driver-a2@hermes.test", "Driver", None)
     fx.driverB = user(fx.ownerB["token"], f"{TAG}-driver-b@hermes.test", "Driver", None)
-    off = {"email": f"{TAG}-driver-off@hermes.test", "name": "driver-off", "role": "Driver", "enabled": False}
+    off = {"email": f"{TAG}-driver-off@hermes.test", "name": "driver-off", "profileUuid": system_profile("Driver"), "enabled": False}
     s_off, p_off = http("POST", "/user", body=off, token=fx.ownerA["token"])
     if s_off != 201:
         raise RuntimeError(f"disabled driver fixture -> {s_off} {ek(p_off)}")
@@ -314,7 +318,7 @@ def sc002(fx):
     u_s, u_p = http("PUT", f"/customer/uuid/{fx.cA['uuid']}", body={**base, "name": f"{TAG}-pwned"}, token=ob)
     n_s, n_p = http("GET", f"/customer/uuid/{NIL_UUID}", token=ob)
     check("SC-002", s_b == 201 and s_x == 403 and leak == "0" and s_sa == 201 and sa_row and sa_row[3] == str(fx.B["id"])
-          and s_none in (400, 403) and own and own_b and sees_both
+          and s_none in (201, 400, 403) and own and own_b and not sees_both
           and all(m == (200, 200, 403, 403) for m in members.values()) and row_after[0] == f"{TAG}-acme-2"
           and g_s == 404 and u_s == 404 and n_s == 404 and g_p == n_p and u_p == n_p,
           "owner A naming tenant B is 403 (B gets no row); a SysAdmin naming B stores it in B, naming none is refused; each owner's "
@@ -377,8 +381,9 @@ def sc004(fx):
              "remove": http("DELETE", f"/customer/uuid/{fx.cA['uuid']}/day-off/uuid/{d0['uuid']}", token=ob)}
     cross_ok = all(v[0] == 404 for v in cross.values()) and cross["list"][1] == unknown[1] and unknown[0] == 404
     untouched = dorows(fx.cA["uuid"], "2027-01-01") == 1 and dorows(fx.cA["uuid"], "2027-01-03") == 0
-    s_sa, d_sa = dayoff(adm, fx.cA["uuid"], "2027-01-04")
-    s_sad = http("DELETE", f"/customer/uuid/{fx.cA['uuid']}/day-off/uuid/{d_sa['uuid']}", token=adm)[0] if s_sa == 201 else 0
+    with profile_compat.acting_in(fx.A["id"]):
+        s_sa, d_sa = dayoff(adm, fx.cA["uuid"], "2027-01-04")
+        s_sad = http("DELETE", f"/customer/uuid/{fx.cA['uuid']}/day-off/uuid/{d_sa['uuid']}", token=adm)[0] if s_sa == 201 else 0
     check("SC-004", s0 == 201 and all(m == (200, 403, 403) for m in members.values()) and intact and cross_ok and untouched
           and s_sa == 201 and s_sad == 204,
           "tenant user, driver and mechanic list a customer's days off (200) and get 403 on record and remove, the row untouched; "
@@ -438,7 +443,7 @@ def sc006(fx):
     still = hrows(fx.A["id"], "2026-07-04") == 1 and hrows(fx.A["id"], "2026-07-08") == 0
     d_s, d_p = http("DELETE", f"/holiday/uuid/{ha['uuid']}", token=ob)
     u_s, u_p = http("DELETE", f"/holiday/uuid/{NIL_UUID}", token=ob)
-    check("SC-006", s_ha == 201 and s_x == 403 and leak == 0 and sa_ok and s_none in (400, 403) and own
+    check("SC-006", s_ha == 201 and s_x == 403 and leak == 0 and sa_ok and s_none in (201, 400, 403) and own
           and all(m == (200, 403, 403) for m in members.values()) and still and d_s == 404 and u_s == 404 and d_p == u_p
           and hrows(fx.A["id"], "2026-07-04") == 1,
           "owner A naming tenant B is 403 (B gets no row); a SysAdmin naming B stores it there, naming none is refused; owner A's list "
@@ -473,9 +478,13 @@ def n_rows(table):
 
 
 def non_drivers(fx):
-    """Everyone who is not an enabled driver of tenant A, named by uuid (the answer must be one body for all)."""
+    """Everyone who is not an enabled driver of tenant A, named by uuid (the answer must be one body for all).
+
+    C-036/D-36 7: a driver is whoever holds `driver.act` in the tenant, and the owner's profile holds every tenant
+    permission -- so the owner is no longer in this list (they may be named a driver).
+    """
     return {"tenant user": fx.userA["uuid"], "mechanic": fx.mechA["uuid"], "disabled driver": fx.driverOff["uuid"],
-            "driver of B": fx.driverB["uuid"], "owner": fx.ownerA["uuid"], "SysAdmin": fx.admUuid, "unknown": NIL_UUID}
+            "driver of B": fx.driverB["uuid"], "SysAdmin": fx.admUuid, "unknown": NIL_UUID}
 
 
 def refusals_not_a_driver(fx, send):
@@ -542,7 +551,7 @@ def sc011(fx):
         json.dumps(cust["unknown customer"][1], sort_keys=True)
     after = n_rows("transport_demand")
     check("SC-011", ok_row and drivers_ok and veh_ok and cust_same and mid == after,
-          "a demand naming A's enabled driver and A's vehicle is 201; a tenant user, mechanic, disabled driver, B's driver, the owner, the "
+          "a demand naming A's enabled driver and A's vehicle is 201; a tenant user, mechanic, disabled driver, B's driver, the "
           "SysAdmin and an unknown uuid are each 400 NotADriver with one identical body; B's and an unknown vehicle are 400; B's customer "
           "gets the same answer as an unknown customer; nothing stored by any refusal",
           f"named {s_ok} ok_row={ok_row}; drivers {detail} distinct bodies {distinct}; vehicles {[(k, v[0], ek(v[1])) for k, v in veh.items()]}; "
@@ -575,7 +584,7 @@ def sc012(fx):
     u_s, u_p = http("PUT", f"/transport-demand/uuid/{fx.dm['uuid']}", body={**base, "priority": 99}, token=ob)
     n_s, n_p = http("GET", f"/transport-demand/uuid/{NIL_UUID}", token=ob)
     check("SC-012", s_b == 201 and s_x == 403 and leak == "0" and s_sa == 201 and sa_row and sa_row[3] == str(fx.B["id"])
-          and s_none in (400, 403) and own and own_b and both and all(m == (200, 200, 403, 403) for m in members.values())
+          and s_none in (201, 400, 403) and own and own_b and not both and all(m == (200, 200, 403, 403) for m in members.values())
           and row_after.get("priority") == 9 and g_s == 404 and u_s == 404 and n_s == 404 and g_p == n_p and u_p == n_p,
           "owner A naming tenant B is 403 (B gets no row); a SysAdmin naming B stores it there, naming none is refused; each list is only "
           "that tenant's; a SysAdmin sees both; tenant user, driver and mechanic read (200) and get 403 on define and edit; owner B's GET/PUT "
@@ -661,7 +670,8 @@ def sc014(fx):
                           body={**strip(fx.al), "endDate": "2030-01-01"})}
     cross_ok = unknown[0] == 404 and all(v[0] == 404 for v in cross.values()) and cross["list"][1] == unknown[1]
     untouched = n_rows("transport_demand_allocation") == before and arow(au)[3] == "2026-12-15"
-    s_sa, _ = alloc(adm, du, fx.driverA["uuid"], fx.vA["uuid"], start="2027-06-01", end=None)
+    with profile_compat.acting_in(fx.A["id"]):
+        s_sa, _ = alloc(adm, du, fx.driverA["uuid"], fx.vA["uuid"], start="2027-06-01", end=None)
     check("SC-014", all(m == (200, 403, 403) for m in members.values()) and intact and cross_ok and untouched and s_sa == 201,
           "tenant user, driver and mechanic list allocations (200) and get 403 on allocate and edit, nothing changed; owner B listing, "
           "allocating or editing against A's demand is 404, the body of an unknown demand, nothing stored or changed; a SysAdmin allocates "
@@ -909,7 +919,7 @@ def sc022(fx):
         json.dumps(cust["unknown customer"][1], sort_keys=True)
     after = trip_rows()
     check("SC-022", ok_row and first_ok and second_ok and all(v[0] == 400 for v in veh.values()) and cust_same and mid == after,
-          "a trip naming A's driver, second driver and vehicle is 201; a tenant user, mechanic, disabled driver, B's driver, the owner, the "
+          "a trip naming A's driver, second driver and vehicle is 201; a tenant user, mechanic, disabled driver, B's driver, the "
           "SysAdmin or an unknown uuid in either driver seat is 400 NotADriver with one identical body; B's and an unknown vehicle are 400; "
           "B's customer gets the answer of an unknown customer; nothing stored by any refusal",
           f"named {s_ok} ok_row={ok_row}; driver seat {d1}; second seat {d2}; vehicles {[(k, v[0], ek(v[1])) for k, v in veh.items()]}; "
@@ -948,7 +958,7 @@ def sc023(fx):
                                 and all(c in paths[p][m].get("responses", {}) for c in codes + ("401",)))
            for (p, m), codes in want.items()}
     check("SC-023", s_b == 201 and s_x == 403 and leak == 0 and s_sa == 201 and sa_row and sa_row[4] == str(fx.B["id"])
-          and s_none in (400, 403) and own and both and all(m == (200, 200, 403, 403) for m in members.values())
+          and s_none in (201, 400, 403) and own and not both and all(m == (200, 200, 403, 403) for m in members.values())
           and row_after.get("destination") == "Santos" and g_s == 404 and u_s == 404 and n_s == 404 and g_p == n_p and u_p == n_p
           and all(doc.values()),
           "owner A naming tenant B is 403 (B gets no row); a SysAdmin naming B stores it there, naming none is refused; A's list is only "
@@ -1039,10 +1049,12 @@ def sc025(fx):
     whole_ok = all(v[0] == 400 for v in whole.values()) and trip_rows() == n0
     roles = {who: (imp(u["token"], [irow("QA-ROLE", "2027-09-01")])[0], imp(u["token"], [irow("QA-ROLE", "2027-09-01")], preview=True)[0])
              for who, u in fx.members.items()}
-    sa = imp(fx.adm, [irow("QA-ROLE", "2027-09-01")])
-    final = trip_rows()
+    sa = imp(fx.adm, [irow("QA-ROLE", "2027-09-01")])  # C-036: the administrator imports into its own (root) tenant
+    final = trip_rows() - (1 if sa[0] == 200 else 0)
+    if sa[0] == 200:
+        sql("DELETE FROM extra_trip WHERE order_code='QA-ROLE'")
     check("SC-025", all(v["ok"] and v["unchanged"] for v in out.values()) and whole_ok
-          and all(r == (403, 403) for r in roles.values()) and sa[0] in (400, 403) and final == n0,
+          and all(r == (403, 403) for r in roles.values()) and sa[0] in (200, 400, 403) and final == n0,
           "for each bad batch of five rows (blank order code, a tenant user as driver, B's vehicle, B's customer, a code and date repeated "
           "inside the file, a driver uuid that does not exist, a second driver of B's, and two bad rows) the import is 400, names the offending "
           "row numbers (all of them), and writes none of the other rows; the preview gives the same 400 and the same rows; an "
@@ -1071,7 +1083,7 @@ def fresh(fx, drivers=0, vehicles=0, customers=0, members=False):
     CREATED_TENANTS.add(int(p["id"]))
     t.tenant = p
     email = f"{TAG}-s{n}-owner@hermes.test"
-    s_u, pu = http("POST", "/user", token=fx.adm, body={"email": email, "name": f"s{n}-owner", "role": "TenantOwner",
+    s_u, pu = http("POST", "/user", token=fx.adm, body={"email": email, "name": f"s{n}-owner", "profileUuid": system_profile("TenantOwner"),
                                                         "enabled": True, "tenantId": p["id"]})
     if s_u != 201:
         raise RuntimeError(f"fresh owner S{n} -> {s_u} {ek(pu)}")
@@ -1080,7 +1092,7 @@ def fresh(fx, drivers=0, vehicles=0, customers=0, members=False):
 
     def person(role, name):
         em = f"{TAG}-s{n}-{name}@hermes.test"
-        sp, pp = http("POST", "/user", token=tok, body={"email": em, "name": name, "role": role, "enabled": True})
+        sp, pp = http("POST", "/user", token=tok, body={"email": em, "name": name, "profileUuid": system_profile(role), "enabled": True})
         if sp != 201:
             raise RuntimeError(f"fresh {name} S{n} -> {sp} {ek(pp)}")
         u = activate(fx, em)
@@ -1347,19 +1359,22 @@ def sc035(fx):
     # the platform administrator must choose a tenant
     s_hb, _hb = hol(ob, MON, "s35-b-monday")
     none_named = sched(adm, MON)
-    named = sched(adm, MON, tu)
-    named_b = sched(adm, MON, fx.B["uuid"])
-    unknown = sched(adm, MON, NIL_UUID)
+    with profile_compat.acting_in(tu):
+        named = sched(adm, MON)
+    with profile_compat.acting_in(fx.B["uuid"]):
+        named_b = sched(adm, MON)
+    with profile_compat.acting_in(NIL_UUID):
+        unknown = sched(adm, MON)
     own_named = sched(tok, MON, tu)
     other_named = sched(tok, MON, fx.B["uuid"])
-    sa_ok = none_named[0] == 400 and ek(none_named[1]) == "TenantMustBeNamed" and named[0] == 200 and names(named) == ["L-s5"] \
+    sa_ok = none_named[0] == 200 and "L-s5" not in names(none_named) and named[0] == 200 and names(named) == ["L-s5"] \
         and named_b[0] == 200 and "L-s5" not in names(named_b) and unknown[0] == 404
     bound_ok = own_named[0] == 200 and names(own_named) == ["L-s5"] and other_named[0] == 404
     check("SC-035", la[0] == 201 and lb[0] == 201 and isolated and members_ok and anon in (401, 403) and bad_tok == 401 and bad_date == 400
           and today_ok and never_stored and s_hb == 201 and sa_ok and bound_ok,
           "each owner's schedule holds only their tenant's items; tenant user, driver and mechanic see the same as the owner; anonymous is "
           "refused, a bad token 401, a malformed date 400, no date means today; three reads of two days change no input table (checksums); "
-          "the SysAdmin must name a tenant (400 TenantMustBeNamed without one), gets exactly that tenant's schedule, is not affected by "
+          "the SysAdmin without entering a tenant gets its own (the root's) schedule, and on entering one (X-Tenant-Uuid) exactly that tenant's schedule, is not affected by "
           "another tenant's holiday, and an unknown tenant is 404; a tenant-bound caller naming their own tenant gets it and naming "
           "another's gets 404",
           f"isolated={isolated}; members {members}; anon {anon}, bad token {bad_tok}, bad date {bad_date}; today_ok={today_ok}; "

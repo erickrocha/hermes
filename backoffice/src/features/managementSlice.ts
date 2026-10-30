@@ -36,7 +36,7 @@ export const fetchUser = createAsyncThunk<User, string, { rejectValue: string }>
 export const sendUserInvite = createAsyncThunk<void, string, { rejectValue: string }>('management/invite', async (uuid, { rejectWithValue }) => {
   try { await managementService.resendUserInvite(uuid) } catch (cause) { return rejectWithValue(failure(cause)) }
 })
-export const saveManagedUser = createAsyncThunk<void, { uuid?: string; user: User }, { rejectValue: string }>('management/saveUser', async (request, { rejectWithValue }) => {
+export const saveManagedUser = createAsyncThunk<void, { uuid?: string; user: User; tenantUuid?: string }, { rejectValue: string }>('management/saveUser', async (request, { rejectWithValue }) => {
   try { await managementService.saveUser(request) } catch (cause) { return rejectWithValue(failure(cause)) }
 })
 

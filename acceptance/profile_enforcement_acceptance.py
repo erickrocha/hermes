@@ -24,12 +24,12 @@ def run():
         # AC-023 -- a profile that drops a permission: the server refuses it, names it, and nothing else changes
         po = {"supplier": "qa"}
         before = http("POST", "/purchase-order", po, me_t)
-        prof = http("POST", "/access-profile", {"name": "QA sem compras", "baseRole": "Mechanic",
+        prof = http("POST", "/access-profile", {"name": "QA sem compras",
                                                 "permissions": [c for c in default["Mechanic"] if c != "purchase-order.create"]}, owner)[1]
         http("PUT", f"/access-profile/user/uuid/{me['uuid']}", {"profileUuid": prof["uuid"]}, owner)
         after = http("POST", "/purchase-order", po, me_t)
         still = http("GET", "/purchase-order", token=me_t)[0]
-        http("PUT", f"/access-profile/user/uuid/{me['uuid']}", {}, owner)
+        http("PUT", f"/access-profile/user/uuid/{me['uuid']}", {"profileUuid": b.system_profile("Mechanic")}, owner)
         back = http("POST", "/purchase-order", po, me_t)
         record("AC-023", not denied(*before) and denied(*after) and after[1].get("permission") == "purchase-order.create"
                and still == 200 and not denied(*back),

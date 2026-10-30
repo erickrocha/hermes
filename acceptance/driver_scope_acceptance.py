@@ -15,7 +15,7 @@ NIL = "00000000-0000-4000-8000-000000000000"
 
 
 def make_user(owner, email, role):
-    st, u = http("POST", "/user", {"email": email, "name": email, "role": role, "enabled": True}, owner)
+    st, u = http("POST", "/user", {"email": email, "name": email, "profileUuid": b.system_profile(role), "enabled": True}, owner)
     assert st == 201, (email, st, u)
     pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
     assert http("POST", "/accept-invite", {"token": b.invite_token(email, pw, b.load_env()["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204

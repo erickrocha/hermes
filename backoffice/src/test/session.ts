@@ -1,15 +1,15 @@
 import type { ProfileScope, Session } from '../types'
 import { CATALOGUE } from './catalogue'
 
-export type SystemProfileKey = 'SysAdmin' | 'TenantOwner' | 'TenantUser' | 'Driver' | 'Mechanic'
+export type SystemProfileKey = 'SystemAdministrator' | 'TenantOwner' | 'TenantUser' | 'Driver' | 'Mechanic'
 
-const SCOPE_OF: Record<SystemProfileKey, ProfileScope> = { SysAdmin: 'Platform', TenantOwner: 'Tenant', TenantUser: 'Tenant', Driver: 'Tenant', Mechanic: 'Tenant' }
+const SCOPE_OF: Record<SystemProfileKey, ProfileScope> = { SystemAdministrator: 'Platform', TenantOwner: 'Tenant', TenantUser: 'Tenant', Driver: 'Tenant', Mechanic: 'Tenant' }
 
 /// The grants of a system profile, derived from the catalogue mirror the way `system_grants` derives them server-side.
 export const systemGrants = (key: SystemProfileKey): string[] => CATALOGUE.flatMap((p) => {
   switch (key) {
-    case 'SysAdmin': return [p.code]
-    case 'TenantOwner': return p.scope === 'Tenant' || p.scope === 'Baseline' ? [p.code] : []
+    case 'SystemAdministrator': return [p.code]
+    case 'TenantOwner': return (p.scope === 'Tenant' && !p.code.startsWith('tenant.child.')) || p.scope === 'Baseline' ? [p.code] : []
     case 'TenantUser': return p.tenantUser ? [p.code] : []
     case 'Mechanic': return p.mechanic ? [p.code] : []
     case 'Driver': return p.driver ? [p.own ? `${p.code}@own` : p.code] : []
@@ -23,7 +23,8 @@ export const sessionWith = (permissions: string[], scope: ProfileScope = 'Tenant
   const tenantId = overrides.tenantId === undefined ? (scope === 'Platform' ? null : 42) : overrides.tenantId
   return {
     accessToken: 't', tokenType: 'Bearer', expireIn: 3600, email: 'a@b.c', uuid: 'u', name: 'n', userId: 1,
-    scope, permissions, tenantId, tenantUuid: tenantId ? `t-${tenantId}` : null, ...overrides,
+    scope, permissions, tenantId, tenantUuid: tenantId ? `t-${tenantId}` : null,
+    canTarget: permissions.includes('tenant.child.data.read'), ...overrides,
   }
 }
 

@@ -15,7 +15,6 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::authorization::{
     can_access_tenant, can_create_tenant, can_read_tenant_configuration, can_set_tenant_plan, can_update_tenant,
-    is_platform_actor,
 };
 use business::domain::user::User;
 use business::gateway::business_plan_gateway::BusinessPlanGateway;
@@ -23,7 +22,7 @@ use business::gateway::billing_gateway::BillingGateway;
 use business::gateway::tenant_gateway::TenantGateway;
 use business::use_cases::business_plan_use_case::BusinessPlanUseCase;
 use business::use_cases::billing_use_case::BillingUseCase;
-use business::use_cases::tenant_use_case::TenantUseCase;
+use business::use_cases::tenant_use_case::{MOVE_NOT_ALLOWED, TenantUseCase};
 use chrono::Utc;
 
 #[utoipa::path(
@@ -52,7 +51,9 @@ pub async fn add(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let domain = TenantMapper::domain(payload);
+    let mut domain = TenantMapper::domain(payload);
+    // `HRMS-872`: the creator's tenant is the parent -- the platform creates under the root.
+    domain.parent_tenant_id = current_user.tenant_id;
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     match use_case.create(domain).await {
         Ok(tenant) => Ok((StatusCode::CREATED, Json(TenantMapper::json(tenant)))),
@@ -91,6 +92,14 @@ pub async fn get_by_uuid(
             let json = TenantMapper::json(tenant);
             Ok(Json(if can_read_tenant_configuration(&current_user) { json } else { json.summary() }))
         }
+        // `C-036`: the list shows the tenants below (`tenant.child.read`), so their record opens too.
+        Ok(tenant) if current_user.allows(business::domain::permission::CHILD_READ) => {
+            let own = current_user.tenant_id.unwrap_or_default();
+            match use_case.list_branch(own).await {
+                Ok(branch) if branch.iter().any(|t| t.id == tenant.id) => Ok(Json(TenantMapper::json(tenant))),
+                _ => Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound)),
+            }
+        }
         Ok(_) => Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::TenantNotFound,
@@ -123,11 +132,26 @@ pub async fn list_all(
 ) -> HttpResponse<Json<PageJson<TenantJson>>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     let (page, page_size) = (page_query.page(), page_query.page_size());
-    let search = page_query.search();
 
     // HRM-092: um caller preso a um tenant vê exatamente o seu, então a
     // "página" dele tem no máximo uma linha — paginar não muda isso.
     if let Some(tenant_id) = current_user.tenant_id {
+        // `C-036` (`HRMS-873`): whoever holds `tenant.child.read` also sees the tenants below theirs.
+        if current_user.allows(business::domain::permission::CHILD_READ) {
+            return match use_case.list_branch(tenant_id).await {
+                Ok(branch) => {
+                    let total = branch.len() as u64;
+                    let items = branch
+                        .into_iter()
+                        .skip((page * page_size) as usize)
+                        .take(page_size as usize)
+                        .map(TenantMapper::json)
+                        .collect();
+                    Ok(Json(PageJson::new(items, page, page_size, total)))
+                }
+                Err(_) => Err(unreadable_tenants(locale)),
+            };
+        }
         return match use_case.find_by_id(tenant_id).await {
             Ok(tenant) => Ok(Json(PageJson::new(
                 vec![if can_read_tenant_configuration(&current_user) {
@@ -142,18 +166,7 @@ pub async fn list_all(
             Err(_) => Err(unreadable_tenants(locale)),
         };
     }
-    if !is_platform_actor(&current_user) {
-        return Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)));
-    }
-    match use_case.find_page(page, page_size, search.as_deref()).await {
-        Ok((tenants, total)) => Ok(Json(PageJson::new(
-            TenantMapper::json_vec(tenants),
-            page,
-            page_size,
-            total,
-        ))),
-        Err(_) => Err(unreadable_tenants(locale)),
-    }
+    Ok(Json(PageJson::new(Vec::new(), page, page_size, 0)))
 }
 
 /// DEF-XF-02: a failed query used to be answered with `200 {"items":[],
@@ -176,7 +189,7 @@ fn unreadable_tenants(locale: Locale) -> ExceptionResponse {
     ),
     request_body = TenantJson,
     responses(
-        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only). TenantUser, Driver and Mechanic are refused with 403 (D-22, D-27).", body = TenantJson),
+        (status = 200, description = "Tenant updated. **Roles:** SysAdmin (any tenant); TenantOwner (own tenant only). Every other profile is refused with 403 (D-22, D-27); a `parentTenantId` that differs from the tenant's moves it in the tree within the caller's branch (`C-036`).", body = TenantJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "Tenant not found, **or it exists and belongs to another tenant**. PD-034/HRM-092: a tenant-bound caller is answered 404 rather than 403 on purpose, so that the existence of another customer's tenant is not disclosed. Do not treat this as a defect.", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -199,7 +212,36 @@ pub async fn update_by_uuid(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    update_tenant(&state, locale, id, payload).await
+    // `C-036` (`SR-AC-08-13`): a `parentTenantId` that differs from the tenant's moves it in the tree. It is judged
+    // from the caller's own tenant (`acting_from` while acting in a descendant), and checked before anything is written.
+    let requested_parent = payload.parent_tenant_id;
+    let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
+    let mut moving = None;
+    if let Some(parent) = requested_parent {
+        let current = use_case
+            .find_by_id(id)
+            .await
+            .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::TenantNotFound))?;
+        if current.parent_tenant_id != Some(parent) {
+            let origin = current_user.access.acting_from.or(current_user.tenant_id).unwrap_or_default();
+            use_case.check_move(id, parent, origin).await.map_err(|e| {
+                if e.message == MOVE_NOT_ALLOWED {
+                    ExceptionResponse::Forbidden(locale.clone(), ErrorKey::InvalidParameterValue)
+                } else {
+                    ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue)
+                }
+            })?;
+            moving = Some((parent, origin));
+        }
+    }
+    let updated = update_tenant(&state, locale.clone(), id, payload).await?;
+    match moving {
+        None => Ok(updated),
+        Some((parent, origin)) => match use_case.move_tenant(id, parent, origin).await {
+            Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
+            Err(_) => Err(ExceptionResponse::BadRequest(locale, ErrorKey::TenantUpdateFailed)),
+        },
+    }
 }
 
 /// HRMS-204/AD-010: the UUID is the tenant's public identifier, and since

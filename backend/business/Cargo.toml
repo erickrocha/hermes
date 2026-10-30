@@ -58,6 +58,10 @@ name = "tenant_use_case_test"
 required-features = ["mock"]
 
 [[test]]
+name = "cross_tenant_action_use_case_test"
+required-features = ["mock"]
+
+[[test]]
 name = "business_plan_use_case_test"
 required-features = ["mock"]
 
@@ -263,4 +267,12 @@ required-features = ["mock"]
 
 [[test]]
 name = "tenant_dashboard_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "access_profile_gateway_test"
+required-features = ["mock"]
+
+[[test]]
+name = "customer_gateway_test"
 required-features = ["mock"]

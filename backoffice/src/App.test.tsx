@@ -10,7 +10,7 @@ import { emptyPage } from './types'
 import type { Session } from './types'
 import { sessionAs } from './test/session'
 
-const sysAdminSession: Session = sessionAs('SysAdmin', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
+const sysAdminSession: Session = sessionAs('SystemAdministrator', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
 const tenantOwnerSession: Session = sessionAs('TenantOwner', { email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2 })
 const tenantUserSession: Session = sessionAs('TenantUser', { email: 'driver.coord@transmega.com', uuid: 'user-uuid', name: 'Coordinator', userId: 3 })
 

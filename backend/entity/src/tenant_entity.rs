@@ -20,6 +20,8 @@ pub struct Model {
     pub postal_code: Option<String>,
     pub country_code: Option<String>,
     pub business_plan_id: Option<i64>,
+    /// `C-036`: the tenant that manages this one; `None` only for the root tenant.
+    pub parent_tenant_id: Option<i64>,
     pub created_at: DateTimeUtc,
     pub created_by: Option<String>,
     pub updated_at: DateTimeUtc,

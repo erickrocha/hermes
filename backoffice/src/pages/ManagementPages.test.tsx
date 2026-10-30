@@ -67,14 +67,14 @@ describe('PlanEditorPage price editing', () => {
   })
 })
 
-const sysAdminSession: Session = sessionAs('SysAdmin', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
+const sysAdminSession: Session = sessionAs('SystemAdministrator', { email: 'root@hermes.dev', uuid: 'sys-uuid', name: 'Root', userId: 1 })
 const tenantOwnerSession: Session = sessionAs('TenantOwner', { email: 'owner@transmega.com', uuid: 'owner-uuid', name: 'Owner', userId: 2, tenantId: 42 })
 const oneTenant: Tenant = { id: 42, businessName: 'Transmega', companyName: 'Transmega', taxId: '52998224725', countryCode: 'BR' }
 const perm = (code: string, module: string, extra: Partial<Permission> = {}): Permission => ({ code, module, scope: 'Tenant', own: false, defaultFor: [], ...extra })
 const catalogue: Permission[] = [perm('vehicle.read', 'Fleet', { own: true }), perm('vehicle.create', 'Fleet'), perm('business-plan.read', 'Platform', { scope: 'Platform' })]
-const driverProfile: AccessProfile = { uuid: 'sys-driver', name: 'Driver', scope: 'Tenant', system: true, key: 'Driver', active: true, permissions: ['vehicle.read@own'] }
-const ownerProfile: AccessProfile = { uuid: 'sys-owner', name: 'Tenant owner', scope: 'Tenant', system: true, key: 'TenantOwner', active: true, permissions: ['vehicle.read', 'vehicle.create'] }
-const adminProfile: AccessProfile = { uuid: 'sys-admin', name: 'Platform administrator', scope: 'Platform', system: true, key: 'SysAdmin', active: true, permissions: ['vehicle.read', 'vehicle.create', 'business-plan.read'] }
+const driverProfile: AccessProfile = { uuid: 'sys-driver', name: 'Driver', system: true, key: 'Driver', active: true, permissions: ['vehicle.read@own'] }
+const ownerProfile: AccessProfile = { uuid: 'sys-owner', name: 'Tenant owner', system: true, key: 'TenantOwner', active: true, permissions: ['vehicle.read', 'vehicle.create'] }
+const adminProfile: AccessProfile = { uuid: 'sys-admin', name: 'Platform administrator', system: true, key: 'SystemAdministrator', active: true, permissions: ['vehicle.read', 'vehicle.create', 'business-plan.read'] }
 const mockAccessOptions = () => vi.spyOn(api, 'get').mockImplementation((async (url: string) => {
   if (url === '/access-profile/catalogue') return { data: catalogue }
   if (url === '/access-profile') return { data: { items: [adminProfile, ownerProfile, driverProfile] } }
@@ -112,11 +112,11 @@ const pickProfile = async (name: RegExp) => {
 describe('UserEditorPage profile-based creation (C-035)', () => {
   beforeEach(() => { vi.restoreAllMocks(); mockAccessOptions() })
 
-  it('lets the platform pick any active profile; a Platform profile takes the tenant away, a Tenant profile asks for one', async () => {
+  it('lets the platform pick any active profile; the system administrator profile is placed by the server, a Tenant profile asks for a tenant', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as never)
     renderNewUser(sysAdminSession)
-    await pickProfile(/Platform administrator/)
-    expect(screen.getByText(/platform profile gives the user no tenant|perfil de plataforma não dá tenant/i)).toBeInTheDocument()
+    await pickProfile(/System administrator|Administrador do Sistema/)
+    expect(screen.getByText(/placed in the platform's own tenant|fica no tenant da própria plataforma/i)).toBeInTheDocument()
     expect(within(screen.getByRole('combobox', { name: /^tenant$/i })).getByRole('textbox')).toBeDisabled()
     await pickProfile(/Tenant owner/)
     expect(within(screen.getByRole('combobox', { name: /^tenant$/i })).getByRole('textbox')).not.toBeDisabled()
@@ -132,7 +132,7 @@ describe('UserEditorPage profile-based creation (C-035)', () => {
     const picker = await screen.findByRole('combobox', { name: /^profile$|^perfil$/i })
     fireEvent.focus(within(picker).getByRole('textbox'))
     const options = (await screen.findAllByRole('option')).map((option) => option.textContent)
-    expect(options.some((label) => /Platform administrator/.test(label ?? ''))).toBe(false)
+    expect(options.some((label) => /System administrator|Administrador do Sistema/.test(label ?? ''))).toBe(false)
     expect(options.some((label) => /Driver|Motorista/.test(label ?? ''))).toBe(true)
     expect(screen.queryByRole('combobox', { name: /^tenant$/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('option', { name: /Driver|Motorista/ }))
@@ -140,7 +140,7 @@ describe('UserEditorPage profile-based creation (C-035)', () => {
     expect(screen.queryByLabelText(/temporary password|senha tempor|new password|nova senha/i)).not.toBeInTheDocument()
     // the Driver profile already holds vehicle.read@own; vehicle.read is still offered (widening), vehicle.create too
     const extras = within(screen.getByTestId('extraPermissions'))
-    fireEvent.click(extras.getByRole('checkbox', { name: /^vehicle\.create$/ }))
+    fireEvent.click(extras.getByRole('checkbox', { name: /^(Vehicle registration|Cadastro de veículo)$/ }))
     fireEvent.change(screen.getByLabelText(/^name|^nome/i), { target: { value: 'New Driver Coordinator' } })
     fireEvent.change(screen.getByLabelText(/e-?mail/i), { target: { value: 'coordinator@transmega.com' } })
     fireEvent.click(screen.getByRole('button', { name: /save|salvar/i }))
@@ -169,6 +169,6 @@ describe('administration guards', () => {
     expect(canCreateUsers(sessionWith(['user.update']))).toBe(false)
     expect(canCreateUsers(sessionWith(['user.create']))).toBe(true)
     for (const key of ['Driver', 'Mechanic'] as const) { expect(canSeeUsers(sessionAs(key))).toBe(false); expect(canCreateUsers(sessionAs(key))).toBe(false) }
-    for (const key of ['SysAdmin', 'TenantOwner'] as const) expect(canCreateUsers(sessionAs(key))).toBe(true)
+    for (const key of ['SystemAdministrator', 'TenantOwner'] as const) expect(canCreateUsers(sessionAs(key))).toBe(true)
   })
 })

@@ -5,7 +5,7 @@ use crate::domain::access_profile::{AccessProfile, AccessProfileEntityMapper};
 use crate::domain::business_error::BusinessError;
 use entity::access_profile_entity;
 use entity::audit;
-use entity::prelude::{AccessProfileEntity as AccessProfileQuery, UserEntity as UserQuery};
+use entity::prelude::{AccessProfileEntity as AccessProfileQuery, TenantEntity as TenantQuery, UserEntity as UserQuery};
 use entity::user_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::sea_query::Expr;
@@ -23,7 +23,14 @@ fn profile_select(query: Select<AccessProfileQuery>) -> Select<AccessProfileQuer
         audit::TenantScope::Tenant(id) => query.filter(
             Condition::any()
                 .add(access_profile_entity::Column::TenantId.eq(id))
-                .add(access_profile_entity::Column::TenantId.is_null()),
+                .add(access_profile_entity::Column::TenantId.is_null())
+                // `C-036`: a profile a tenant above made is visible below it.
+                .add(Expr::cust(format!(
+                    "`access_profile`.`tenant_id` IN (WITH RECURSIVE `above` (`id`, `parent`) AS ( \
+                     SELECT `id`, `parent_tenant_id` FROM `tenant` WHERE `id` = {id} \
+                     UNION ALL SELECT t.`id`, t.`parent_tenant_id` FROM `tenant` t JOIN `above` a ON t.`id` = a.`parent`) \
+                     SELECT `id` FROM `above`)"
+                ))),
         ),
         audit::TenantScope::Denied => query.filter(Expr::cust("1 = 0")),
     }
@@ -43,6 +50,10 @@ pub trait AccessProfileStore: Send + Sync {
     /// Sets a user's profile and their extra grants. Touches those two columns.
     async fn set_user_access(&self, user_id: i64, profile_id: i64, extras: &[String]) -> Result<(), BusinessError>;
     async fn users_holding(&self, profile_id: i64) -> Result<u64, BusinessError>;
+    /// `C-036`: the tenants above `tenant_id`, nearest first -- whose profiles it may use. No tree, none.
+    async fn ancestors_of(&self, _tenant_id: i64) -> Result<Vec<i64>, BusinessError> {
+        Ok(Vec::new())
+    }
 }
 
 pub struct AccessProfileGateway {
@@ -134,6 +145,23 @@ impl AccessProfileStore for AccessProfileGateway {
             .count(&self.db)
             .await
             .map_err(database_error)
+    }
+
+    async fn ancestors_of(&self, tenant_id: i64) -> Result<Vec<i64>, BusinessError> {
+        let mut above = Vec::new();
+        let mut current = tenant_id;
+        // The tree is shallow in practice; the bound keeps a corrupt cycle from looping.
+        for _ in 0..32 {
+            let parent = TenantQuery::find_by_id(current).one(&self.db).await.map_err(database_error)?.and_then(|t| t.parent_tenant_id);
+            match parent {
+                Some(parent) if !above.contains(&parent) && parent != tenant_id => {
+                    above.push(parent);
+                    current = parent;
+                }
+                _ => break,
+            }
+        }
+        Ok(above)
     }
 }
 

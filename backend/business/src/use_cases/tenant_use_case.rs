@@ -48,6 +48,11 @@ fn validate_tax_id(country_code: &str, tax_id: &str) -> Result<String, BusinessE
     }
 }
 
+/// A caller may only move tenants within their own branch.
+pub const MOVE_NOT_ALLOWED: &str = "A tenant moves only within the caller's own branch, never the caller's own tenant";
+/// The move would make a cycle, a second root, or name no tenant.
+pub const INVALID_MOVE: &str = "The move is not valid";
+
 pub struct TenantUseCase<G: TenantStore> {
     gateway: G,
 }
@@ -70,6 +75,12 @@ impl<G: TenantStore> TenantUseCase<G> {
         }
         let country_code = required_country_code(tenant.country_code.as_deref())?;
         let tax_id = validate_tax_id(country_code, &tenant.tax_id)?;
+        // `HRMS-872`: every tenant but the root has a parent, and the root already exists.
+        if tenant.parent_tenant_id.is_none() {
+            let msg = "Tenant parent is required".to_string();
+            log::error!("[TenantUseCase::create] {}", msg);
+            return Err(BusinessError::new(msg));
+        }
 
         // A tenant's plan is set only through `set_plan` (HRMS-224, PD-021),
         // never at creation, regardless of what the caller sent.
@@ -86,6 +97,54 @@ impl<G: TenantStore> TenantUseCase<G> {
             log::error!("[TenantUseCase::create] {}", msg);
             BusinessError::new(msg)
         })
+    }
+
+    /// `C-036` (`HRMS-873`): the tenant itself first, then everything below it.
+    pub async fn list_branch(&self, tenant_id: i64) -> Result<Vec<Tenant>, BusinessError> {
+        log::info!("[TenantUseCase::list_branch] Executing for tenant: {}", tenant_id);
+        let all = self.gateway.list_all().await?;
+        let below = crate::domain::tenant_tree::descendants(&all, tenant_id);
+        let mut branch: Vec<Tenant> =
+            all.into_iter().filter(|t| t.id == Some(tenant_id) || t.id.is_some_and(|id| below.contains(&id))).collect();
+        branch.sort_by_key(|t| (t.id != Some(tenant_id), t.business_name.clone()));
+        Ok(branch)
+    }
+
+    /// `C-036` (`SR-AC-08-13`): whether `tenant_id` may become a child of `new_parent_id` on behalf of a caller whose own
+    /// tenant is `origin_id`: both are within the caller's reach (the caller's tenant and what is below it), the caller
+    /// does not move their own tenant, and the move makes neither a cycle nor a second root.
+    pub async fn check_move(&self, tenant_id: i64, new_parent_id: i64, origin_id: i64) -> Result<Vec<Tenant>, BusinessError> {
+        let all = self.gateway.list_all().await?;
+        let mut reach = crate::domain::tenant_tree::descendants(&all, origin_id);
+        reach.push(origin_id);
+        if tenant_id == origin_id || !reach.contains(&tenant_id) || !reach.contains(&new_parent_id) {
+            return Err(BusinessError::new(MOVE_NOT_ALLOWED.to_string()));
+        }
+        crate::domain::tenant_tree::validate_move(&all, tenant_id, new_parent_id).map_err(|e| {
+            BusinessError::new(format!("{INVALID_MOVE}: {e:?}"))
+        })?;
+        Ok(all)
+    }
+
+    /// `C-036`: moves `tenant_id` under `new_parent_id` once [`Self::check_move`] allows it.
+    pub async fn move_tenant(&self, tenant_id: i64, new_parent_id: i64, origin_id: i64) -> Result<Tenant, BusinessError> {
+        log::info!("[TenantUseCase::move_tenant] Executing: tenant {} under {} (from {})", tenant_id, new_parent_id, origin_id);
+        let all = self.check_move(tenant_id, new_parent_id, origin_id).await?;
+        let tenant = all
+            .into_iter()
+            .find(|t| t.id == Some(tenant_id))
+            .ok_or_else(|| BusinessError::new("Tenant not found".to_string()))?;
+        self.gateway.save(Tenant { parent_tenant_id: Some(new_parent_id), updated_at: None, ..tenant }).await
+    }
+
+    /// `C-036`: the root of the tenant tree -- the only tenant with no parent.
+    pub async fn find_root(&self) -> Result<Tenant, BusinessError> {
+        log::info!("[TenantUseCase::find_root] Executing");
+        let tenants = self.gateway.list_all().await?;
+        tenants
+            .into_iter()
+            .find(|t| t.parent_tenant_id.is_none())
+            .ok_or_else(|| BusinessError::new("Root tenant not found".to_string()))
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Tenant, BusinessError> {
@@ -209,6 +268,8 @@ impl<G: TenantStore> TenantUseCase<G> {
             // PD-021) — the general update path always keeps it as-is,
             // regardless of what the caller sent.
             business_plan_id: existing.business_plan_id,
+            // `C-036`: the update path keeps the tenant where it is in the tree (a move is its own operation).
+            parent_tenant_id: existing.parent_tenant_id,
             created_at: existing.created_at,
             created_by: existing.created_by,
             updated_at: None,

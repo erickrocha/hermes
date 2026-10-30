@@ -81,6 +81,7 @@ fn new_tenant() -> Tenant {
         postal_code: None,
         country_code: Some("US".into()),
         business_plan_id: Some(99),
+        parent_tenant_id: Some(1),
         created_at: None,
         updated_at: None,
         created_by: None,
@@ -134,4 +135,69 @@ async fn tenant_postal_code_and_phone_are_stored_as_digits() {
         .expect("updated");
     assert_eq!(updated.phone, None);
     assert_eq!(updated.postal_code.as_deref(), Some("13000000"));
+}
+
+/// `C-036` (`HRMS-872`): every tenant but the root has a parent, so a creation without one is refused; the
+/// root is the one tenant with none, and an update keeps a tenant where it is in the tree.
+#[tokio::test]
+async fn a_tenant_needs_a_parent_the_root_is_the_one_without_and_an_update_keeps_the_place() {
+    let store = MemoryTenantStore::default();
+    store
+        .tenants
+        .lock()
+        .expect("lock")
+        .push(Tenant { id: Some(1), uuid: Some("root".into()), parent_tenant_id: None, ..new_tenant() });
+    let use_case = TenantUseCase::new(store);
+
+    let orphan = use_case.create(Tenant { parent_tenant_id: None, ..new_tenant() }).await;
+    assert_eq!(orphan.expect_err("a parent is required").message, "Tenant parent is required");
+
+    let child = use_case.create(new_tenant()).await.expect("created under the root");
+    assert_eq!(child.parent_tenant_id, Some(1));
+    assert_eq!(use_case.find_root().await.expect("root").id, Some(1));
+
+    let updated = use_case
+        .update(child.id.expect("id"), Tenant { parent_tenant_id: Some(77), ..new_tenant() })
+        .await
+        .expect("updated");
+    assert_eq!(updated.parent_tenant_id, Some(1), "a payload cannot move a tenant in the tree");
+}
+
+/// `C-036` (`HRMS-873`): a branch is the tenant and everything below it, the tenant first.
+#[tokio::test]
+async fn a_branch_is_the_tenant_then_everything_below_it() {
+    let store = MemoryTenantStore::default();
+    {
+        let mut tenants = store.tenants.lock().expect("lock");
+        for (id, parent) in [(1, None), (2, Some(1)), (3, Some(2)), (4, Some(1))] {
+            tenants.push(Tenant { id: Some(id), uuid: Some(format!("t{id}")), parent_tenant_id: parent, business_name: format!("n{id}"), ..new_tenant() });
+        }
+    }
+    let use_case = TenantUseCase::new(store);
+    let ids = |v: Vec<Tenant>| v.into_iter().filter_map(|t| t.id).collect::<Vec<_>>();
+    assert_eq!(ids(use_case.list_branch(2).await.expect("branch")), vec![2, 3]);
+    assert_eq!(ids(use_case.list_branch(1).await.expect("branch")), vec![1, 2, 3, 4]);
+    assert_eq!(ids(use_case.list_branch(4).await.expect("branch")), vec![4]);
+}
+
+/// `C-036` (`SR-AC-08-13`): a caller moves tenants within their own branch -- never their own tenant, never out of
+/// the branch, never into a cycle -- and the root stays the one without a parent.
+#[tokio::test]
+async fn a_tenant_moves_within_the_callers_branch_and_nowhere_else() {
+    let store = MemoryTenantStore::default();
+    {
+        // root(1) -> A(2) -> A1(3), A2(4); root -> B(5)
+        let mut tenants = store.tenants.lock().expect("lock");
+        for (id, parent) in [(1, None), (2, Some(1)), (3, Some(2)), (4, Some(2)), (5, Some(1))] {
+            tenants.push(Tenant { id: Some(id), uuid: Some(format!("t{id}")), parent_tenant_id: parent, business_name: format!("n{id}"), ..new_tenant() });
+        }
+    }
+    let use_case = TenantUseCase::new(store);
+    assert_eq!(use_case.move_tenant(4, 3, 2).await.expect("A2 under A1, from A").parent_tenant_id, Some(3));
+    assert_eq!(use_case.move_tenant(3, 2, 2).await.expect("A1 back under A").parent_tenant_id, Some(2));
+    for (tenant, parent, origin) in [(2, 3, 2), (5, 3, 2), (3, 5, 2), (2, 4, 1)] {
+        let refused = use_case.move_tenant(tenant, parent, origin).await.expect_err("outside the branch, or a cycle");
+        assert!(refused.message.starts_with("A tenant moves only") || refused.message.starts_with("The move is not valid"), "{}", refused.message);
+    }
+    assert!(use_case.move_tenant(1, 5, 1).await.expect_err("the root never moves").message.starts_with("A tenant moves only"));
 }

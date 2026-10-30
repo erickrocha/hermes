@@ -55,7 +55,7 @@ describe('system profiles through the route guards', () => {
   })
 
   it('platform areas open to the platform administrator alone', () => {
-    const admin = sessionAs('SysAdmin'); const owner = sessionAs('TenantOwner')
+    const admin = sessionAs('SystemAdministrator'); const owner = sessionAs('TenantOwner')
     for (const guard of [canSeePlans, canSeeReferenceData, canCreateTenants]) { expect(guard(admin)).toBe(true); expect(guard(owner)).toBe(false) }
   })
 

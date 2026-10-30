@@ -7,6 +7,16 @@ use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
 
+/// Echoed to the console (`scope` in the session): `Platform` for the system administrator's profile, `Tenant`
+/// otherwise. Informational only since `C-036` -- nothing in the backend decides on it; reach is the tenant tree.
+fn echoed_scope(profile: &AccessProfile) -> ProfileScope {
+    if profile.system && profile.key.as_deref() == Some(crate::domain::permission::SYS_ADMIN) {
+        ProfileScope::Platform
+    } else {
+        ProfileScope::Tenant
+    }
+}
+
 /// `C-035`: what a user may do, resolved from their profile and their own extra grants. Never persisted:
 /// `UserGateway` fills it on every read, so a change to the profile or the extras takes effect on the
 /// holder's next request (`HRMS-853`). A `User` built without a store (tests, a payload) carries the
@@ -19,6 +29,12 @@ pub struct Access {
     /// The system profile's key (`SysAdmin`, `Driver`, ...) when the user holds one; `None` for a tenant-made profile.
     pub profile_key: Option<String>,
     pub grants: Grants,
+    /// `C-036`: the caller's own tenant while a request acts inside a descendant (`X-Tenant-Uuid`), where `tenant_id`
+    /// is the descendant's; `None` otherwise. Moving a tenant in the tree is judged from here.
+    pub acting_from: Option<i64>,
+    /// `C-036`: the caller's own grants while `grants` hold only what the descendant lets them do; what they may hand
+    /// out is judged against these (nobody grants what they do not hold). `None` outside a descendant.
+    pub held: Option<Grants>,
 }
 
 impl Default for Access {
@@ -29,6 +45,8 @@ impl Default for Access {
             profile_name: None,
             profile_key: None,
             grants: Grants::effective(&[], &[]),
+            acting_from: None,
+            held: None,
         }
     }
 }
@@ -39,11 +57,13 @@ impl Access {
     pub fn resolve(profile: &AccessProfile, extras: &[String]) -> Self {
         let held: &[String] = if profile.active { &profile.permissions } else { &[] };
         Self {
-            scope: profile.scope,
+            scope: echoed_scope(profile),
             profile_uuid: profile.uuid.clone(),
             profile_name: Some(profile.name.clone()),
             profile_key: profile.key.clone(),
             grants: Grants::effective(held, extras),
+            acting_from: None,
+            held: None,
         }
     }
 
@@ -51,10 +71,11 @@ impl Access {
     /// in-memory stores and anything else with no profile row at hand. `None` for an unknown key.
     pub fn of_system_profile(key: &str) -> Option<Self> {
         let system = crate::domain::permission::system_profile(key)?;
+        let scope = if system.key == crate::domain::permission::SYS_ADMIN { ProfileScope::Platform } else { ProfileScope::Tenant };
         Some(Self {
             profile_key: Some(system.key.to_string()),
             profile_name: Some(system.name.to_string()),
-            ..Self::from_grants(system.scope, crate::domain::permission::system_grants(system.key))
+            ..Self::from_grants(scope, crate::domain::permission::system_grants(system.key))
         })
     }
 
@@ -65,7 +86,7 @@ impl Access {
         S: AsRef<str>,
     {
         let codes: Vec<String> = grants.into_iter().map(|g| g.as_ref().to_string()).collect();
-        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]) }
+        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]), acting_from: None, held: None }
     }
 }
 
@@ -107,10 +128,6 @@ impl User {
 
     pub fn grant_scope(&self, code: &str) -> Option<GrantScope> {
         self.access.grants.scope(code)
-    }
-
-    pub fn is_platform(&self) -> bool {
-        self.access.scope == ProfileScope::Platform
     }
 }
 

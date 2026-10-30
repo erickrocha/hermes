@@ -275,6 +275,7 @@ fn tenant() -> Tenant {
         postal_code: None,
         country_code: Some("BR".to_string()),
         business_plan_id: None,
+        parent_tenant_id: Some(1),
         created_at: None,
         updated_at: None,
         created_by: None,

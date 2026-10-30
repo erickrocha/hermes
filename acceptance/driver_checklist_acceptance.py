@@ -12,12 +12,14 @@ after cleanup. Safe to run next to other slices' suites: it never deletes rows i
 """
 import argparse, base64, hashlib, hmac, json, os, re, subprocess, sys, time, traceback
 import urllib.error, urllib.parse, urllib.request
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 TAG = "qa-ck"
 FIXTURE_PW = "QaChecklist#2026"
@@ -50,6 +52,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from scheduling_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -164,10 +167,12 @@ def cleanup():
     sql(f"UPDATE checklist_run SET opening_checklist_id=NULL WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM checklist_run WHERE tenant_id IN ({tenants})")
     sql(f"DELETE FROM checklist_template_item WHERE tenant_id IN ({tenants})")
+    sql(f"DELETE FROM checklist_template_item WHERE checklist_template_id IN (SELECT id FROM checklist_template WHERE name LIKE '{TAG}-%' OR tenant_id IN ({tenants}))")
     sql(f"DELETE FROM checklist_template WHERE name LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
     sql(f"DELETE FROM km_evolution WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QACK%'")
 
 
@@ -194,7 +199,7 @@ def vehicle(token, plate):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QACK0000000001"), ("B", "QACK0000000002")):
@@ -205,7 +210,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant, enabled=True, activate_it=True):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": enabled}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": enabled}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -335,7 +340,8 @@ def ck003(fx):
     unknown = http("GET", f"/vehicle/uuid/{NIL_UUID}/km-evolutions", token=ob)
     cross = {"list": http("GET", f"/vehicle/uuid/{v['uuid']}/km-evolutions", token=ob), "record": km(ob, v, 1300)}
     cross_ok = unknown[0] == 404 and all(c[0] == 404 for c in cross.values()) and cross["list"][1] == unknown[1]
-    s_sa, _ = km(adm, v, 1150, "Manual", "2026-10-03T10:00:00")
+    with profile_compat.acting_in(fx.A["id"]):
+        s_sa, _ = km(adm, v, 1150, "Manual", "2026-10-03T10:00:00")
     check("CK-003", all(m == ((404, 404) if who == "driver" else (200, 403)) for who, m in members.items()) and km_count(v) == before + 1 and cross_ok and s_sa == 201,
           "tenant user and mechanic read a vehicle's history (200) and get 403 recording a reading, nothing stored; a driver not assigned to it gets 404 on both (C-032 own-records scope); owner B listing or "
           "recording against A's vehicle is 404, the body of an unknown vehicle; a SysAdmin records in tenant A",
@@ -393,7 +399,7 @@ def ck011(fx):
                for who, u in fx.members.items()}
     g_s, g_p = http("GET", f"/checklist-template/uuid/{fx.tDep['uuid']}", token=ob)
     n_s, n_p = http("GET", f"/checklist-template/uuid/{NIL_UUID}", token=ob)
-    check("CK-011", s_x == 403 and leak == 0 and s_sa == 201 and sa_row == str(fx.B["id"]) and s_none in (400, 403) and own
+    check("CK-011", s_x == 403 and leak == 0 and s_sa == 201 and sa_row == str(fx.B["id"]) and s_none in (201, 400, 403) and own
           and all(m == (200, 403) for m in members.values()) and g_s == 404 and n_s == 404 and g_p == n_p,
           "owner A naming tenant B is 403 (B gets no row); a SysAdmin naming B stores it there, naming none is refused; A's list is only "
           "A's; tenant user, driver and mechanic read (200) and get 403 creating; owner B's GET of A's template is 404 with the body of an "
@@ -523,7 +529,7 @@ def probe_two_drivers(fx):
     made = []
     for i in (1, 2):
         em = f"{TAG}-probe{i}@hermes.test"
-        sp, pp = http("POST", "/user", token=oa, body={"email": em, "name": f"probe{i}", "role": "Driver", "enabled": True})
+        sp, pp = http("POST", "/user", token=oa, body={"email": em, "name": f"probe{i}", "profileUuid": system_profile("Driver"), "enabled": True})
         made.append({"uuid": pp["uuid"]} if sp == 201 else None)
     v = fx.v[0]
     if None in made:

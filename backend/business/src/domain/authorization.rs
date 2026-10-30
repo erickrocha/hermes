@@ -20,33 +20,24 @@
 //! caller's own records asks `User::only_own(code)`.
 
 use crate::domain::access_profile::AccessProfile;
-use crate::domain::enums::ProfileScope;
-use crate::domain::permission::{Grants, DRIVER_ACT};
+use crate::domain::permission::{CHILD_CREATE, Grants, DRIVER_ACT};
 use crate::domain::user::User;
-
-/// PD-013, restated for `C-035`: the platform actor holds a platform profile and belongs to no tenant.
-pub fn is_platform_actor(user: &User) -> bool {
-    user.access.scope == ProfileScope::Platform && user.tenant_id.is_none()
-}
 
 /// HRMS-111/HRMS-133: a tenant profile is held inside a tenant. An account that breaks that -- or a
 /// platform profile stamped with a tenant -- is refused outright rather than treated as unscoped.
 pub fn lacks_required_tenant(user: &User) -> bool {
-    match user.access.scope {
-        ProfileScope::Tenant => user.tenant_id.is_none(),
-        ProfileScope::Platform => user.tenant_id.is_some(),
-    }
+    user.tenant_id.is_none()
 }
 
-/// Whether `user` may read or act on the given tenant's own data: a platform actor (any tenant), or a
-/// member of that exact tenant (HRM-090...096).
+/// Whether `user` may read or act on the given tenant's own data: a member of that exact tenant
+/// (HRM-090...096). Another tenant's data is reached by acting inside it (`X-Tenant-Uuid`, `C-036`).
 pub fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
-    user.tenant_id == Some(tenant_id) || is_platform_actor(user)
+    user.tenant_id == Some(tenant_id)
 }
 
 /// The actor's tenant reaches a record stamped with `record_tenant_id`.
 pub fn reaches(actor: &User, record_tenant_id: Option<i64>) -> bool {
-    is_platform_actor(actor) || (actor.tenant_id.is_some() && actor.tenant_id == record_tenant_id)
+    actor.tenant_id.is_some() && actor.tenant_id == record_tenant_id
 }
 
 /// Holds `code` and reaches the record's tenant.
@@ -63,17 +54,14 @@ pub fn may_act_on_any(actor: &User, codes: &[&str], record_tenant_id: Option<i64
 /// Holds `code`, for an operation with no record to compare tenants against. A tenant actor without a
 /// tenant holds nothing.
 pub fn may(actor: &User, code: &str) -> bool {
-    actor.allows(code) && (is_platform_actor(actor) || actor.tenant_id.is_some())
+    actor.allows(code) && actor.tenant_id.is_some()
 }
 
-/// Holds `code` and may create inside `target_tenant_id`: a platform actor names the owning tenant; a
-/// tenant actor creates in their own tenant only (an omitted target defaults to it).
+/// Holds `code` and may create inside `target_tenant_id`: the actor creates in their own tenant only (an
+/// omitted target defaults to it).
 pub fn may_create_in(actor: &User, code: &str, target_tenant_id: Option<i64>) -> bool {
     if !actor.allows(code) {
         return false;
-    }
-    if is_platform_actor(actor) {
-        return target_tenant_id.is_some();
     }
     actor.tenant_id.is_some() && (target_tenant_id.is_none() || target_tenant_id == actor.tenant_id)
 }
@@ -81,17 +69,25 @@ pub fn may_create_in(actor: &User, code: &str, target_tenant_id: Option<i64>) ->
 /// `C-035`: nobody grants what they do not hold -- a profile's grants, or a user's extras, must be
 /// covered by the actor's own effective grants, at least as widely (`@own` does not cover full).
 pub fn can_grant(actor: &User, grants: &Grants) -> bool {
-    actor.access.grants.covers(grants)
+    actor.access.held.as_ref().unwrap_or(&actor.access.grants).covers(grants)
 }
 
 /// Whether a profile may be held by an account in `tenant_id`: a platform profile by an account with no
 /// tenant; a tenant profile inside the tenant that owns it, or inside any tenant for a system profile.
 pub fn profile_fits(profile: &AccessProfile, tenant_id: Option<i64>) -> bool {
-    profile.active
-        && match profile.scope {
-            ProfileScope::Platform => tenant_id.is_none(),
-            ProfileScope::Tenant => tenant_id.is_some() && (profile.system || profile.tenant_id == tenant_id),
-        }
+    profile_fits_in(profile, tenant_id, &[])
+}
+
+/// A profile a tenant above the account's own made is visible and assignable below it (`D-37`, `HRMS-873`):
+/// `ancestors` are the tenants above `tenant_id`.
+pub fn profile_fits_in(profile: &AccessProfile, tenant_id: Option<i64>, ancestors: &[i64]) -> bool {
+    // Where the system administrator's profile may sit (the root tenant, the placing actor's own) is pinned by
+    // `can_assign_profile` and `AccessProfileUseCase::placeable`.
+    profile.active && tenant_id.is_some() && (profile.system || profile.tenant_id == tenant_id || inherited(profile, ancestors))
+}
+
+fn inherited(profile: &AccessProfile, ancestors: &[i64]) -> bool {
+    profile.tenant_id.is_some_and(|owner| ancestors.contains(&owner))
 }
 
 /// `C-035`: whether `user` may be named as a driver -- of a vehicle, a trip, a checklist, a fuelling --
@@ -124,28 +120,25 @@ pub fn can_read_billing(user: &User) -> bool {
 
 /// `POST /tenant` -- the platform's alone (PD-019).
 pub fn can_create_tenant(user: &User) -> bool {
-    is_platform_actor(user) && user.allows("tenant.create")
+    user.tenant_id.is_some() && user.allows(CHILD_CREATE)
 }
 
-/// `POST /tenant/{id}/plan` (HRMS-224, PD-019, PD-021).
+/// `POST /tenant/{id}/plan` (HRMS-224, PD-019, PD-021): a tenant's plan is its parent's to set, so only while
+/// acting inside a descendant (`X-Tenant-Uuid`, `C-036`) -- never the tenant's own owner, who holds `tenant.plan`.
 pub fn can_set_tenant_plan(user: &User) -> bool {
-    is_platform_actor(user) && user.allows("tenant.plan")
+    user.access.acting_from.is_some() && user.allows("tenant.plan")
 }
 
 /// The business-plan catalogue is platform-global (PD-014).
 pub fn can_manage_business_plan_catalogue(user: &User) -> bool {
-    is_platform_actor(user)
-        && may_act_on_any(
-            user,
-            &["business-plan.create", "business-plan.update", "business-plan.delete", "business-plan.read"],
-            None,
-        )
+    ["business-plan.create", "business-plan.update", "business-plan.delete", "business-plan.read"]
+        .iter()
+        .any(|code| may(user, code))
 }
 
 /// PD-027: reference data (provinces, cities) is platform-global, exactly like the business-plan catalogue.
 pub fn can_manage_reference_data(user: &User) -> bool {
-    is_platform_actor(user)
-        && [
+    [
             "reference-data.province.create",
             "reference-data.province.import",
             "reference-data.city.create",
@@ -153,7 +146,7 @@ pub fn can_manage_reference_data(user: &User) -> bool {
             "reference-data.province.manage-read",
         ]
         .iter()
-        .any(|code| user.allows(code))
+        .any(|code| may(user, code))
 }
 
 /// `C-030` `HRMS-804…810`: what a vehicle costs and earns is the office's to read.
@@ -175,7 +168,8 @@ pub const USER_ADMIN: &[&str] = &["user.create", "user.update", "user.invite", "
 /// system profiles read-only).
 pub fn can_manage_access_profiles(actor: &User, tenant_id: Option<i64>) -> bool {
     PROFILE_ADMIN.iter().any(|code| actor.allows(code))
-        && (is_platform_actor(actor) || (actor.tenant_id.is_some() && (tenant_id.is_none() || tenant_id == actor.tenant_id)))
+        && actor.tenant_id.is_some()
+        && (tenant_id.is_none() || tenant_id == actor.tenant_id)
 }
 
 /// Where a newly created user's tenant comes from, once [`can_assign_profile`] has decided the
@@ -185,10 +179,6 @@ pub enum CreationTenant {
     /// Fixed by the profile and the actor, not the caller's choice: `None` for a platform profile,
     /// `Some(id)` for a tenant actor placing someone in their own tenant (HRMS-115, HRMS-118).
     Fixed(Option<i64>),
-    /// The caller names the tenant (a platform actor giving out a tenant profile, HRMS-114). The caller
-    /// of this function is responsible for validating that the named tenant actually exists -- this
-    /// module has no I/O and cannot do that itself.
-    CallerChosen,
 }
 
 /// PD-019's hierarchy, restated for profiles (`C-035`): a platform actor hands out platform profiles
@@ -196,25 +186,40 @@ pub enum CreationTenant {
 /// tenant profiles -- the system ones or their own tenant's -- inside their own tenant only. Holding the
 /// permission for the operation (`user.create`, `user.update`, `profile.assign`) is the middleware's
 /// question; covering the profile's grants is [`can_grant`]'s.
+/// The *Administrador do Sistema* system profile.
+pub fn is_system_administrator(profile: &AccessProfile) -> bool {
+    profile.system && profile.key.as_deref() == Some(crate::domain::permission::SYS_ADMIN)
+}
+
+/// The actor holds the *Administrador do Sistema* profile: the platform's own account (`C-036`).
+pub fn holds_system_administrator(actor: &User) -> bool {
+    actor.access.profile_key.as_deref() == Some(crate::domain::permission::SYS_ADMIN)
+}
+
 pub fn can_assign_profile(actor: &User, profile: &AccessProfile) -> Option<CreationTenant> {
+    can_assign_profile_in(actor, profile, &[])
+}
+
+/// [`can_assign_profile`] with the tenants above the actor's own, whose profiles are theirs to hand out too.
+pub fn can_assign_profile_in(actor: &User, profile: &AccessProfile, ancestors: &[i64]) -> Option<CreationTenant> {
     if !profile.active {
         return None;
     }
-    if is_platform_actor(actor) {
-        return Some(match profile.scope {
-            ProfileScope::Platform => CreationTenant::Fixed(None),
-            ProfileScope::Tenant => CreationTenant::CallerChosen,
-        });
-    }
+    let administrator = is_system_administrator(profile);
     let tenant_id = actor.tenant_id?;
-    (profile.scope == ProfileScope::Tenant && (profile.system || profile.tenant_id == Some(tenant_id)))
+    if administrator {
+        return holds_system_administrator(actor).then_some(CreationTenant::Fixed(Some(tenant_id)));
+    }
+    ( (profile.system || profile.tenant_id == Some(tenant_id) || inherited(profile, ancestors)))
         .then_some(CreationTenant::Fixed(Some(tenant_id)))
 }
 
 /// Whether `actor` may move an *existing* account to another tenant while editing it (PD-019): the
 /// platform's decision alone, and only onto a tenant that fits the account's profile.
 pub fn can_move_user_to_tenant(actor: &User, profile: &AccessProfile, requested_tenant_id: Option<i64>) -> bool {
-    is_platform_actor(actor) && profile_fits(profile, requested_tenant_id)
+    holds_system_administrator(actor)
+        && profile_fits(profile, requested_tenant_id)
+        && (!is_system_administrator(profile) || requested_tenant_id == actor.tenant_id)
 }
 
 /// Whether `actor` may *read* `target`'s record (EPIC-IA-05-S01): the target themselves, or whoever
@@ -257,7 +262,8 @@ pub fn can_read_vehicle(actor: &User, vehicle_tenant_id: Option<i64>) -> bool {
 /// EPIC-FO-02-S01/S02 (HRMS-926, HRMS-927): linking a tracking device is the platform's act -- the
 /// provider account is the platform's.
 pub fn can_link_tracker_device(actor: &User) -> bool {
-    is_platform_actor(actor) && actor.allows("vehicle.update")
+    // The provider account is the platform's: judged on what the actor holds itself, also while acting inside a tenant.
+    actor.tenant_id.is_some() && actor.access.held.as_ref().unwrap_or(&actor.access.grants).allows("vehicle.link-tracker")
 }
 
 /// `C-032` (`HRMS-860`): recording the odometer; a driver holds it over their own vehicle (reached only
@@ -579,7 +585,7 @@ pub fn can_operate_garage(actor: &User, target_tenant_id: Option<i64>) -> bool {
 /// `EPIC-GA-03-S01` (`HRMS-960`, `TRM-788`): arrival and departure stamps are published by the platform's
 /// own integration alone.
 pub fn can_publish_presence(actor: &User) -> bool {
-    is_platform_actor(actor) && actor.allows("vehicle-presence.publish")
+    may(actor, "vehicle-presence.publish")
 }
 
 /// `EPIC-GA-05-S02` (`HRMS-963`, `TRM-483`): calling a vehicle to base.
@@ -609,7 +615,6 @@ mod tests {
     use crate::domain::user::Access;
 
     fn actor(key: &str, tenant_id: Option<i64>) -> User {
-        let profile = permission::system_profile(key).unwrap();
         User {
             id: Some(1),
             uuid: None,
@@ -625,20 +630,22 @@ mod tests {
             created_by: None,
             updated_at: None,
             updated_by: None,
-            access: Access::from_grants(profile.scope, permission::system_grants(key)),
+            access: Access::of_system_profile(key).expect("a known system profile"),
         }
     }
 
-    fn profile(scope: ProfileScope, system: bool, tenant_id: Option<i64>) -> AccessProfile {
+    /// `C-036`: the root tenant's id in these tests; the platform actor belongs to it.
+    const ROOT: i64 = 99;
+
+    fn profile(administrator: bool, system: bool, tenant_id: Option<i64>) -> AccessProfile {
         AccessProfile {
             id: Some(9),
             uuid: Some("p".into()),
             tenant_id,
             name: "P".into(),
             name_key: "p".into(),
-            scope,
             system,
-            key: None,
+            key: administrator.then(|| SYS_ADMIN.to_string()),
             active: true,
             permissions: Vec::new(),
             created_at: None,
@@ -649,10 +656,11 @@ mod tests {
     }
 
     #[test]
-    fn the_platform_actor_is_a_platform_profile_with_no_tenant() {
-        assert!(is_platform_actor(&actor(SYS_ADMIN, None)));
-        assert!(!is_platform_actor(&actor(SYS_ADMIN, Some(1))));
-        assert!(lacks_required_tenant(&actor(SYS_ADMIN, Some(1))));
+    fn the_platform_actor_is_a_platform_profile_in_the_root_tenant_and_every_user_has_a_tenant() {
+        assert!(holds_system_administrator(&actor(SYS_ADMIN, Some(ROOT))));
+        assert!(!holds_system_administrator(&actor(TENANT_OWNER, Some(1))));
+        assert!(lacks_required_tenant(&actor(SYS_ADMIN, None)));
+        assert!(!lacks_required_tenant(&actor(SYS_ADMIN, Some(ROOT))));
         assert!(lacks_required_tenant(&actor(TENANT_OWNER, None)));
         assert!(!lacks_required_tenant(&actor(DRIVER, Some(1))));
     }
@@ -661,14 +669,14 @@ mod tests {
     fn a_capability_is_the_permission_inside_the_tenant() {
         let owner = actor(TENANT_OWNER, Some(1));
         let user = actor(TENANT_USER, Some(1));
-        let platform = actor(SYS_ADMIN, None);
+        let platform = actor(SYS_ADMIN, Some(ROOT));
         assert!(can_administer_vehicle(&owner, Some(1)));
         assert!(!can_administer_vehicle(&owner, Some(2)));
         assert!(!can_administer_vehicle(&user, Some(1)));
         assert!(can_read_vehicle(&user, Some(1)));
-        assert!(can_administer_vehicle(&platform, Some(2)));
+        assert!(can_administer_vehicle(&platform, Some(ROOT)) && !can_administer_vehicle(&platform, Some(2)));
         assert!(can_create_vehicle(&owner, None) && can_create_vehicle(&owner, Some(1)) && !can_create_vehicle(&owner, Some(2)));
-        assert!(!can_create_vehicle(&platform, None) && can_create_vehicle(&platform, Some(5)));
+        assert!(can_create_vehicle(&platform, None) && can_create_vehicle(&platform, Some(ROOT)) && !can_create_vehicle(&platform, Some(5)));
     }
 
     #[test]
@@ -695,7 +703,7 @@ mod tests {
 
     #[test]
     fn the_platform_only_capabilities_need_both_the_scope_and_the_permission() {
-        let platform = actor(SYS_ADMIN, None);
+        let platform = actor(SYS_ADMIN, Some(ROOT));
         let owner = actor(TENANT_OWNER, Some(1));
         assert!(can_create_tenant(&platform) && !can_create_tenant(&owner));
         assert!(can_manage_reference_data(&platform) && !can_manage_reference_data(&owner));
@@ -721,14 +729,14 @@ mod tests {
 
     #[test]
     fn placing_a_profile_follows_the_hierarchy() {
-        let platform = actor(SYS_ADMIN, None);
+        let platform = actor(SYS_ADMIN, Some(ROOT));
         let owner = actor(TENANT_OWNER, Some(1));
-        let platform_profile = profile(ProfileScope::Platform, true, None);
-        let system_tenant_profile = profile(ProfileScope::Tenant, true, None);
-        let own_profile = profile(ProfileScope::Tenant, false, Some(1));
-        let foreign_profile = profile(ProfileScope::Tenant, false, Some(2));
-        assert_eq!(can_assign_profile(&platform, &platform_profile), Some(CreationTenant::Fixed(None)));
-        assert_eq!(can_assign_profile(&platform, &own_profile), Some(CreationTenant::CallerChosen));
+        let platform_profile = profile(true, true, None);
+        let system_tenant_profile = profile(false, true, None);
+        let own_profile = profile(false, false, Some(1));
+        let foreign_profile = profile(false, false, Some(2));
+        assert_eq!(can_assign_profile(&platform, &platform_profile), Some(CreationTenant::Fixed(Some(ROOT))));
+        assert_eq!(can_assign_profile(&platform, &own_profile), None, "another tenant's profile is not the root's to hand out");
         assert_eq!(can_assign_profile(&owner, &platform_profile), None);
         assert_eq!(can_assign_profile(&owner, &system_tenant_profile), Some(CreationTenant::Fixed(Some(1))));
         assert_eq!(can_assign_profile(&owner, &own_profile), Some(CreationTenant::Fixed(Some(1))));
@@ -736,7 +744,8 @@ mod tests {
         let mut inactive = own_profile.clone();
         inactive.active = false;
         assert_eq!(can_assign_profile(&owner, &inactive), None);
-        assert!(profile_fits(&platform_profile, None) && !profile_fits(&platform_profile, Some(1)));
+        assert!(profile_fits(&platform_profile, Some(ROOT)) && !profile_fits(&platform_profile, None));
+        assert!(can_move_user_to_tenant(&platform, &platform_profile, Some(ROOT)) && !can_move_user_to_tenant(&platform, &platform_profile, Some(1)));
         assert!(profile_fits(&system_tenant_profile, Some(7)) && !profile_fits(&system_tenant_profile, None));
         assert!(profile_fits(&own_profile, Some(1)) && !profile_fits(&own_profile, Some(2)));
         assert!(can_move_user_to_tenant(&platform, &own_profile, Some(1)) && !can_move_user_to_tenant(&owner, &own_profile, Some(1)));
@@ -749,7 +758,7 @@ mod tests {
         let driver_grants = Grants::from_codes(permission::system_grants(DRIVER));
         assert!(can_grant(&owner, &driver_grants));
         assert!(!can_grant(&mechanic, &Grants::from_codes(["user.create"])));
-        assert!(!can_grant(&owner, &Grants::from_codes(["tenant.create"])));
-        assert!(can_grant(&actor(SYS_ADMIN, None), &Grants::from_codes(["tenant.create"])));
+        assert!(!can_grant(&owner, &Grants::from_codes(["tenant.child.create"])));
+        assert!(can_grant(&actor(SYS_ADMIN, Some(ROOT)), &Grants::from_codes(["tenant.child.create"])));
     }
 }

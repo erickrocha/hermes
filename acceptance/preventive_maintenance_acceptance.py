@@ -13,12 +13,14 @@ compared after cleanup.
 import argparse, base64, hashlib, hmac, json, os, re, subprocess, sys, time, traceback
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 TAG = "qa-pm"
 FIXTURE_PW = "QaPreventive#2026"
@@ -55,6 +57,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from scheduling_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -179,6 +182,7 @@ def cleanup():
     sql(f"DELETE FROM km_evolution WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAPM%'")
 
 
@@ -202,7 +206,7 @@ def newv(token, odo=None):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QAPM0000000001"), ("B", "QAPM0000000002")):
@@ -213,7 +217,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -878,7 +882,7 @@ def pm061(fx):
     unchanged = n_rows("technical_inspection") == n_ins
     cross = http("GET", f"/technical-inspection/uuid/{r1.get('uuid')}", token=ob)
     unknown = http("GET", f"/technical-inspection/uuid/{NIL_UUID}", token=ob)
-    check("PM-061", no_work and gen and disch and all(c in (400, 404) for c in bad.values()) and all(c == (404 if who == "driver" else 403) for who, c in members.items()) and unchanged
+    check("PM-061", no_work and gen and disch and all(c in (400, 404) for c in bad.values()) and all(c == 403 for who, c in members.items()) and unchanged
           and cross[0] == 404 and cross[1] == unknown[1],
           "a model that does not generate work opens and links nothing; an unknown model opens an order as if generating; the pending alerts naming the "
           "inspected model are discharged and those naming another model stay; an unknown vehicle, one of B, no answers and a blank description are "

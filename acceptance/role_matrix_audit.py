@@ -24,7 +24,12 @@ OVERRIDE = {
 
 
 # a generated body cannot express the creation hierarchy (who may create which role); IA-093/IA-094 test it
-KNOWN_REFUSED = {("POST", "/user"), ("PUT", "/user/uuid/{uuid}")}
+KNOWN_REFUSED = {("POST", "/user"), ("PUT", "/user/uuid/{uuid}"),
+                 # C-036: the generated body names another tenant / the plan is set only while entering the child
+                 ("POST", "/tenant/uuid/{uuid}/plan"), ("PUT", "/fuel-gauge-settings"), ("PUT", "/tenant-rule-settings"),
+                 ("PUT", "/tenant-rule-settings/tracking"),
+                 ("POST", "/garage-device/pair"),   # a public door (the pairing code is its credential); a session adds nothing
+                 ("GET", "/dashboard")}   # the dashboard is one tenant's overview, never the platform's (`bound_tenant`)
 
 
 def stated(method, path, op):
@@ -35,9 +40,21 @@ def stated(method, path, op):
     if not texts:
         return None
     s = texts[0].split("**Roles:**", 1)[1].split("--")[0]
-    if re.search(r"\bany (authenticated role|caller)\b", s):
+    if re.search(r"\bany (authenticated (role|account)|caller)\b", s):
         return set(ROLES)
-    return {r for r in ROLES if re.search(r"\b%s\b" % r, s)}
+    named = {r for r in ROLES if re.search(r"\b%s\b" % r, s)}
+    if named:
+        return named
+    # C-035/C-036: a newer operation states a permission, not role names; the contract appends who holds it by default
+    holders = re.search(r"\*\*Permission:\*\* `[^`]+` -- held by default by ([^\n]*)", op.get("description", ""))
+    if not holders:
+        return named
+    text = holders.group(1).lower()
+    if "every signed-in account" in text:
+        return set(ROLES)
+    prose = {"the platform administrator": "SysAdmin", "the tenant owner": "TenantOwner", "the tenant user": "TenantUser",
+             "the driver": "Driver", "the mechanic": "Mechanic"}
+    return {role for phrase, role in prose.items() if phrase in text}
 
 
 def resolve(schema, spec, depth=0):
@@ -67,8 +84,8 @@ def resolve(schema, spec, depth=0):
         out = {k: resolve(props[k], spec, depth + 1) for k in schema.get("required", []) if k in props}
         if "tenantId" in props:           # lets an unbound SysAdmin name the owning tenant
             out["tenantId"] = b.TENANT_ID
-        if "role" in out:                 # the first enum value (SysAdmin) is outside every hierarchy
-            out["role"] = "TenantUser"
+        if "profileUuid" in props:        # a user names a profile (C-036); the tenant user's is inside every hierarchy
+            out["profileUuid"] = b.system_profile("TenantUser")
         return out
     if t == "array":   # one element: a per-row role check (extra-trip import) never runs on an empty batch
         return [resolve(schema.get("items"), spec, depth + 1)] if schema.get("items") else []
@@ -120,10 +137,10 @@ def run():
     generic_cleanup()
     admin, owner = b.seed()
     tokens = {"SysAdmin": admin, "TenantOwner": owner}
-    env = b.load_env()
+    env = b.load_env()   # honours HERMES_ACCESS_TOKEN_SECRET for the test stack
     for role in ("TenantUser", "Driver", "Mechanic"):
         email = f"qa-ga-{role.lower()}@hermes.test"
-        st, u = b.http("POST", "/user", {"email": email, "name": email, "role": role, "enabled": True}, owner)
+        st, u = b.http("POST", "/user", {"email": email, "name": email, "profileUuid": b.system_profile(role), "enabled": True}, owner)
         assert st == 201, (role, st, u)
         pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
         assert b.http("POST", "/accept-invite", {"token": b.invite_token(email, pw, env["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204
@@ -136,6 +153,8 @@ def run():
                 if method not in ("get", "post", "put", "delete", "patch") or (method, path) in SKIP:
                     continue
                 allowed = stated(method, path, op)
+                if allowed is not None:
+                    allowed = allowed | {"SysAdmin"}   # C-036: the system administrator holds every permission
                 row = {"op": f"{method.upper()} {path}", "stated": sorted(allowed) if allowed is not None else None, "got": {}}
                 for role in ROLES:
                     body = request_body(op, spec) if method in ("post", "put", "patch") else None

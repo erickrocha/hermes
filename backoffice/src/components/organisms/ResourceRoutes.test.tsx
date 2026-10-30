@@ -16,7 +16,7 @@ describe('resource screens', () => {
     expect(vehicles.read(session('Driver'))).toBe(true)
     expect(vehicles.create!(session('TenantOwner'))).toBe(true)
     expect(vehicles.create!(session('Mechanic'))).toBe(false)
-    expect(vehicles.read(session('SysAdmin'))).toBe(false)
+    expect(vehicles.read(session('SystemAdministrator'))).toBe(false)
     expect(config('parts').create!(session('Mechanic'))).toBe(true)
     expect(config('customers').create!(session('Mechanic'))).toBe(false)
     expect(config('customers').edit!(session('TenantOwner', ['customer.read']))).toBe(false)

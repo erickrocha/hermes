@@ -431,6 +431,7 @@ fn tenant_model() -> tenant_entity::Model {
         postal_code: Some("13480-000".into()),
         country_code: Some("BR".into()),
         business_plan_id: Some(3),
+        parent_tenant_id: Some(1),
         created_at: at(),
         created_by: Some("admin".into()),
         updated_at: at(),
@@ -2014,7 +2015,6 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         tenant_id: Some(42),
         name: "Dispatcher".into(),
         name_key: "dispatcher".into(),
-        scope: ProfileScope::Tenant,
         system: false,
         key: None,
         active: false,
@@ -2030,7 +2030,6 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
     active.updated_at = ActiveValue::Set(at());
     active.updated_by = ActiveValue::Set(Some("owner@example.com".into()));
     let mapped = AccessProfileEntityMapper::from_active_model(active);
-    assert_eq!(mapped.scope, ProfileScope::Tenant);
     assert!(!mapped.system);
     assert_eq!(mapped.key, None);
     assert_eq!(mapped.tenant_id, Some(42));
@@ -2046,24 +2045,21 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         tenant_id: None,
         name: "Platform administrator".into(),
         name_key: "platform administrator".into(),
-        scope: ProfileScope::Platform,
         system: true,
-        key: Some("SysAdmin".into()),
+        key: Some("SystemAdministrator".into()),
         active: true,
-        permissions: vec!["tenant.create".into()],
+        permissions: vec!["tenant.child.create".into()],
         created_at: None,
         created_by: None,
         updated_at: None,
         updated_by: None,
     });
-    assert_eq!(system.scope, ActiveValue::Set("Platform".into()));
     assert_eq!(system.system, ActiveValue::Set(true));
-    assert_eq!(system.key, ActiveValue::Set(Some("SysAdmin".into())));
+    assert_eq!(system.key, ActiveValue::Set(Some("SystemAdministrator".into())));
     assert_eq!(system.tenant_id, ActiveValue::Set(None));
     let mapped = AccessProfileEntityMapper::from_active_model(system);
-    assert_eq!(mapped.scope, ProfileScope::Platform);
     assert!(mapped.system);
-    assert_eq!(mapped.key.as_deref(), Some("SysAdmin"));
+    assert_eq!(mapped.key.as_deref(), Some("SystemAdministrator"));
 
     let mut malformed = AccessProfileEntityMapper::build_active_model(AccessProfile {
         id: Some(902),
@@ -2071,7 +2067,6 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         tenant_id: Some(42),
         name: "Invalid".into(),
         name_key: "invalid".into(),
-        scope: ProfileScope::Tenant,
         system: false,
         key: None,
         active: true,
@@ -2081,16 +2076,13 @@ fn access_profiles_round_trip_permissions_and_handle_partial_or_invalid_values()
         updated_at: None,
         updated_by: None,
     });
-    malformed.scope = ActiveValue::Set("Unknown".into());
     malformed.permissions = ActiveValue::Set("{".into());
     malformed.created_at = ActiveValue::Set(at());
     malformed.updated_at = ActiveValue::Set(at());
     let mapped = AccessProfileEntityMapper::from_active_model(malformed);
-    assert_eq!(mapped.scope, ProfileScope::Tenant);
     assert!(mapped.permissions.is_empty());
 
     let partial = AccessProfileEntityMapper::from_active_model(Default::default());
-    assert_eq!(partial.scope, ProfileScope::Tenant);
     assert!(!partial.system);
     assert_eq!(partial.key, None);
     assert!(partial.active);

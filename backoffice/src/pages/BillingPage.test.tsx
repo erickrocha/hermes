@@ -50,7 +50,7 @@ describe('billing backoffice (C-015, PD-042)', () => {
   })
 
   it('offers billing to SysAdmin and TenantOwner only', () => {
-    expect(canSeeBilling(session('SysAdmin'))).toBe(true)
+    expect(canSeeBilling(session('SystemAdministrator'))).toBe(true)
     expect(canSeeBilling(session('TenantOwner', 'tenant-1'))).toBe(true)
     expect(canSeeBilling(session('TenantUser', 'tenant-1'))).toBe(false)
     expect(canSeeBilling(session('Driver', 'tenant-1'))).toBe(false)
@@ -69,7 +69,7 @@ describe('billing backoffice (C-015, PD-042)', () => {
   it('lets SysAdmin configure grace days and explicitly confirm a payment or suspend access', async () => {
     const put = vi.mocked(api.put)
     const post = vi.mocked(api.post)
-    renderBilling(session('SysAdmin'))
+    renderBilling(session('SystemAdministrator'))
 
     const tenantPicker = await screen.findByRole('combobox', { name: /tenant/i })
     fireEvent.focus(tenantPicker.querySelector('input')!)

@@ -19,11 +19,32 @@ export interface Session {
   permissions: Grant[]
   tenantId?: number | null
   tenantUuid?: string | null
+  // C-036: whether the account may act inside a descendant tenant (`tenant.child.data.read`, or the system administrator).
+  canTarget?: boolean
+}
+
+/// C-036: the descendant tenant the console is acting in; every request carries it as `X-Tenant-Uuid`.
+export interface TargetTenant { uuid: string; name: string }
+
+/// C-036 (`HRMS-877`): one request a tenant made inside a descendant of its own.
+export interface CrossTenantAction {
+  uuid?: string
+  actorUserId: number
+  actorEmail: string
+  actorTenantId: number
+  affectedTenantId: number
+  kind: 'read' | 'write'
+  method: string
+  operation: string
+  path: string
+  occurredAt: string
 }
 
 export interface Tenant {
   id?: number
   uuid?: string
+  // C-036: the tenant that manages this one; absent for the root tenant.
+  parentTenantId?: number | null
   businessName: string
   companyName?: string
   taxId: string
@@ -124,7 +145,7 @@ export interface User {
   tenantId?: number | null
   cpf?: string | null
 }
-export interface AccessProfile { uuid?: string; tenantId?: number | null; name: string; scope: ProfileScope; system: boolean; key?: string; active: boolean; permissions: Grant[] }
+export interface AccessProfile { uuid?: string; tenantId?: number | null; name: string; system: boolean; key?: string; active: boolean; permissions: Grant[] }
 export interface Permission { code: string; module: string; scope: ProfileScope; own: boolean; defaultFor: string[] }
 export interface EffectiveProfile { scope: ProfileScope; profileUuid?: string; profileName?: string; profileKey?: string; extraPermissions: Grant[]; permissions: Grant[] }
 export interface Province { id: number; acronym: string; name: string; countryCode: string }

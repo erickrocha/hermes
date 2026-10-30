@@ -8,7 +8,6 @@
 use business::commons::functions::string_to_bytes;
 use business::domain::business_plan::BusinessPlan;
 use business::domain::city::City;
-use business::domain::enums::ProfileScope;
 use business::domain::permission::{DRIVER, MECHANIC, SYS_ADMIN, TENANT_OWNER, TENANT_USER, system_grants};
 use business::domain::province::Province;
 use business::domain::tenant::Tenant;
@@ -248,6 +247,7 @@ fn tenant_row(id: i64) -> tenant_entity::Model {
         postal_code: None,
         country_code: Some("BR".into()),
         business_plan_id: None,
+        parent_tenant_id: Some(1),
         created_at: at(),
         created_by: Some("admin".into()),
         updated_at: at(),
@@ -274,14 +274,12 @@ fn profile_row(id: i64) -> access_profile_entity::Model {
         .into_iter()
         .find(|key| profile_id_of(key) == id)
         .expect("a known profile id");
-    let scope = if key == SYS_ADMIN { ProfileScope::Platform } else { ProfileScope::Tenant };
     access_profile_entity::Model {
         id,
         uuid: string_to_bytes(&format!("00000000-0000-0000-0000-00000000000{id}")),
         tenant_id: None,
         name: key.into(),
         name_key: key.to_lowercase(),
-        scope: scope.to_string(),
         system: true,
         key: Some(key.into()),
         active: true,
@@ -727,6 +725,7 @@ fn tenant(
         postal_code: None,
         country_code: country.map(Into::into),
         business_plan_id: Some(99), // must be ignored: plans are set only via set_plan
+        parent_tenant_id: Some(1),
         created_at: None,
         updated_at: None,
         created_by: None,
@@ -1134,13 +1133,13 @@ async fn seeding_creates_the_sysadmin_once_under_platform_scope() {
         )])
         .into_connection();
     let use_case = UserUseCase::new(UserGateway::new(db.clone()));
-    let first = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN)))
+    let first = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN), 5))
         .await
         .expect("seeded");
     assert_eq!(first.profile_id, Some(profile_id_of(SYS_ADMIN)));
-    assert!(first.is_platform());
+    assert_eq!(first.access.profile_key.as_deref(), Some(SYS_ADMIN));
     assert_eq!(first.tenant_id, None);
-    let again = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN)))
+    let again = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN), 5))
         .await
         .expect("found");
     assert_eq!(
@@ -1470,7 +1469,7 @@ async fn changing_sysadmin_email_repoints_the_same_account_instead_of_adding_one
             "$argon2id$x",
         )])
         .into_connection();
-    let seeded = run_as_platform(UserUseCase::new(UserGateway::new(db.clone())).seed_sysadmin(profile_id_of(SYS_ADMIN)))
+    let seeded = run_as_platform(UserUseCase::new(UserGateway::new(db.clone())).seed_sysadmin(profile_id_of(SYS_ADMIN), 5))
         .await
         .expect("re-pointed");
     assert_eq!(

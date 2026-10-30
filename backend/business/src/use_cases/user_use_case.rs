@@ -60,8 +60,7 @@ impl UserUseCase {
             log::error!("[UserUseCase] {}", msg);
             return Err(BusinessError::new(msg));
         }
-        let scope = user.access.scope;
-        let extra_permissions = permission::normalise_grants(&user.extra_permissions, scope).map_err(|code| {
+        let extra_permissions = permission::normalise_grants(&user.extra_permissions).map_err(|code| {
             let msg = format!("Unknown permission: {code}");
             log::error!("[UserUseCase] {}", msg);
             BusinessError::new(msg)
@@ -280,7 +279,7 @@ impl UserUseCase {
     /// `admin` when absent -- the one setting in the whole service that
     /// defaulted a secret instead of failing fast, and the one whose
     /// default is public (it is right here in the source).
-    pub async fn seed_sysadmin(&self, sysadmin_profile_id: i64) -> Result<User, BusinessError> {
+    pub async fn seed_sysadmin(&self, sysadmin_profile_id: i64, root_tenant_id: i64) -> Result<User, BusinessError> {
         log::info!("[UserUseCase::seed_sysadmin] Executing SysAdmin seed process");
 
         let sysadmin_email = env::var("SYSADMIN_EMAIL")
@@ -323,7 +322,7 @@ impl UserUseCase {
                 name: existing_sysadmin.name,
                 password: sysadmin_password,
                 enabled: true,
-                tenant_id: existing_sysadmin.tenant_id,
+                tenant_id: existing_sysadmin.tenant_id.or(Some(root_tenant_id)),
                 profile_id: Some(sysadmin_profile_id),
                 extra_permissions: Vec::new(),
                 cpf: None,
@@ -351,7 +350,8 @@ impl UserUseCase {
             name: Some("System Administrator".to_string()),
             password: sysadmin_password,
             enabled: true,
-            tenant_id: None,
+            // `C-036`: the platform administrator belongs to the root tenant.
+            tenant_id: Some(root_tenant_id),
             profile_id: Some(sysadmin_profile_id),
             extra_permissions: Vec::new(),
             cpf: None,

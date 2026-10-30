@@ -3,7 +3,7 @@ import { can } from './features/access'
 import type { Session } from './types'
 import { MaintenanceNotificationsPage } from './pages/MaintenanceNotificationsPage'
 import { canSeeMaintenanceNotifications } from './components/molecules/NotificationBell'
-import { canManageGarageDevices, canSeeNonExecutions, canSeeWorkOrders } from './features/routeAccess'
+import { canManageGarageDevices, canSeeCrossTenantActions, canSeeNonExecutions, canSeeWorkOrders } from './features/routeAccess'
 
 export function lazyPage<Module extends object, Name extends keyof Module>(
   load: () => Promise<Module>,
@@ -31,6 +31,7 @@ const GarageMonitorPage = lazyPage(() => import('./pages/GaragePages'), 'GarageM
 const GaragePage = lazyPage(() => import('./pages/GaragePages'), 'GaragePage')
 const GarageOpenPage = lazyPage(() => import('./pages/GaragePages'), 'GarageOpenPage')
 const GarageTriagePage = lazyPage(() => import('./pages/GaragePages'), 'GarageTriagePage')
+const CrossTenantActionsPage = lazyPage(() => import('./pages/CrossTenantActionsPage'), 'CrossTenantActionsPage')
 const GarageDevicesPage = lazyPage(() => import('./pages/GarageDevicesPage'), 'GarageDevicesPage')
 const PreventiveAlertPage = lazyPage(() => import('./pages/PreventivePages'), 'PreventiveAlertPage')
 const PreventiveExtensionPage = lazyPage(() => import('./pages/PreventivePages'), 'PreventiveExtensionPage')
@@ -73,6 +74,7 @@ export const customRoutes: AppRoute[] = [
   { path: '/non-executions', element: <NonExecutionsPage />, allow: canSeeNonExecutions },
   { path: '/non-executions/manual', element: <NonExecutionManualPage />, allow: (s) => can(s, 'non-execution.record-manual') },
   { path: '/non-executions/:uuid/justify', element: <NonExecutionJustifyPage />, allow: (s) => can(s, 'non-execution.justify') },
+  { path: '/cross-tenant-actions', element: <CrossTenantActionsPage />, allow: canSeeCrossTenantActions },
   { path: '/maintenance-notifications', element: <MaintenanceNotificationsPage />, allow: canSeeMaintenanceNotifications },
   { path: '/vehicles/:uuid', element: <VehicleDetailPage />, allow: (s) => can(s, 'vehicle.read') },
   { path: '/vehicles/:uuid/odometer', element: <VehicleOdometerPage />, allow: (s) => can(s, 'vehicle.odometer.record') },

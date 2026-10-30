@@ -197,7 +197,8 @@ export function UserEditorPage() {
   const extraPermissions = watch('extraPermissions') ?? []
   const selectedTenantId = watch('tenantId')
   const selectedProfile = profiles.find((p) => p.uuid === profileUuid)
-  const tenantless = selectedProfile?.scope === 'Platform'
+  // C-036: every account has a tenant; the system administrator's profile is placed by the server in the platform's own.
+  const tenantless = selectedProfile?.key === 'SystemAdministrator'
   // O seletor de tenant precisa das opções, não de uma página: pede um lote
   // grande em vez de paginar um <select>.
   useEffect(() => { if (platform) dispatch(loadTenants({ page: 0, pageSize: 200 })) }, [dispatch, platform])
@@ -211,14 +212,14 @@ export function UserEditorPage() {
   useEffect(() => { if (!uuid && platform && selectedProfile && !tenantless && !selectedTenantId && tenants.items[0]?.id) setValue('tenantId', tenants.items[0].id) }, [platform, selectedProfile, tenantless, selectedTenantId, setValue, uuid, tenants])
   const chooseProfile = (value: string | null, profile: AccessProfile | undefined) => {
     setValue('profileUuid', value ?? undefined, { shouldDirty: true, shouldValidate: true }); setValue('extraPermissions', [], { shouldDirty: true })
-    if (platform) setValue('tenantId', profile?.scope === 'Platform' ? null : selectedTenantId || tenants.items[0]?.id || null)
+    if (platform) setValue('tenantId', profile?.key === 'SystemAdministrator' ? null : selectedTenantId || tenants.items[0]?.id || null)
   }
   // EPIC-IA-07/D-07: `PUT /user/uuid/{uuid}` discards any password it is sent,
   // so the old "new password" field promised a reset that silently did nothing.
   // Re-issuing the invitation is the action the API actually offers, so that
   // is the action the form offers.
   const resendInvite = async () => { if (!uuid) return; setInviting(true); setError(''); setInvited(false); try { await dispatch(sendUserInvite(uuid)).unwrap(); setInvited(true) } catch (cause) { setError(String(cause || t('genericError'))) } finally { setInviting(false) } }
-  const save = handleSubmit(async (user) => { setSaving(true); setError(''); try { await dispatch(saveManagedUser({ uuid, user })).unwrap(); navigate('/users') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
+  const save = handleSubmit(async (user) => { setSaving(true); setError(''); try { await dispatch(saveManagedUser({ uuid, user, tenantUuid: platform && !uuid ? tenants.items.find((tenant) => tenant.id === user.tenantId && tenant.uuid !== session.tenantUuid)?.uuid : undefined })).unwrap(); navigate('/users') } catch (cause) { setError(String(cause || t('genericError'))) } finally { setSaving(false) } })
   if (loading) return <Loading />
   // EPIC-IA-07/D-07 (PD-002): a new account is never given a caller-set
   // password -- the server discards it and emails an invitation instead. A

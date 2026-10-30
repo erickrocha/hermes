@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import garage_monitor_acceptance as b  # noqa: E402
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
 
 http, rows, one, ek, record = b.http, b.rows, b.one, b.ek, b.record
 CHECK_TABLES = ("tenant", "user", "vehicle", "garage_service_model", "garage_attendance",
@@ -89,7 +90,7 @@ def run():
         s_reader, _ = http("POST", "/user", {
             "email": reader_email,
             "name": f"{b.TAG}-reader",
-            "role": "TenantUser",
+            "profileUuid": system_profile("TenantUser"),
             "enabled": True,
             "tenantId": b.TENANT_ID,
         }, owner)

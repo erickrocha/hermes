@@ -2,18 +2,19 @@
 //! action, grouped into modules only for navigation. Generated from
 //! `02-system_requirements/hermes/access-model_permission_catalogue.md`; edit that, not this.
 //!
-//! Every permission has a [`Scope`] that says which profiles may hold it:
-//! - [`Scope::Tenant`]: held inside a tenant -- what a tenant profile (system or tenant-made) grants.
-//! - [`Scope::Platform`]: the platform's own operations (tenants, plans, reference data, billing
-//!   administration). Only a [`ProfileScope::Platform`] profile holds them.
+//! `C-036` (`D-37` 4): there is one catalogue and a profile has no scope -- any profile may hold any permission
+//! it is allowed to be given (`can_grant`: nobody grants what they do not hold). A permission's [`Scope`] only
+//! says who holds it *by default*:
+//! - [`Scope::Tenant`]: the tenant owner's, and the profiles whose flag says so.
+//! - [`Scope::Platform`]: the platform's own operations (plans, reference data, billing administration); by
+//!   default only the *Administrador do Sistema* holds them.
 //! - [`Scope::Baseline`]: every authenticated user, always; never granted, never revoked.
 //!
 //! The `tenant_user` / `driver` / `mechanic` flags describe the three built-in tenant profiles below the
-//! owner; the owner's and the platform administrator's system profiles hold every permission of their
+//! owner; the owner's and the system administrator's profiles hold every permission of their default
 //! scope. A grant is a permission code, or `code@own` for a permission with `own: true` -- held over the
 //! caller's own records only (`AC-04`). See [`Grants`].
 
-use crate::domain::enums::ProfileScope;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,7 @@ pub const CATALOGUE: &[Permission] = &[
     Permission { code: "driver.act", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: true, mechanic: false, own: false },
     Permission { code: "vehicle-presence.publish", module: "Fleet", scope: Scope::Platform, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle-presence.read", module: "Fleet", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "vehicle.link-tracker", module: "Fleet", scope: Scope::Platform, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle.assign-driver", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle.assignment.read", module: "Fleet", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: true },
     Permission { code: "vehicle.create", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
@@ -203,9 +205,16 @@ pub const CATALOGUE: &[Permission] = &[
     Permission { code: "purchase-order.read", module: "Stock & purchasing", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "vehicle-expense.create", module: "Stock & purchasing", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle-expense.read", module: "Stock & purchasing", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "cross-tenant-action.read", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "tenant-rule-settings.read", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "tenant-rule-settings.update", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
-    Permission { code: "tenant.create", module: "Tenant", scope: Scope::Platform, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.create", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.data.read", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.data.write", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.plan", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.read", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.update", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
+    Permission { code: "tenant.child.user.manage", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "tenant.plan", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "tenant.read", module: "Tenant", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: false },
     Permission { code: "tenant.update", module: "Tenant", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
@@ -213,10 +222,80 @@ pub const CATALOGUE: &[Permission] = &[
 
 pub const OWN_SUFFIX: &str = "@own";
 
+/// `C-036` (`D-37` 6): the permissions that act on the tenants *below* the caller's. No profile holds them by
+/// default except the platform administrator's -- not even the tenant owner's; they are handed out as extras
+/// or in a profile made for the purpose, and `can_grant` keeps anyone from granting what they lack.
+pub const CHILD_CREATE: &str = "tenant.child.create";
+pub const CHILD_READ: &str = "tenant.child.read";
+pub const CHILD_UPDATE: &str = "tenant.child.update";
+pub const CHILD_PLAN: &str = "tenant.child.plan";
+pub const CHILD_USER_MANAGE: &str = "tenant.child.user.manage";
+pub const CHILD_DATA_READ: &str = "tenant.child.data.read";
+pub const CHILD_DATA_WRITE: &str = "tenant.child.data.write";
+
+pub fn is_child_tenant_permission(code: &str) -> bool {
+    code.starts_with("tenant.child.")
+}
+
+/// Codes of the administration of a tenant -- never part of "operational data".
+fn is_administration(code: &str) -> bool {
+    ["user.", "profile.", "tenant", "billing.", "business-plan.", "fuel-gauge-settings.", "reference-data."]
+        .iter()
+        .any(|prefix| code.starts_with(prefix))
+}
+
+/// The `tenant.child.*` permission a refusal inside a descendant is about: the one that would have stood for
+/// `code` in [`child_context_grants`] (so a 403 names what to grant, not the ordinary permission it expands to).
+pub fn child_permission_for(code: &str, method: &str) -> &'static str {
+    match code {
+        "tenant.update" | "tenant-rule-settings.update" | "fuel-gauge-settings.update" => CHILD_UPDATE,
+        "tenant.plan" => CHILD_PLAN,
+        c if c.starts_with("user.") || c.starts_with("profile.") => CHILD_USER_MANAGE,
+        c if is_administration(c) => CHILD_READ,
+        _ if method == "GET" => CHILD_DATA_READ,
+        _ => CHILD_DATA_WRITE,
+    }
+}
+
+/// What a caller holding the `tenant.child.*` permissions in `held` may do *inside* a descendant tenant: each
+/// child permission stands for ordinary tenant permissions there. `data.read` is the read operations of the
+/// operational modules, `data.write` all their operations (and needs `data.read`); `read`/`update`/`plan` the
+/// tenant's own record, settings and plan; `user.manage` the users and profiles. `None` when `held` carries
+/// none of them -- the caller has no business in that tenant.
+pub fn child_context_grants(held: &Grants) -> Option<Grants> {
+    let mut codes: Vec<&'static str> = Vec::new();
+    if held.allows(CHILD_READ) {
+        codes.extend(["tenant.read", "tenant-rule-settings.read", "fuel-gauge-settings.read"]);
+    }
+    if held.allows(CHILD_UPDATE) {
+        codes.extend(["tenant.update", "tenant-rule-settings.update", "fuel-gauge-settings.update"]);
+    }
+    if held.allows(CHILD_PLAN) {
+        codes.push("tenant.plan");
+    }
+    if held.allows(CHILD_USER_MANAGE) {
+        codes.extend(CATALOGUE.iter().filter(|p| p.scope == Scope::Tenant && (p.code.starts_with("user.") || p.code.starts_with("profile."))).map(|p| p.code));
+    }
+    if held.allows(CHILD_DATA_READ) {
+        let reads = |code: &str| crate::domain::operation_permission::OPERATIONS.iter().any(|(m, _, c)| *m == "GET" && *c == code);
+        codes.extend(
+            CATALOGUE
+                .iter()
+                .filter(|p| p.scope == Scope::Tenant && !is_administration(p.code) && reads(p.code))
+                .map(|p| p.code),
+        );
+        if held.allows(CHILD_DATA_WRITE) {
+            codes.extend(CATALOGUE.iter().filter(|p| p.scope == Scope::Tenant && !is_administration(p.code)).map(|p| p.code));
+        }
+    }
+    (!codes.is_empty()).then(|| Grants::effective(&codes.iter().map(|c| c.to_string()).collect::<Vec<_>>(), &[]))
+}
+
 /// Keys of the five system profiles. They are seeded by the migration and their permissions re-derived
 /// from this catalogue at every boot (`AccessProfileUseCase::sync_system_profiles`), so a permission
 /// added here reaches the built-in profiles without a data migration.
-pub const SYS_ADMIN: &str = "SysAdmin";
+/// `C-036`: the *Administrador do Sistema* profile (the former `SysAdmin` role). The identifier keeps its short name.
+pub const SYS_ADMIN: &str = "SystemAdministrator";
 pub const TENANT_OWNER: &str = "TenantOwner";
 pub const TENANT_USER: &str = "TenantUser";
 pub const DRIVER: &str = "Driver";
@@ -226,26 +305,18 @@ pub const MECHANIC: &str = "Mechanic";
 pub struct SystemProfile {
     pub key: &'static str,
     pub name: &'static str,
-    pub scope: ProfileScope,
 }
 
 pub const SYSTEM_PROFILES: &[SystemProfile] = &[
-    SystemProfile { key: SYS_ADMIN, name: "Platform administrator", scope: ProfileScope::Platform },
-    SystemProfile { key: TENANT_OWNER, name: "Tenant owner", scope: ProfileScope::Tenant },
-    SystemProfile { key: TENANT_USER, name: "Tenant user", scope: ProfileScope::Tenant },
-    SystemProfile { key: DRIVER, name: "Driver", scope: ProfileScope::Tenant },
-    SystemProfile { key: MECHANIC, name: "Mechanic", scope: ProfileScope::Tenant },
+    SystemProfile { key: SYS_ADMIN, name: "Administrador do Sistema" },
+    SystemProfile { key: TENANT_OWNER, name: "Tenant owner" },
+    SystemProfile { key: TENANT_USER, name: "Tenant user" },
+    SystemProfile { key: DRIVER, name: "Driver" },
+    SystemProfile { key: MECHANIC, name: "Mechanic" },
 ];
 
 pub fn system_profile(key: &str) -> Option<&'static SystemProfile> {
     SYSTEM_PROFILES.iter().find(|p| p.key == key)
-}
-
-/// The system profiles below the owner -- the tenant's operational floor, which whoever administers
-/// users may hand out without holding every grant in them (`C-035`); the owner's and the platform's are
-/// guarded like any other profile.
-pub fn is_operational_system_profile(profile: &crate::domain::access_profile::AccessProfile) -> bool {
-    profile.system && matches!(profile.key.as_deref(), Some(TENANT_USER) | Some(DRIVER) | Some(MECHANIC))
 }
 
 /// The grants of a system profile, derived from the catalogue: the platform administrator holds every
@@ -257,7 +328,7 @@ pub fn system_grants(key: &str) -> Vec<String> {
         .filter(|p| p.scope != Scope::Baseline)
         .filter_map(|p| match key {
             SYS_ADMIN => Some(p.code.to_string()),
-            TENANT_OWNER => (p.scope == Scope::Tenant).then(|| p.code.to_string()),
+            TENANT_OWNER => (p.scope == Scope::Tenant && !is_child_tenant_permission(p.code)).then(|| p.code.to_string()),
             TENANT_USER => p.tenant_user.then(|| p.code.to_string()),
             MECHANIC => p.mechanic.then(|| p.code.to_string()),
             DRIVER => p.driver.then(|| if p.own { format!("{}{}", p.code, OWN_SUFFIX) } else { p.code.to_string() }),
@@ -273,7 +344,7 @@ pub fn system_grants(key: &str) -> Vec<String> {
 pub fn default_for(code: &str) -> Vec<&'static str> {
     SYSTEM_PROFILES
         .iter()
-        .filter(|p| p.scope == ProfileScope::Tenant && p.key != TENANT_OWNER)
+        .filter(|p| p.key != SYS_ADMIN && p.key != TENANT_OWNER)
         .filter(|p| Grants::from_codes(system_grants(p.key)).allows(code))
         .map(|p| p.key)
         .collect()
@@ -292,15 +363,6 @@ pub fn find(code: &str) -> Option<&'static Permission> {
     CATALOGUE.iter().find(|p| p.code == code)
 }
 
-/// What a profile of `scope` may be granted: tenant permissions for a tenant profile, those and the
-/// platform's for a platform profile. The baseline is never granted.
-pub fn grantable_in(scope: ProfileScope) -> impl Iterator<Item = &'static Permission> {
-    CATALOGUE.iter().filter(move |p| match scope {
-        ProfileScope::Tenant => p.scope == Scope::Tenant,
-        ProfileScope::Platform => p.scope != Scope::Baseline,
-    })
-}
-
 /// Splits a grant into its permission and whether it is own-scoped; `None` when the grant names no
 /// catalogue permission, or asks `@own` of one that has no own scope.
 pub fn parse_grant(grant: &str) -> Option<(&'static Permission, bool)> {
@@ -312,19 +374,15 @@ pub fn parse_grant(grant: &str) -> Option<(&'static Permission, bool)> {
     (!own || permission.own).then_some((permission, own))
 }
 
-/// Normalises a list of grants for a profile of `scope`: every grant must parse and be grantable in that
-/// scope; duplicates collapse and a full grant absorbs its own-scoped twin. `Err` names the offender.
-pub fn normalise_grants(grants: &[String], scope: ProfileScope) -> Result<Vec<String>, String> {
+/// Normalises a list of grants: every grant must parse and name a grantable permission (not the baseline);
+/// duplicates collapse and a full grant absorbs its own-scoped twin. `Err` names the offender.
+pub fn normalise_grants(grants: &[String]) -> Result<Vec<String>, String> {
     let mut held = Grants::default();
     for grant in grants {
         let Some((permission, own)) = parse_grant(grant) else {
             return Err(grant.clone());
         };
-        let allowed = match scope {
-            ProfileScope::Tenant => permission.scope == Scope::Tenant,
-            ProfileScope::Platform => permission.scope != Scope::Baseline,
-        };
-        if !allowed {
+        if permission.scope == Scope::Baseline {
             return Err(grant.clone());
         }
         held.grant(permission.code, if own { GrantScope::Own } else { GrantScope::Full });
@@ -460,10 +518,28 @@ mod tests {
         assert!(mechanic.allows("work-order.create") && mechanic.allows("part.stock-entry"));
         assert!(!mechanic.allows("user.create") && !mechanic.allows("tenant.update"));
         let owner = Grants::from_codes(system_grants(TENANT_OWNER));
-        assert!(CATALOGUE.iter().filter(|p| p.scope == Scope::Tenant).all(|p| owner.allows_fully(p.code)));
-        assert!(!owner.allows("tenant.create"));
+        assert!(CATALOGUE
+            .iter()
+            .filter(|p| p.scope == Scope::Tenant && !is_child_tenant_permission(p.code))
+            .all(|p| owner.allows_fully(p.code)));
+        assert!(!owner.allows(CHILD_CREATE) && !owner.allows(CHILD_DATA_WRITE), "the child permissions are not the owner's by default");
         let platform = Grants::from_codes(system_grants(SYS_ADMIN));
-        assert!(platform.allows("tenant.create") && platform.allows("vehicle.create"));
+        assert!(platform.allows(CHILD_CREATE) && platform.allows("vehicle.create"));
+    }
+
+    #[test]
+    fn child_permissions_stand_for_ordinary_permissions_inside_a_descendant() {
+        assert!(child_context_grants(&Grants::from_codes(["vehicle.read"])).is_none(), "no child permission, no business there");
+        let read = child_context_grants(&Grants::from_codes([CHILD_DATA_READ])).expect("read context");
+        assert!(read.allows("vehicle.read") && read.allows("work-order.read"));
+        assert!(!read.allows("vehicle.create") && !read.allows("tenant.update") && !read.allows("user.create"));
+        let write_only = child_context_grants(&Grants::from_codes([CHILD_DATA_WRITE]));
+        assert!(write_only.is_none(), "writing needs reading");
+        let write = child_context_grants(&Grants::from_codes([CHILD_DATA_READ, CHILD_DATA_WRITE])).expect("write context");
+        assert!(write.allows("vehicle.create") && write.allows("work-order.create") && !write.allows("user.create"));
+        let admin = child_context_grants(&Grants::from_codes([CHILD_READ, CHILD_UPDATE, CHILD_PLAN, CHILD_USER_MANAGE])).expect("admin");
+        assert!(admin.allows("tenant.update") && admin.allows("tenant.plan") && admin.allows("user.create") && admin.allows("profile.assign"));
+        assert!(!admin.allows("vehicle.read"), "administering a tenant is not reading its operation");
     }
 
     #[test]
@@ -477,13 +553,13 @@ mod tests {
 
     #[test]
     fn normalising_refuses_unknown_codes_own_on_the_wrong_permission_and_platform_in_a_tenant() {
-        assert!(normalise_grants(&["wizard.cast".into()], ProfileScope::Tenant).is_err());
-        assert!(normalise_grants(&["vehicle.create@own".into()], ProfileScope::Tenant).is_err());
-        assert!(normalise_grants(&["tenant.create".into()], ProfileScope::Tenant).is_err());
-        assert!(normalise_grants(&["tenant.create".into()], ProfileScope::Platform).is_ok());
-        assert!(normalise_grants(&["user.read-own".into()], ProfileScope::Platform).is_err());
+        assert!(normalise_grants(&["wizard.cast".into()]).is_err());
+        assert!(normalise_grants(&["vehicle.create@own".into()]).is_err());
+        assert!(normalise_grants(&["tenant.create".into()]).is_err(), "tenant.create became tenant.child.create");
+        assert!(normalise_grants(&["tenant.child.create".into(), "business-plan.read".into()]).is_ok(), "one catalogue; can_grant decides who may give what");
+        assert!(normalise_grants(&["user.read-own".into()]).is_err(), "the baseline is never granted");
         assert_eq!(
-            normalise_grants(&["vehicle.read@own".into(), "vehicle.read".into()], ProfileScope::Tenant).unwrap(),
+            normalise_grants(&["vehicle.read@own".into(), "vehicle.read".into()]).unwrap(),
             vec!["vehicle.read".to_string()]
         );
     }

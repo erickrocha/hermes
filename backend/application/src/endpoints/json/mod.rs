@@ -6,6 +6,7 @@ pub mod change_password_request;
 pub mod city_json;
 pub mod customer_json;
 pub mod customer_day_off_json;
+pub mod cross_tenant_action_json;
 pub mod holiday_json;
 pub mod error_response_json;
 pub mod login_request;

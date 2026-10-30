@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
-import { type LucideIcon, Building2, ChevronDown, Coins, CreditCard, Gauge, LogOut, Menu, Receipt, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
+import { type LucideIcon, Building2, ChevronDown, Coins, CreditCard, Gauge, History, LogOut, Menu, Receipt, Settings, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslation } from 'react-i18next'
@@ -11,8 +11,9 @@ import { LanguagePicker } from './LanguagePicker'
 import { ThemePicker } from './ThemePicker'
 import { applyThemeByName, getStoredTheme } from '../theme'
 import { NotificationBell } from './molecules/NotificationBell'
+import { TargetTenantSelect } from './molecules/TargetTenantSelect'
 import { operationNav } from '../features/navigation'
-import { canSeeBilling, canSeeCosts, canSeePlans, canSeeProfiles, canSeeReferenceData, canSeeTenants, canSeeUsers } from '../features/routeAccess'
+import { canSeeBilling, canSeeCosts, canSeeCrossTenantActions, canSeePlans, canSeeProfiles, canSeeReferenceData, canSeeTenants, canSeeUsers } from '../features/routeAccess'
 import { isPlatform } from '../features/access'
 
 /// The topbar names the held profile: a system profile is translated by key, a custom one shows its own name.
@@ -28,6 +29,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
   const session = useSelector((s: RootState) => s.auth.session)!
   const tenant = useSelector((s: RootState) => s.data.currentTenant)
+  const target = useSelector((s: RootState) => s.auth.target)
   const dispatch = useDispatch<AppDispatch>()
   const navigate = useNavigate()
   const tenantName = tenant?.companyName || tenant?.businessName
@@ -50,6 +52,7 @@ export function Shell({ children }: { children: ReactNode }) {
     ...(canSeeCosts(session) ? [{ to: '/costs', label: t('costs'), icon: Coins }] : []),
     ...(canSeeBilling(session) ? [{ to: '/billing', label: t('billing'), icon: Receipt }] : []),
     ...(canSeeProfiles(session) ? [{ to: '/profiles', label: t('profiles'), icon: ShieldCheck }] : []),
+    ...(canSeeCrossTenantActions(session) ? [{ to: '/cross-tenant-actions', label: t('crossTenantActions'), icon: History }] : []),
     // PD-027: dados de referência são globais da plataforma, como o catálogo
     // de planos -- só quem tem alcance de plataforma administra.
     ...(canSeeReferenceData(session) ? [{ to: '/system-settings', label: t('systemSettings'), icon: SlidersHorizontal }] : []),
@@ -81,6 +84,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <button className="menu-button" onClick={() => setMobile(true)} aria-label={t('menu')}><Menu /></button>
         <div className="tenant-context"><span>{tenant?.companyName || tenant?.businessName || (isPlatform(session) ? t('platform') : 'Hermes')}</span><small>{profileLabel(session, t)}</small></div>
         <div className="topbar-actions">
+          <TargetTenantSelect />
           <NotificationBell session={session} />
           <ThemePicker />
           <LanguagePicker />
@@ -90,6 +94,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
+      {target && <div className="acting-banner" role="status">{t('actingInTenant', { name: target.name })}</div>}
       <main className="content"><Breadcrumbs />{children}</main>
     </div>
   </div>

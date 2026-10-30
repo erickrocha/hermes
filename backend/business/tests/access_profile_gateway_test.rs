@@ -19,7 +19,6 @@ fn row(id: i64, tenant_id: Option<i64>, key: Option<&str>, permissions: &str) ->
         tenant_id,
         name: key.unwrap_or("Dispatch").to_string(),
         name_key: key.unwrap_or("dispatch").to_lowercase(),
-        scope: "Tenant".into(),
         system: key.is_some(),
         key: key.map(str::to_string),
         active: true,

@@ -1,6 +1,6 @@
 use crate::commons::functions::normalize_name;
 use crate::domain::access_profile::AccessProfile;
-use crate::domain::authorization::{can_assign_profile, can_grant, is_platform_actor, profile_fits};
+use crate::domain::authorization::{can_assign_profile_in, can_grant, profile_fits_in};
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::ProfileScope;
 use crate::domain::permission::{self, Grants};
@@ -30,7 +30,7 @@ pub struct EffectivePermissions {
 
 impl EffectivePermissions {
     pub fn of(user: &User) -> Self {
-        let Access { scope, profile_uuid, profile_name, profile_key, grants } = &user.access;
+        let Access { scope, profile_uuid, profile_name, profile_key, grants, .. } = &user.access;
         Self {
             scope: *scope,
             profile_uuid: profile_uuid.clone(),
@@ -76,7 +76,6 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
         let profile = AccessProfile {
             id: current.id,
             tenant_id: current.tenant_id,
-            scope: current.scope,
             system: false,
             key: None,
             ..edited
@@ -96,16 +95,11 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
         if name_key.is_empty() {
             return Err(BusinessError::new(NAME_REQUIRED.to_string()));
         }
-        let scope_fits = match profile.scope {
-            ProfileScope::Platform => is_platform_actor(actor) && profile.tenant_id.is_none(),
-            ProfileScope::Tenant => {
-                profile.tenant_id.is_some() && (is_platform_actor(actor) || profile.tenant_id == actor.tenant_id)
-            }
-        };
-        if !scope_fits {
+        // A profile of the tenant's own is made inside it; another tenant's is made by acting inside that tenant.
+        if !(profile.tenant_id.is_some() && profile.tenant_id == actor.tenant_id) {
             return Err(BusinessError::new(SCOPE_NOT_ALLOWED.to_string()));
         }
-        let permissions = permission::normalise_grants(&profile.permissions, profile.scope)
+        let permissions = permission::normalise_grants(&profile.permissions)
             .map_err(|_| BusinessError::new(UNKNOWN_PERMISSION.to_string()))?;
         if !can_grant(actor, &Grants::from_codes(&permissions)) {
             return Err(BusinessError::new(GRANT_EXCEEDS_ACTOR.to_string()));
@@ -146,21 +140,32 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
         extras: &[String],
     ) -> Result<(AccessProfile, Vec<String>), BusinessError> {
         let profile = self.find_by_uuid(profile_uuid).await?;
-        if can_assign_profile(actor, &profile).is_none() || !profile_fits(&profile, target_tenant_id) {
+        let ancestors = self.ancestors_of(target_tenant_id).await?;
+        if can_assign_profile_in(actor, &profile, &ancestors).is_none()
+            || !profile_fits_in(&profile, target_tenant_id, &ancestors)
+            // `C-036`: a platform profile sits in the platform actor's own tenant, the root, and nowhere else.
+            || (crate::domain::authorization::is_system_administrator(&profile) && target_tenant_id != actor.tenant_id)
+        {
             return Err(BusinessError::new(PROFILE_DOES_NOT_FIT.to_string()));
         }
-        let extras = permission::normalise_grants(extras, profile.scope)
+        let extras = permission::normalise_grants(extras)
             .map_err(|_| BusinessError::new(UNKNOWN_PERMISSION.to_string()))?;
-        // The guard covers the extras and any profile that could widen the actor's own reach: tenant-made
-        // ones, the owner's and the platform's. The operational system profiles (tenant user, driver,
-        // mechanic) are the tenant's floor -- whoever administers users hands them out, or nobody could
-        // register a driver without holding `driver.act` themselves.
-        let guarded: &[String] = if permission::is_operational_system_profile(&profile) { &[] } else { &profile.permissions };
-        let wanted = Grants::from_codes(guarded.iter().chain(extras.iter()));
+        // `C-036` (`D-37` 5, `HRMS-876`): nobody grants what they do not hold -- the profile's grants and the extras
+        // alike, for every profile. The operational system profiles (tenant user, driver, mechanic) are no longer
+        // exempt: whoever registers a driver holds the driver's grants.
+        let wanted = Grants::from_codes(profile.permissions.iter().chain(extras.iter()));
         if !can_grant(actor, &wanted) {
             return Err(BusinessError::new(GRANT_EXCEEDS_ACTOR.to_string()));
         }
         Ok((profile, extras))
+    }
+
+    /// `C-036`: the tenants above `tenant_id`, nearest first -- a profile one of them made is usable below it.
+    pub async fn ancestors_of(&self, tenant_id: Option<i64>) -> Result<Vec<i64>, BusinessError> {
+        match tenant_id {
+            Some(id) => self.store.ancestors_of(id).await,
+            None => Ok(Vec::new()),
+        }
     }
 
     /// Gives `user` the profile and the extra grants (`HRMS-852`).
@@ -190,11 +195,11 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
             let grants = permission::system_grants(system.key);
             let saved = match self.store.find_by_key(system.key).await? {
                 Some(existing) => {
-                    if existing.permissions == grants && existing.active && existing.scope == system.scope {
+                    if existing.permissions == grants && existing.active {
                         existing
                     } else {
                         self.store
-                            .save(AccessProfile { permissions: grants, active: true, scope: system.scope, ..existing })
+                            .save(AccessProfile { permissions: grants, active: true, ..existing })
                             .await?
                     }
                 }
@@ -206,7 +211,6 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
                             tenant_id: None,
                             name: system.name.to_string(),
                             name_key: normalize_name(system.name),
-                            scope: system.scope,
                             system: true,
                             key: Some(system.key.to_string()),
                             active: true,

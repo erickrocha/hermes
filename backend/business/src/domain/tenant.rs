@@ -23,6 +23,8 @@ pub struct Tenant {
     /// The tenant's single current plan. Set only via `TenantUseCase::set_plan`
     /// (PD-021) — `create`/`update` never take a caller-supplied value.
     pub business_plan_id: Option<i64>,
+    /// `C-036`: the parent in the tenant tree; `None` only for the root tenant (*Erocha Soluções em TI*).
+    pub parent_tenant_id: Option<i64>,
     pub created_at: Option<NaiveDateTime>,
     pub updated_at: Option<NaiveDateTime>,
     pub created_by: Option<String>,
@@ -55,6 +57,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
             postal_code: Set(d.postal_code),
             country_code: Set(d.country_code),
             business_plan_id: Set(d.business_plan_id),
+            parent_tenant_id: Set(d.parent_tenant_id),
             created_at: NotSet,
             created_by: match d.created_by {
                 Some(cb) => Set(Some(cb)),
@@ -85,6 +88,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
             postal_code: e.postal_code,
             country_code: e.country_code,
             business_plan_id: e.business_plan_id,
+            parent_tenant_id: e.parent_tenant_id,
             created_by: e.created_by,
             updated_by: e.updated_by,
             created_at: Some(e.created_at.naive_utc()),
@@ -112,6 +116,7 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
                 postal_code: e.postal_code.take().flatten(),
                 country_code: e.country_code.take().flatten(),
                 business_plan_id: e.business_plan_id.take().flatten(),
+                parent_tenant_id: e.parent_tenant_id.take().flatten(),
                 created_by: e.created_by.take().flatten(),
                 updated_by: e.updated_by.take().flatten(),
                 created_at: e.created_at.take().map(|dt| dt.naive_utc()),

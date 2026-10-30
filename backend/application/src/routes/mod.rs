@@ -2,6 +2,7 @@ pub mod authentication_routes;
 pub mod business_plan_routes;
 pub mod billing_routes;
 pub mod customer_routes;
+pub mod cross_tenant_action_routes;
 pub mod holiday_routes;
 pub mod checklist_template_routes;
 pub mod checklist_run_routes;

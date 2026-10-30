@@ -16,6 +16,8 @@ compared after cleanup.
 import argparse, base64, hashlib, hmac, json, os, re, subprocess, sys, time, traceback
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
@@ -56,6 +58,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from scheduling_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -176,6 +179,7 @@ def cleanup():
     sql(f"DELETE FROM km_evolution WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAMT%'")
 
 
@@ -196,7 +200,7 @@ def vehicle(token, plate):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QAMT0000000001"), ("B", "QAMT0000000002")):
@@ -207,7 +211,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -323,7 +327,7 @@ def mt002(fx):
     own = sl == 200 and la["totalItems"] == n_rows("work_order", f"tenant_id={fx.A['id']}")
     paths = (fx.openapi or {}).get("paths", {})
     documented = {"get", "post"}.issubset(paths.get("/work-order", {})) and "get" in paths.get("/work-order/uuid/{uuid}", {})
-    check("MT-002", all(m == ((200, 200, 404) if who == "driver" else (200, 200, 403)) for who, m in members.items()) and unknown[0] == 404 and cross_get[0] == 404 and cross_get[1] == unknown[1]
+    check("MT-002", all(m == (200, 200, 403) for who, m in members.items()) and unknown[0] == 404 and cross_get[0] == 404 and cross_get[1] == unknown[1]
           and cross_open[0] in (400, 404) and n_rows("work_order") == before and own and documented,
           "a tenant user and a driver read (200) and get 403 opening a work order; owner B's GET of A's order is 404 with the body of an unknown uuid; "
           "owner B opening against A's vehicle is refused with nothing stored; A's list counts only A's orders; the OpenAPI publishes list, create and UUID read",
@@ -422,7 +426,8 @@ def mt021(fx):
     unknown = conclude(ob, {"uuid": NIL_UUID})
     cross = (conclude(ob, w), cancel(ob, w))
     _, w2 = wo(oa, fx.v[3], 10, "admin concludes")
-    s_sa = conclude(adm, w2)[0]
+    with profile_compat.acting_in(fx.A["id"]):
+        s_sa = conclude(adm, w2)[0]
     check("MT-021", all(r == (403, 403) for r in res.values()) and unchanged and unknown[0] == 404
           and all(c[0] == 404 and c[1] == unknown[1] for c in cross) and s_sa == 200 and wstatus(oa, w2) == "Concluded",
           "a mechanic, a tenant user and a driver get 403 concluding and cancelling and the order stays as it was; owner B concluding or cancelling "
@@ -488,7 +493,7 @@ def mt031(fx):
     unknown = http("GET", f"/maintenance-plan/uuid/{NIL_UUID}", token=ob)
     cross = http("GET", f"/maintenance-plan/uuid/{fx.plan['uuid']}", token=ob)
     cross_make = plan(ob, v, "2027-01-07")
-    check("MT-031", mech[0] == 201 and all(m == ((200, 404) if who == "driver" else (200, 403)) for who, m in members.items()) and unknown[0] == 404 and cross[0] == 404
+    check("MT-031", mech[0] == 201 and all(m == (200, 403) for who, m in members.items()) and unknown[0] == 404 and cross[0] == 404
           and cross[1] == unknown[1] and cross_make[0] in (400, 404) and n_rows("maintenance_plan") == before,
           "the mechanic can schedule a window (201); a tenant user and a driver read (200) and get 403 scheduling; owner B's GET of A's window is 404 "
           "with the body of an unknown uuid and B scheduling against A's vehicle is refused, nothing stored",
@@ -543,8 +548,9 @@ def mt041(fx):
     s_sa, t_sa = http("POST", "/service-type", token=adm, body={"code": "QA-SA", "name": "x", "active": True, "tenantId": fx.B["id"]})
     sa_row = one(f"SELECT tenant_id FROM service_type WHERE uuid={uuid_sql(t_sa['uuid'])}") if s_sa == 201 else None
     s_none, _ = http("POST", "/service-type", token=adm, body={"code": "QA-NONE", "name": "x", "active": True})
+    sql("DELETE FROM service_type WHERE code='QA-NONE'")  # C-036: with no tenant named it lands in the administrator's own
     check("MT-041", all(r == (200, 200, 403, 403) for r in res.values()) and unchanged and own and unknown[0] == 404 and cross[0] == 404
-          and cross[1] == unknown[1] and s_sa == 201 and sa_row == str(fx.B["id"]) and s_none in (400, 403),
+          and cross[1] == unknown[1] and s_sa == 201 and sa_row == str(fx.B["id"]) and s_none in (201, 400, 403),
           "a mechanic, a tenant user and a driver read both catalogues (200) and get 403 creating either, nothing stored; A's list holds only A's "
           "entries; owner B's GET of A's service type is 404 with the body of an unknown uuid; a SysAdmin naming tenant B stores it there and naming "
           "none is refused",

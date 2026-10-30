@@ -6,6 +6,7 @@ pub use super::billing_charge_entity::Entity as BillingChargeEntity;
 pub use super::province_entity::Entity as ProvinceEntity;
 pub use super::city_entity::Entity as CityEntity;
 pub use super::customer_entity::Entity as CustomerEntity;
+pub use super::cross_tenant_action_entity::Entity as CrossTenantActionEntity;
 pub use super::customer_day_off_entity::Entity as CustomerDayOffEntity;
 pub use super::holiday_entity::Entity as HolidayEntity;
 pub use super::transport_demand_entity::Entity as TransportDemandEntity;

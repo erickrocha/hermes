@@ -15,11 +15,10 @@ use axum::http::StatusCode;
 use business::commons::email_sender::EmailSender;
 use business::domain::access_profile::AccessProfile;
 use business::domain::authorization::{
-    CreationTenant, can_administer_user, can_assign_profile, can_list_users, can_move_user_to_tenant,
+    CreationTenant, can_administer_user, is_system_administrator, can_assign_profile_in, can_list_users, can_move_user_to_tenant,
     can_read_user_record,
 };
 use business::commons::tax_id::{TaxIdOutcome, validate_and_normalize};
-use business::domain::enums::ProfileScope;
 use business::domain::user::{Access, User};
 use business::gateway::access_profile_gateway::AccessProfileGateway;
 use business::gateway::tenant_gateway::TenantGateway;
@@ -88,7 +87,11 @@ pub async fn add(
         .find_by_uuid(profile_uuid.clone())
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::AccessProfileNotFound))?;
-    let Some(creation_tenant) = can_assign_profile(&current_user, &profile) else {
+    let ancestors = AccessProfileUseCase::new(AccessProfileGateway::new(state.conn.as_ref().clone()))
+        .ancestors_of(current_user.tenant_id)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale.clone(), ErrorKey::UnexpectedError))?;
+    let Some(creation_tenant) = can_assign_profile_in(&current_user, &profile, &ancestors) else {
         // DEF-BO-05: the refusal used to be `RequiredHeaderValueMissing`, which
         // described a malformed request rather than a profile that may not be
         // handed out — and the console showed that sentence to the person.
@@ -113,23 +116,6 @@ pub async fn add(
                 ));
             }
             domain.tenant_id = tenant_id;
-        }
-        CreationTenant::CallerChosen => {
-            let Some(tenant_id) = domain.tenant_id else {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
-            };
-            let tenant_use_case =
-                TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-            if tenant_use_case.find_by_id(tenant_id).await.is_err() {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
-            }
-            domain.tenant_id = Some(tenant_id);
         }
     }
 
@@ -424,10 +410,11 @@ pub async fn update(
         .find_by_uuid(profile_uuid.clone())
         .await
         .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::AccessProfileNotFound))?;
-    // An omitted `tenantId` keeps the account where it is; a platform profile places it outside any tenant.
-    let moving_to = match (domain.tenant_id, requested.scope) {
+    // An omitted `tenantId` keeps the account where it is; a platform profile places it in the platform
+    // actor's own tenant, the root (`C-036`).
+    let moving_to = match (domain.tenant_id, is_system_administrator(&requested)) {
         (Some(tenant_id), _) if Some(tenant_id) != existing.tenant_id => Some(Some(tenant_id)),
-        (None, ProfileScope::Platform) if existing.tenant_id.is_some() => Some(None),
+        (None, true) if existing.tenant_id != current_user.tenant_id => Some(current_user.tenant_id),
         _ => None,
     };
     let tenant_id = match moving_to {

@@ -43,3 +43,22 @@ Remove the services and reset all database state:
 ```sh
 docker compose -f infra/test/docker-compose.yml down --volumes
 ```
+## Running the acceptance suites against this stack
+
+The suites in `acceptance/` default to the development stack. Pointing them at this one takes these variables
+(the values are this stack's own, local-only):
+
+```sh
+export HERMES_API=http://127.0.0.1:8082 HERMES_DB_CONTAINER=hermes-test-mariadb-1 \
+       HERMES_DB_USER=hermes_test HERMES_DB_PASSWORD=local-test-db HERMES_DB_NAME=hermes_test \
+       HERMES_ADMIN_EMAIL=admin@hermes.test HERMES_ADMIN_PASSWORD='Local-test-only-Hermes-123!' \
+       HERMES_ACCESS_TOKEN_SECRET=local-test-access-secret-0123456789abcdef0123456789abcdef
+export ACCESS_TOKEN_SECRET=$HERMES_ACCESS_TOKEN_SECRET     # billing_acceptance.py reads this name
+python3 acceptance/tenant_hierarchy_acceptance.py
+```
+
+Users are created by profile (`acceptance/profile_compat.py`), not by role. A few scenarios need more than the
+default stack: the garage workers and the tracking mock (above), the fuel provider stand-in on the host
+(`fuel_acceptance.py`), the billing job's interval (`billing_acceptance.py`) and a locally built `hermes` binary
+with a scratch database (the "scratch"/"lifecycle" scenarios of `foundation`, `identity_access`,
+`fleet_operations`); they report BLOCKED, not FAIL, without them.

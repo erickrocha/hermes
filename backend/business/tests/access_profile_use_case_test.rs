@@ -21,6 +21,8 @@ type HeldAccess = (i64, Vec<String>);
 struct MemoryStore {
     profiles: Arc<Mutex<Vec<AccessProfile>>>,
     user_access: Arc<Mutex<HashMap<i64, HeldAccess>>>,
+    /// `C-036`: the tenants above a tenant, as the tree would say.
+    above: Arc<Mutex<HashMap<i64, Vec<i64>>>>,
 }
 
 impl MemoryStore {
@@ -36,6 +38,10 @@ impl MemoryStore {
 
 #[async_trait]
 impl AccessProfileStore for MemoryStore {
+    async fn ancestors_of(&self, tenant_id: i64) -> Result<Vec<i64>, BusinessError> {
+        Ok(self.above.lock().unwrap().get(&tenant_id).cloned().unwrap_or_default())
+    }
+
     async fn save(&self, mut profile: AccessProfile) -> Result<AccessProfile, BusinessError> {
         let mut profiles = self.profiles.lock().unwrap();
         if let Some(id) = profile.id {
@@ -111,14 +117,13 @@ impl AccessProfileStore for MemoryStore {
     }
 }
 
-fn profile(name: &str, tenant_id: Option<i64>, scope: ProfileScope, permissions: Vec<&str>) -> AccessProfile {
+fn profile(name: &str, tenant_id: Option<i64>, permissions: Vec<&str>) -> AccessProfile {
     AccessProfile {
         id: None,
         uuid: None,
         tenant_id,
         name: name.into(),
         name_key: String::new(),
-        scope,
         system: false,
         key: None,
         active: true,
@@ -131,7 +136,7 @@ fn profile(name: &str, tenant_id: Option<i64>, scope: ProfileScope, permissions:
 }
 
 fn tenant_profile(name: &str, permissions: Vec<&str>) -> AccessProfile {
-    profile(name, Some(42), ProfileScope::Tenant, permissions)
+    profile(name, Some(42), permissions)
 }
 
 fn user(id: Option<i64>, profile_key: &str, tenant_id: Option<i64>) -> User {
@@ -158,8 +163,11 @@ fn owner() -> User {
     user(Some(1), TENANT_OWNER, Some(42))
 }
 
+/// `C-036`: the root tenant's id; the platform actor belongs to it.
+const ROOT: i64 = 1000;
+
 fn platform() -> User {
-    user(Some(2), SYS_ADMIN, None)
+    user(Some(2), SYS_ADMIN, Some(ROOT))
 }
 
 async fn seeded() -> (MemoryStore, AccessProfileUseCase<MemoryStore>) {
@@ -183,7 +191,6 @@ async fn create_normalizes_names_and_grants_for_a_tenant_profile() {
     assert_eq!(created.name, "Dispatch Team");
     assert_eq!(created.name_key, "dispatch team");
     assert_eq!(created.permissions, ["fuel-entry.read@own", "vehicle.read"]);
-    assert_eq!(created.scope, ProfileScope::Tenant);
     assert_eq!(created.tenant_id, Some(42));
     assert!(!created.system && created.key.is_none());
     assert!(created.id.is_some());
@@ -198,12 +205,12 @@ async fn create_rejects_empty_names_bad_grants_scope_breaches_and_duplicates() {
         (tenant_profile("Dispatch", vec!["not-a-permission"]), UNKNOWN_PERMISSION),
         // `@own` on a permission that has no own scope
         (tenant_profile("Dispatch", vec!["vehicle.create@own"]), UNKNOWN_PERMISSION),
-        // a platform permission has no place in a tenant profile
-        (tenant_profile("Dispatch", vec!["tenant.create"]), UNKNOWN_PERMISSION),
-        // a tenant actor neither creates platform profiles nor another tenant's
-        (profile("Platform ops", None, ProfileScope::Platform, vec![]), SCOPE_NOT_ALLOWED),
-        (profile("Elsewhere", Some(99), ProfileScope::Tenant, vec![]), SCOPE_NOT_ALLOWED),
-        (profile("Nowhere", None, ProfileScope::Tenant, vec![]), SCOPE_NOT_ALLOWED),
+        // nobody grants what they do not hold: a tenant owner does not hold the platform's permissions
+        (tenant_profile("Dispatch", vec!["business-plan.read"]), GRANT_EXCEEDS_ACTOR),
+        // a tenant actor neither creates a profile outside any tenant nor another tenant's
+        (profile("Platform ops", None, vec![]), SCOPE_NOT_ALLOWED),
+        (profile("Elsewhere", Some(99), vec![]), SCOPE_NOT_ALLOWED),
+        (profile("Nowhere", None, vec![]), SCOPE_NOT_ALLOWED),
     ] {
         assert_eq!(use_case.create(&owner, candidate).await.unwrap_err().message, expected);
     }
@@ -240,26 +247,24 @@ async fn nobody_grants_what_they_do_not_hold() {
 }
 
 #[tokio::test]
-async fn the_platform_creates_platform_profiles_and_tenant_profiles_naming_the_tenant() {
+async fn the_system_administrator_creates_profiles_naming_the_tenant_and_holding_what_it_holds() {
     let use_case = AccessProfileUseCase::new(MemoryStore::default());
     let platform = platform();
     let ops = use_case
-        .create(&platform, profile("Platform ops", None, ProfileScope::Platform, vec!["tenant.create", "vehicle.read"]))
+        .create(&platform, profile("Platform ops", Some(ROOT), vec!["business-plan.read", "vehicle.read"]))
         .await
         .unwrap();
-    assert_eq!(ops.scope, ProfileScope::Platform);
-    assert_eq!(ops.tenant_id, None);
-    assert_eq!(ops.permissions, ["tenant.create", "vehicle.read"]);
-
-    let named = use_case.create(&platform, profile("Dispatch", Some(7), ProfileScope::Tenant, vec![])).await.unwrap();
-    assert_eq!(named.tenant_id, Some(7));
+    assert_eq!(ops.tenant_id, Some(ROOT));
+    assert_eq!(ops.permissions, ["business-plan.read", "vehicle.read"]);
     assert_eq!(
-        use_case
-            .create(&platform, profile("Stamped", Some(7), ProfileScope::Platform, vec![]))
-            .await
-            .unwrap_err()
-            .message,
-        SCOPE_NOT_ALLOWED
+        use_case.create(&platform, profile("Nowhere", None, vec![])).await.unwrap_err().message,
+        SCOPE_NOT_ALLOWED,
+        "a profile belongs to a tenant; only the system ones belong to none"
+    );
+    assert_eq!(
+        use_case.create(&platform, profile("Elsewhere", Some(7), vec![])).await.unwrap_err().message,
+        SCOPE_NOT_ALLOWED,
+        "another tenant's profile is made by acting inside that tenant"
     );
 }
 
@@ -304,7 +309,6 @@ async fn update_keeps_system_profiles_read_only_and_held_profiles_active() {
             AccessProfile {
                 name: "Dispatch North".into(),
                 tenant_id: Some(99),
-                scope: ProfileScope::Platform,
                 system: true,
                 key: Some("Hacked".into()),
                 permissions: vec!["vehicle.read".into(), "vehicle.update".into()],
@@ -316,7 +320,6 @@ async fn update_keeps_system_profiles_read_only_and_held_profiles_active() {
     assert_eq!(updated.id, Some(id));
     assert_eq!(updated.name_key, "dispatch north");
     assert_eq!(updated.tenant_id, Some(42));
-    assert_eq!(updated.scope, ProfileScope::Tenant);
     assert!(!updated.system && updated.key.is_none());
     assert_eq!(updated.permissions, ["vehicle.read", "vehicle.update"]);
 }
@@ -366,7 +369,7 @@ async fn assignment_requires_a_fitting_profile_within_reach_and_normalises_the_e
             .message,
         PROFILE_DOES_NOT_FIT
     );
-    // the platform gives out platform profiles only to accounts with no tenant
+    // the platform gives out platform profiles only to accounts in the root tenant (its own)
     assert_eq!(
         use_case
             .assign(&platform(), &account, sysadmin.uuid.clone().unwrap(), &[])
@@ -376,7 +379,7 @@ async fn assignment_requires_a_fitting_profile_within_reach_and_normalises_the_e
         PROFILE_DOES_NOT_FIT
     );
     use_case
-        .assign(&platform(), &user(Some(10), TENANT_USER, None), sysadmin.uuid.clone().unwrap(), &[])
+        .assign(&platform(), &user(Some(10), TENANT_USER, Some(ROOT)), sysadmin.uuid.clone().unwrap(), &[])
         .await
         .unwrap();
     assert_eq!(store.user_access.lock().unwrap().get(&10), Some(&(sysadmin.id.unwrap(), vec![])));
@@ -392,11 +395,12 @@ async fn assignment_requires_a_fitting_profile_within_reach_and_normalises_the_e
     );
     assert_eq!(
         use_case
-            .assign(&owner, &account, uuid.clone(), &["tenant.create".into()])
+            .assign(&owner, &account, uuid.clone(), &["business-plan.read".into()])
             .await
             .unwrap_err()
             .message,
-        UNKNOWN_PERMISSION
+        GRANT_EXCEEDS_ACTOR,
+        "the owner does not hold the platform's permissions, so cannot hand them out"
     );
     assert_eq!(
         use_case
@@ -471,13 +475,12 @@ async fn sync_creates_missing_system_profiles_and_resyncs_drifted_ones() {
     for system in SYSTEM_PROFILES {
         let saved = profiles.iter().find(|p| p.key.as_deref() == Some(system.key)).expect(system.key);
         assert!(saved.system && saved.active && saved.tenant_id.is_none());
-        assert_eq!(saved.scope, system.scope);
         assert_eq!(saved.name, system.name);
         assert_eq!(saved.permissions, system_grants(system.key));
     }
     let sysadmin = profiles.iter().find(|p| p.key.as_deref() == Some(SYS_ADMIN)).unwrap();
     assert_eq!(Some(sysadmin_id), sysadmin.id);
-    assert_eq!(sysadmin.scope, ProfileScope::Platform);
+    assert_eq!(sysadmin.key.as_deref(), Some(SYS_ADMIN));
 
     // drift: grants edited by hand and the profile deactivated are put back
     {
@@ -500,36 +503,41 @@ async fn sync_creates_missing_system_profiles_and_resyncs_drifted_ones() {
 }
 
 #[tokio::test]
-async fn operational_system_profiles_are_handed_out_without_the_grant_guard_but_nothing_else_is() {
+async fn every_profile_is_guarded_by_what_the_actor_holds_the_operational_ones_included() {
     let (_, use_case) = seeded().await;
-    // an administrator who holds none of the driver's grants beyond user administration
+    // `C-036` (`HRMS-876`): an administrator who holds user administration but none of the driver's grants
     let mut dispatcher = user(Some(20), TENANT_USER, Some(42));
     dispatcher.access = Access::from_grants(ProfileScope::Tenant, ["user.create", "profile.assign", "vehicle.read"]);
     assert!(!dispatcher.allows(DRIVER_ACT));
     let account = user(Some(21), TENANT_USER, Some(42));
 
+    for key in [DRIVER, MECHANIC] {
+        let system = use_case.find_by_key(key).await.unwrap();
+        assert_eq!(
+            use_case.placeable(&dispatcher, system.uuid.clone().unwrap(), Some(42), &[]).await.unwrap_err().message,
+            GRANT_EXCEEDS_ACTOR,
+            "{key} is no longer handed out by someone who does not hold its grants"
+        );
+    }
+    // whoever holds a profile's grants hands it out, and the owner (every tenant grant) hands out all three
+    let mechanic = use_case.find_by_key(MECHANIC).await.unwrap();
+    let mut foreman = user(Some(23), TENANT_USER, Some(42));
+    foreman.access = Access::from_grants(ProfileScope::Tenant, mechanic.permissions.iter().cloned().chain(["user.create".to_string()]));
+    use_case.placeable(&foreman, mechanic.uuid.clone().unwrap(), Some(42), &[]).await.expect("holds all of the mechanic's grants");
     for key in [DRIVER, TENANT_USER, MECHANIC] {
         let system = use_case.find_by_key(key).await.unwrap();
-        let (placed, _) = use_case
-            .placeable(&dispatcher, system.uuid.clone().unwrap(), Some(42), &[])
-            .await
-            .unwrap_or_else(|e| panic!("{key}: {}", e.message));
-        assert_eq!(placed.key.as_deref(), Some(key));
+        use_case.placeable(&owner(), system.uuid.clone().unwrap(), Some(42), &[]).await.unwrap_or_else(|e| panic!("{key}: {}", e.message));
     }
-    // ... yet the extras on top of one are still theirs to cover
+    // the extras on top are still theirs to cover
     let driver = use_case.find_by_key(DRIVER).await.unwrap();
     assert_eq!(
         use_case
-            .placeable(&dispatcher, driver.uuid.clone().unwrap(), Some(42), &["vehicle.update".into()])
+            .assign(&owner(), &account, driver.uuid.clone().unwrap(), &["tenant.child.create".into()])
             .await
             .unwrap_err()
             .message,
         GRANT_EXCEEDS_ACTOR
     );
-    use_case
-        .assign(&dispatcher, &account, driver.uuid.clone().unwrap(), &["vehicle.read@own".into()])
-        .await
-        .unwrap();
 
     // the owner's system profile and a tenant-made profile stay guarded
     let owner_profile = use_case.find_by_key(TENANT_OWNER).await.unwrap();
@@ -552,14 +560,39 @@ async fn operational_system_profiles_are_handed_out_without_the_grant_guard_but_
     );
     // the platform's profile is out of a tenant actor's reach before the guard is even asked
     let sysadmin = use_case.find_by_key(SYS_ADMIN).await.unwrap();
-    let mut platform_user = user(Some(22), TENANT_USER, None);
+    let mut platform_user = user(Some(22), TENANT_USER, Some(5));
     platform_user.access = Access::from_grants(ProfileScope::Platform, ["user.create", "profile.assign"]);
     assert_eq!(
         use_case
-            .placeable(&platform_user, sysadmin.uuid.clone().unwrap(), None, &[])
+            .placeable(&platform_user, sysadmin.uuid.clone().unwrap(), Some(5), &[])
             .await
             .unwrap_err()
             .message,
-        GRANT_EXCEEDS_ACTOR
+        PROFILE_DOES_NOT_FIT
     );
 }
+
+/// `C-036` (`D-37` iii, `HRMS-873`): a profile a tenant above made is visible and assignable below it -- and only
+/// below it: a sibling's, or a descendant's, is not.
+#[tokio::test]
+async fn a_profile_the_parent_made_is_assignable_in_its_child_and_nowhere_else() {
+    let (store, use_case) = seeded().await;
+    // tenant 42 is the child of tenant 7; tenant 50 is unrelated
+    store.above.lock().unwrap().insert(42, vec![7]);
+    let parents = use_case.create(&user(Some(3), TENANT_OWNER, Some(7)), profile("Parent's dispatch", Some(7), vec!["vehicle.read"])).await.unwrap();
+    let sibling = use_case.create(&user(Some(4), TENANT_OWNER, Some(50)), profile("Elsewhere", Some(50), vec!["vehicle.read"])).await.unwrap();
+    let child_owner = owner(); // a tenant-42 owner holding every tenant grant
+
+    let (placed, _) = use_case.placeable(&child_owner, parents.uuid.clone().unwrap(), Some(42), &[]).await.expect("inherited from the parent");
+    assert_eq!(placed.tenant_id, Some(7));
+    assert_eq!(
+        use_case.placeable(&child_owner, sibling.uuid.clone().unwrap(), Some(42), &[]).await.unwrap_err().message,
+        PROFILE_DOES_NOT_FIT
+    );
+    // nothing flows down to a tenant with no parent
+    assert_eq!(
+        use_case.placeable(&platform(), parents.uuid.clone().unwrap(), Some(50), &[]).await.unwrap_err().message,
+        PROFILE_DOES_NOT_FIT
+    );
+}
+

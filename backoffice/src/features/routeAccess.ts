@@ -10,10 +10,12 @@ export const canCreateUsers = (session: Session) => has(session, 'user.create')
 export const canSeeUsers = (session: Session) => USER_LIST_HOLDERS.some((code) => has(session, code))
 /// The tenant list: the platform runs every tenant; an owner finds their own tenant's card there.
 export const canSeeTenants = (session: Session) => has(session, 'tenant.update')
-export const canCreateTenants = (session: Session) => canPlatform(session, 'tenant.create')
+export const canCreateTenants = (session: Session) => canPlatform(session, 'tenant.child.create')
 export const canManageSubscription = (session: Session) => canPlatform(session, 'tenant.plan')
 export const canSeePlans = (session: Session) => canPlatform(session, 'business-plan.read')
 export const canSeeReferenceData = (session: Session) => canPlatform(session, 'reference-data.province.manage-read')
+/// C-036 (`HRMS-877`): the trail of what a tenant did inside its descendants.
+export const canSeeCrossTenantActions = (session: Session) => has(session, 'cross-tenant-action.read')
 export const canSeeProfiles = (session: Session) => has(session, 'profile.read')
 export const canEditProfiles = (session: Session) => has(session, 'profile.create') || has(session, 'profile.update')
 export const canSeeCosts = (session: Session) => can(session, 'cost-report.vehicle.read')

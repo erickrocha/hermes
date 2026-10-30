@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import profile_compat  # noqa: E402  (C-036: the system administrator enters a tenant, it does not name one)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
@@ -38,8 +40,8 @@ def record(scenario, passed, evidence):
     print(f"{scenario:8} {status:5} {evidence}", flush=True)
 
 
-def http(method, path, body=None, token=None, form=None):
-    headers = {}
+def http(method, path, body=None, token=None, form=None, headers=None):
+    headers = dict(profile_compat.enter(method, path, body, token, headers) or {})
     data = None
     if form is not None:
         data = urllib.parse.urlencode(form).encode()
@@ -92,6 +94,8 @@ def load_env():
             match = re.match(r"^\s*([A-Z_]+)=(.*)$", line)
             if match:
                 values[match.group(1)] = match.group(2).strip().strip('"')
+    if os.environ.get("HERMES_ACCESS_TOKEN_SECRET"):   # the test stack's secret, not backend/.env's
+        values["ACCESS_TOKEN_SECRET"] = os.environ["HERMES_ACCESS_TOKEN_SECRET"]
     return values
 
 
@@ -128,10 +132,26 @@ def cleanup():
                   "work_order", "preventive_plan", "tenant_rule_setting", "tenant_tracking_setting", "garage_cycle_state"):
         sql(f"DELETE FROM {table} WHERE {clauses}")
     sql(f"DELETE FROM garage_service_model WHERE {clauses}")
+    sql(f"DELETE FROM vehicle_assignment WHERE {clauses}", check=False)
+    sql(f"DELETE FROM garage_device WHERE {clauses}", check=False)
     sql(f"DELETE FROM vehicle WHERE {clauses}")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%@hermes.test'")
     sql(f"DELETE FROM access_profile WHERE {clauses}", check=False)   # C-032: after the users that hold them
+    sql(f"DELETE FROM cross_tenant_action WHERE actor_tenant_id IN ({tenant_ids}) OR affected_tenant_id IN ({tenant_ids})", check=False)   # C-036: the audit trail
+    sql(f"UPDATE tenant SET parent_tenant_id = NULL WHERE id IN ({tenant_ids})")   # C-036: the tree, children first
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({tenant_ids})")
+
+
+SYSTEM_PROFILES = {}
+
+
+def system_profile(key):
+    if not SYSTEM_PROFILES:
+        admin_password = os.environ.get("HERMES_ADMIN_PASSWORD") or load_env().get("SYSADMIN_PASSWORD", "")
+        _, listing = http("GET", "/access-profile", token=login(ADMIN_EMAIL, admin_password))
+        SYSTEM_PROFILES.update({p["key"]: p["uuid"] for p in listing["items"] if p.get("system")})
+    return SYSTEM_PROFILES.get(key)
 
 
 def seed():
@@ -154,7 +174,7 @@ def seed():
     status, user = http("POST", "/user", {
         "email": email,
         "name": f"{TAG}-owner",
-        "role": "TenantOwner",
+        "profileUuid": system_profile("TenantOwner"),   # C-035: the role is a system profile
         "enabled": True,
         "tenantId": TENANT_ID,
     }, admin)
