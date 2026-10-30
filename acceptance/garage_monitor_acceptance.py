@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import profile_compat  # noqa: E402  (C-036: the system administrator enters a tenant, it does not name one)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
@@ -38,8 +40,8 @@ def record(scenario, passed, evidence):
     print(f"{scenario:8} {status:5} {evidence}", flush=True)
 
 
-def http(method, path, body=None, token=None, form=None):
-    headers = {}
+def http(method, path, body=None, token=None, form=None, headers=None):
+    headers = dict(profile_compat.enter(method, path, body, token, headers) or {})
     data = None
     if form is not None:
         data = urllib.parse.urlencode(form).encode()
@@ -137,6 +139,7 @@ def cleanup():
     sql(f"DELETE FROM access_profile WHERE {clauses}", check=False)   # C-032: after the users that hold them
     sql(f"DELETE FROM cross_tenant_action WHERE actor_tenant_id IN ({tenant_ids}) OR affected_tenant_id IN ({tenant_ids})", check=False)   # C-036: the audit trail
     sql(f"UPDATE tenant SET parent_tenant_id = NULL WHERE id IN ({tenant_ids})")   # C-036: the tree, children first
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({tenant_ids})")
 
 

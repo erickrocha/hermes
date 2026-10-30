@@ -22,6 +22,7 @@ export const CATALOGUE: CataloguePermission[] = [
   { code: 'driver.act', module: 'Fleet', scope: 'Tenant', tenantUser: false, driver: true, mechanic: false, own: false },
   { code: 'vehicle-presence.publish', module: 'Fleet', scope: 'Platform', tenantUser: false, driver: false, mechanic: false, own: false },
   { code: 'vehicle-presence.read', module: 'Fleet', scope: 'Tenant', tenantUser: true, driver: true, mechanic: true, own: false },
+  { code: 'vehicle.link-tracker', module: 'Fleet', scope: 'Platform', tenantUser: false, driver: false, mechanic: false, own: false },
   { code: 'vehicle.assign-driver', module: 'Fleet', scope: 'Tenant', tenantUser: false, driver: false, mechanic: false, own: false },
   { code: 'vehicle.assignment.read', module: 'Fleet', scope: 'Tenant', tenantUser: true, driver: true, mechanic: true, own: true },
   { code: 'vehicle.create', module: 'Fleet', scope: 'Tenant', tenantUser: false, driver: false, mechanic: false, own: false },

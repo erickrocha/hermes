@@ -22,7 +22,7 @@ REPO = os.path.dirname(HERE)
 BACKEND = os.path.join(REPO, "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc_rd"
 SCRATCH_PORT = int(os.environ.get("HERMES_RD_SCRATCH_PORT", "8096"))
@@ -168,8 +168,8 @@ def seed_fixtures():
     fx = Fx()
     fx.secret = dotenv()["ACCESS_TOKEN_SECRET"]
     fx.admin = token_for(ADMIN_EMAIL, ADMIN_PASSWORD)
-    sql(f"INSERT INTO tenant (uuid, business_name, tax_id, country_code, created_at, updated_at) "
-        f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{TAG}-tenant', 'QARD00000001', 'BR', NOW(), NOW())")
+    sql(f"INSERT INTO tenant (uuid, business_name, tax_id, country_code, parent_tenant_id, created_at, updated_at) "
+        f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{TAG}-tenant', 'QARD00000001', 'BR', (SELECT id FROM (SELECT id FROM tenant WHERE parent_tenant_id IS NULL LIMIT 1) r), NOW(), NOW())")
     fx.tenant = int(one(f"SELECT id FROM tenant WHERE business_name='{TAG}-tenant'"))
     for attr, role in (("owner", "TenantOwner"), ("user", "TenantUser")):
         email = f"{TAG}-{attr}@hermes.test"
@@ -197,6 +197,7 @@ def cleanup_dev_db():
         f"(SELECT id FROM province WHERE country_code='{QR}')")
     sql(f"DELETE FROM province WHERE country_code='{QR}'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
 
 

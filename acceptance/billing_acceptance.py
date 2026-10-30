@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 
 import tenancy_plans_acceptance as tp
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
 
 
 RESULTS = {}
@@ -30,7 +31,7 @@ def require(condition, message):
 
 
 def create_user(fx, creator_token, email, role, tenant_id=None):
-    body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+    body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
     if tenant_id is not None:
         body["tenantId"] = tenant_id
     status, payload = tp.http("POST", "/user", body=body, token=creator_token)

@@ -76,6 +76,7 @@ pub const CATALOGUE: &[Permission] = &[
     Permission { code: "driver.act", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: true, mechanic: false, own: false },
     Permission { code: "vehicle-presence.publish", module: "Fleet", scope: Scope::Platform, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle-presence.read", module: "Fleet", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: false },
+    Permission { code: "vehicle.link-tracker", module: "Fleet", scope: Scope::Platform, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle.assign-driver", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
     Permission { code: "vehicle.assignment.read", module: "Fleet", scope: Scope::Tenant, tenant_user: true, driver: true, mechanic: true, own: true },
     Permission { code: "vehicle.create", module: "Fleet", scope: Scope::Tenant, tenant_user: false, driver: false, mechanic: false, own: false },
@@ -247,7 +248,7 @@ fn is_administration(code: &str) -> bool {
 /// `code` in [`child_context_grants`] (so a 403 names what to grant, not the ordinary permission it expands to).
 pub fn child_permission_for(code: &str, method: &str) -> &'static str {
     match code {
-        "tenant.update" => CHILD_UPDATE,
+        "tenant.update" | "tenant-rule-settings.update" | "fuel-gauge-settings.update" => CHILD_UPDATE,
         "tenant.plan" => CHILD_PLAN,
         c if c.starts_with("user.") || c.starts_with("profile.") => CHILD_USER_MANAGE,
         c if is_administration(c) => CHILD_READ,
@@ -267,7 +268,7 @@ pub fn child_context_grants(held: &Grants) -> Option<Grants> {
         codes.extend(["tenant.read", "tenant-rule-settings.read", "fuel-gauge-settings.read"]);
     }
     if held.allows(CHILD_UPDATE) {
-        codes.push("tenant.update");
+        codes.extend(["tenant.update", "tenant-rule-settings.update", "fuel-gauge-settings.update"]);
     }
     if held.allows(CHILD_PLAN) {
         codes.push("tenant.plan");

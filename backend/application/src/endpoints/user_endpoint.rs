@@ -117,23 +117,6 @@ pub async fn add(
             }
             domain.tenant_id = tenant_id;
         }
-        CreationTenant::CallerChosen => {
-            let Some(tenant_id) = domain.tenant_id else {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
-            };
-            let tenant_use_case =
-                TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-            if tenant_use_case.find_by_id(tenant_id).await.is_err() {
-                return Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::InvalidParameterValue,
-                ));
-            }
-            domain.tenant_id = Some(tenant_id);
-        }
     }
 
     let (profile, extras) =

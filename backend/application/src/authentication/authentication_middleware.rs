@@ -4,7 +4,7 @@ use crate::commons::i18n::{ErrorKey, Locale};
 use axum::extract::{MatchedPath, OriginalUri, State};
 use axum::http::header::{ACCEPT_LANGUAGE, AUTHORIZATION};
 use axum::{body::Body, extract::Request, http::Response, middleware::Next};
-use business::domain::authorization::{is_platform_actor, lacks_required_tenant};
+use business::domain::authorization::lacks_required_tenant;
 use business::domain::permission;
 use business::domain::cross_tenant_action::CrossTenantAction;
 use business::domain::tenant_tree;
@@ -99,15 +99,15 @@ pub async fn authentication(
             enter_descendant(&state, &locale, &mut current_user, uuid.trim(), &method, &path, &concrete).await?
         }
     };
-    if let Some(tenant_id) = current_user.bound_tenant() {
+    if let Some(tenant_id) = current_user.tenant_id {
         ensure_billing_active(&state, &locale, tenant_id).await?;
     }
 
     let audit_user = entity::audit::AuditUser {
         id: user_id,
         email: current_user.email.clone(),
-        tenant_id: current_user.bound_tenant(),
-        enforce_tenant: delegated.is_some() || !is_platform_actor(&current_user),
+        tenant_id: current_user.tenant_id,
+        enforce_tenant: true,
     };
 
     // `HRMS-853`/`HRMS-856` (`C-035`): every operation names the permission it asks for, and every caller
@@ -184,9 +184,9 @@ async fn enter_descendant(
     };
     let write_without_read = user.access.grants.allows(permission::CHILD_DATA_WRITE) && !user.access.grants.allows(permission::CHILD_DATA_READ);
     user.access.acting_from = Some(own);
+    user.access.held = Some(std::mem::replace(&mut user.access.grants, grants));
     user.tenant_id = Some(target_id);
     user.access.scope = business::domain::enums::ProfileScope::Tenant;
-    user.access.grants = grants;
     if !is_audited(method, path) {
         return Ok(Some(write_without_read));
     }

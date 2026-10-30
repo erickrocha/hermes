@@ -4,11 +4,10 @@ use crate::commons::i18n::{ErrorKey, Locale};
 use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, UnauthorizedErrorJson,
 };
-use crate::endpoints::json::internal_tank_json::InternalTankQuery;
 use crate::endpoints::json::tenant_rule_setting_json::{TenantRuleSettingJson, TenantTrackingSettingJson};
 use axum::Json;
 use axum::http::StatusCode;
-use axum::extract::{Extension, Query, State};
+use axum::extract::{Extension, State};
 use business::domain::authorization::{can_configure_fuel_gauge, can_read_tenant_configuration};
 use business::domain::tenant_rule_setting::{RuleSettings, TenantRuleSetting};
 use business::domain::user::User;
@@ -92,7 +91,7 @@ pub async fn configure(
     if !can_configure_fuel_gauge(&current_user, p.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let tenant_id = current_user.target_tenant(p.tenant_id);
+    let tenant_id = current_user.tenant_id;
     let settings = RuleSettings {
         avg_max_segment_km: p.avg_max_segment_km,
         avg_min_km_per_liter: p.avg_min_km_per_liter,
@@ -146,7 +145,6 @@ pub async fn configure(
     get,
     tag = "TenantRuleSetting",
     path = "/tenant-rule-settings",
-    params(InternalTankQuery),
     responses(
         (status = 200, description = "The caller's own tenant's rule thresholds, or the legacy defaults (no `uuid`) while it has set none. `tenantId` names the tenant for an unbound `SysAdmin`. **Roles:** SysAdmin, TenantOwner (own tenant only). Other roles are refused with 403 (`D-27` 8).", body = TenantRuleSettingJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -157,14 +155,13 @@ pub async fn configure(
 )]
 pub async fn get_current(
     state: State<AppState>,
-    Query(query): Query<InternalTankQuery>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<TenantRuleSettingJson>> {
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.target_tenant(query.tenant_id);
+    let target = current_user.tenant_id;
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),
@@ -175,7 +172,6 @@ pub async fn get_current(
     get,
     tag = "TenantRuleSetting",
     path = "/tenant-rule-settings/tracking",
-    params(InternalTankQuery),
     responses(
         (status = 200, description = "The tenant's GPS provider account (URL and e-mail; the password is never returned, `passwordSet` says whether one is stored). Empty fields while none is configured. **Roles:** SysAdmin, TenantOwner (own tenant only).", body = TenantTrackingSettingJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -186,14 +182,13 @@ pub async fn get_current(
 )]
 pub async fn get_tracking(
     state: State<AppState>,
-    Query(query): Query<InternalTankQuery>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<TenantTrackingSettingJson>> {
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.target_tenant(query.tenant_id);
+    let target = current_user.tenant_id;
     let Some(tenant_id) = target else {
         return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
     };
@@ -232,7 +227,7 @@ pub async fn configure_tracking(
     if !can_configure_fuel_gauge(&current_user, p.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let Some(tenant_id) = current_user.target_tenant(p.tenant_id) else {
+    let Some(tenant_id) = current_user.tenant_id else {
         return Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue));
     };
     let use_case = TenantTrackingSettingUseCase::new(TenantTrackingSettingGateway::new(state.conn.as_ref().clone()));

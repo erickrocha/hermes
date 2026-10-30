@@ -20,6 +20,7 @@ import argparse, glob, json, os, re, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from foundation_acceptance import (  # reuse, don't re-implement
     ADMIN_EMAIL, ADMIN_PASSWORD, REPO, dotenv, http, jwt_payload, mint_invite, sql, token_for)
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONSOLE = os.environ.get("HERMES_CONSOLE", "http://localhost:5180")
@@ -67,10 +68,10 @@ def must(resp, what, ok=(200, 201)):
 
 
 def seed():
-    secret = dotenv()["ACCESS_TOKEN_SECRET"]
+    secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or dotenv()["ACCESS_TOKEN_SECRET"]
     adm = token_for(ADMIN_EMAIL, ADMIN_PASSWORD)
     plan = must(http("POST", "/business-plan", token=adm, body={
-        "name": f"{TAG}-flat", "priceInCents": 1234567, "availableUsers": 10, "periodDays": 30,
+        "name": f"{TAG}-flat", "priceInCents": 1234567, "pricePerExtraUserInCents": 0, "availableUsers": 10, "periodDays": 30,
         "paymentDate": time.strftime("%Y-%m-%d")}), "create plan")
     tenants = {}
     for key, name, tax in (("tm", f"{TAG}-Transmega", "QABO0000000001"), ("acme", f"{TAG}-acme", "QABO0000000002")):
@@ -81,7 +82,7 @@ def seed():
          "assign plan", ok=(200, 201, 204))
 
     def user(token, email, role, tenant_id):
-        must(http("POST", "/user", token=token, body={"email": email, "name": email.split("@")[0], "role": role,
+        must(http("POST", "/user", token=token, body={"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role),
                                                        "enabled": True, "tenantId": tenant_id}), f"create {email}")
         activate(email, secret)
         return email
@@ -97,7 +98,7 @@ def seed():
     fx["userTm"] = user(owner, f"{TAG}-user-tm@hermes.test", "TenantUser", tenants["tm"]["id"])
     for i in range(EXTRA_USERS):  # pagination fixture; not activated, just rows
         must(http("POST", "/user", token=owner, body={"email": f"{TAG}-pg-{i:02d}@hermes.test",
-                                                      "name": f"{TAG} pager {i:02d}", "role": "TenantUser",
+                                                      "name": f"{TAG} pager {i:02d}", "profileUuid": system_profile("TenantUser"),
                                                       "enabled": True}), "create pager user")
     row = sql(f"SELECT password FROM user WHERE email='{TAG}-pg-00@hermes.test'")[0]  # BO-032: accepted through the console
     fx["invite"] = {"email": f"{TAG}-pg-00@hermes.test", "token": mint_invite(f"{TAG}-pg-00@hermes.test", row[0], secret)}
@@ -110,9 +111,15 @@ def seed():
 
 
 def teardown():
-    sql(f"UPDATE user SET profile_id=NULL WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM access_profile WHERE name LIKE '{TAG}%'")
+    # what a tenant's billing (C-015) and the audit trail between tenants (C-036) hold refers to the tenant
+    mine = f"(SELECT id FROM tenant WHERE business_name LIKE '{TAG}-%')"
+    for table, column in (("billing_charge", "tenant_id"), ("tenant_billing", "tenant_id"),
+                          ("cross_tenant_action", "actor_tenant_id"), ("cross_tenant_action", "affected_tenant_id")):
+        sql(f"DELETE FROM {table} WHERE {column} IN {mine}")
+    sql(f"UPDATE tenant SET parent_tenant_id = NULL WHERE business_name LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
     sql(f"DELETE FROM business_plan WHERE name LIKE '{TAG}-%'")
     sql("DELETE FROM city WHERE province_id IN (SELECT id FROM province WHERE country_code='QB')")
@@ -135,26 +142,29 @@ def api_checks(fx):
 
     # BO-011: the API reports the TenantUser role the console must represent
     s, _, p = http("GET", "/user?page=0&pageSize=100", token=own)
-    roles = {u["email"]: u["role"] for u in (p or {}).get("items", [])}
+    roles = {u["email"]: u.get("profileKey") for u in (p or {}).get("items", [])}
     record("BO-011", "api", s == 200 and roles.get(fx["userTm"]) == "TenantUser",
-           f"owner GET /user -> {s}, {fx['userTm']} role={roles.get(fx['userTm'])}")
+           f"owner GET /user -> {s}, {fx['userTm']} profile={roles.get(fx['userTm'])}")
 
     # BO-013: creation hierarchy is refused server-side outside PD-019
+    # C-036 (D-36/D-37): nobody grants what they do not hold. The owner holds the owner profile's grants, so they may hand it out in their own
+    # tenant; the system administrator may hand out a tenant user; a tenant user holds no user administration and the owner never holds
+    # the system administrator's.
     probes = [
-        ("owner->TenantOwner", own, "TenantOwner", tm), ("owner->SysAdmin", own, "SysAdmin", None),
-        ("admin->TenantUser", adm, "TenantUser", tm), ("user->TenantUser", usr, "TenantUser", tm)]
+        ("owner->TenantOwner", own, "TenantOwner", tm, 201), ("owner->SysAdmin", own, "SystemAdministrator", None, 403),
+        ("admin->TenantUser", adm, "TenantUser", tm, 201), ("user->TenantUser", usr, "TenantUser", tm, 403)]
     out = []
-    for label, tok, role, tid in probes:
+    for label, tok, role, tid, want in probes:
         email = f"{TAG}-probe-{label.replace('>', '').replace('-', '').lower()}@hermes.test"
-        s, _, _ = http("POST", "/user", token=tok, body={"email": email, "name": "probe", "role": role,
-                                                         "enabled": True, "tenantId": tid})
-        stored = sql(f"SELECT role FROM user WHERE email='{email}'")
-        out.append((label, s, stored[0][0] if stored else None))
-    ok = all(s == 403 and stored is None for _, s, stored in out)
-    record("BO-013", "api", ok, "; ".join(f"{l} -> {s} stored={r}" for l, s, r in out))
+        s_, _, _ = http("POST", "/user", token=tok, body={"email": email, "name": "probe", "profileUuid": system_profile(role),
+                                                          "enabled": True, "tenantId": tid})
+        stored = sql(f"SELECT (SELECT `key` FROM access_profile WHERE id=user.profile_id) FROM user WHERE email='{email}'")
+        out.append((label, s_, stored[0][0] if stored else None, want))
+    ok = all(s_ == want and (stored is None) == (want == 403) for _, s_, stored, want in out)
+    record("BO-013", "api", ok, "; ".join(f"{l} -> {s_} stored={r}" for l, s_, r, _ in out))
 
     # BO-014: plan administration refused to TenantOwner and TenantUser even with a valid token
-    calls = [("GET", "/business-plan", None), ("POST", "/business-plan", {"name": f"{TAG}-evil", "priceInCents": 1,
+    calls = [("GET", "/business-plan", None), ("POST", "/business-plan", {"name": f"{TAG}-evil", "priceInCents": 1, "pricePerExtraUserInCents": 0,
              "availableUsers": 1, "periodDays": 1, "paymentDate": "2026-01-01"}),
              ("GET", f"/business-plan/uuid/{fx['plan']['uuid']}", None),
              ("POST", f"/tenant/uuid/{tm_uuid}/plan", {"businessPlanId": fx["plan"]["id"]}), ("POST", "/tenant", {
@@ -198,7 +208,7 @@ def api_checks(fx):
     # server refuses them -- the same probes as a TenantUser, nothing more.
     for sid, key in (("BO-072", "driverAcme"), ("BO-073", "mechanicAcme")):
         tok = token_for(fx[key], PW)
-        refused = {"POST /user": http("POST", "/user", token=tok, body={"email": f"{TAG}-x@hermes.test", "name": "x", "role": "TenantUser", "enabled": True, "tenantId": fx["tenants"]["acme"]["id"]})[0],
+        refused = {"POST /user": http("POST", "/user", token=tok, body={"email": f"{TAG}-x@hermes.test", "name": "x", "profileUuid": system_profile("TenantUser"), "enabled": True, "tenantId": fx["tenants"]["acme"]["id"]})[0],
                    "POST /tenant": http("POST", "/tenant", token=tok, body={"businessName": f"{TAG}-x", "taxId": "QABO9999999999", "countryCode": "US"})[0],
                    "PUT /tenant": http("PUT", f"/tenant/uuid/{fx['tenants']['acme']['uuid']}", token=tok, body={"businessName": f"{TAG}-hijack", "taxId": "QABO0000000002", "countryCode": "US"})[0]}
         record(sid, "api", all(v == 403 for v in refused.values()), f"{key}: {refused}")
@@ -246,8 +256,9 @@ def static_checks():
            f"vitest exit={t.returncode} ({m.group(0) if m else 'no summary'}); tsc -b exit={c.returncode}; "
            f"frontend-ci runs tsc -b + npm test={'tsc -b --noEmit' in ci and 'npm test' in ci}")
     # BO-074 (EPIC-BO-07-S03, HRMS-417): the role-conditional screen tests cover all five roles
-    tests = "".join(open(os.path.join(BO, "src", "pages", f)).read() for f in ("ManagementPages.test.tsx", "RoleSurfaces.test.tsx"))
-    missing = [r for r in ("SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic") if r not in tests]
+    tests = "".join(open(os.path.join(BO, "src", "pages", f)).read() for f in ("ManagementPages.test.tsx", "AccessSurfaces.test.tsx")
+                    if os.path.exists(os.path.join(BO, "src", "pages", f)))
+    missing = [r for r in ("SystemAdministrator", "TenantOwner", "TenantUser", "Driver", "Mechanic") if r not in tests]
     record("BO-074", "static", not missing and t.returncode == 0,
            f"role names absent from ManagementPages/RoleSurfaces tests={missing or 'none'}; vitest exit={t.returncode} ({m.group(0) if m else 'no summary'})")
     # DEF-BO-09 (revised 2026-09-19): this used to read three named test files,

@@ -12,10 +12,11 @@ describe('PermissionPicker', () => {
   it('renders one group per module with the default-for hint, and toggles a grant on and off', () => {
     const onChange = vi.fn()
     render(<PermissionPicker catalogue={catalogue} value={['work-order.read']} onChange={onChange} />)
-    expect(screen.getAllByRole('group').map((group) => group.textContent)).toEqual([expect.stringContaining('Fleet'), expect.stringContaining('Maintenance')])
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([expect.stringContaining('Fleet'), expect.stringContaining('Maintenance')])
     expect(screen.getByText(/default for|padrão para/i)).toHaveTextContent(/Tenant user, Driver|Usuário do tenant, Motorista/)
     fireEvent.click(screen.getByRole('checkbox', { name: /^vehicle\.create$/ }))
     expect(onChange).toHaveBeenLastCalledWith(['work-order.read', 'vehicle.create'])
+    fireEvent.click(screen.getByRole('tab', { name: /Maintenance/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: /^work-order\.read$/ }))
     expect(onChange).toHaveBeenLastCalledWith([])
   })

@@ -152,7 +152,7 @@ pub async fn add(
     Extension(current_user): Extension<User>,
     Json(payload): Json<AccessProfileJson>,
 ) -> HttpResponse<(StatusCode, Json<AccessProfileJson>)> {
-    let tenant_id = current_user.target_tenant(payload.tenant_id);
+    let tenant_id = current_user.tenant_id;
     if !can_manage_access_profiles(&current_user, tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::AccessProfileForbidden));
     }

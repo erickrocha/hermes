@@ -64,7 +64,7 @@ def run():
         owner_profile = b.system_profile("TenantOwner")
 
         def grant(extras):
-            return http("PUT", f"/access-profile/user/uuid/{owner_uuid}", {"profileUuid": owner_profile, "extraPermissions": extras}, admin)[0]
+            return call("PUT", f"/access-profile/user/uuid/{owner_uuid}", admin, t_uuid, {"profileUuid": owner_profile, "extraPermissions": extras})[0]
 
         # AC-091a -- the tree: the platform's tenants sit under the root; without the permission nobody creates below theirs
         parent_ok = bten.get("parentTenantId") is not None and str(bten["parentTenantId"]) == str(rows("SELECT id FROM tenant WHERE parent_tenant_id IS NULL")[0][0])
@@ -155,9 +155,9 @@ def run():
                and one_write.get("actorTenantId") == t_id and one_write.get("affectedTenantId") == t1["id"]
                and one_write.get("operation") == "/vehicle/uuid/{uuid}" and one_write.get("occurredAt") and reads
                and seen_t[0] == 200 and seen_t[1]["totalItems"] >= len(rows_t1)
-               and seen_b[0] == 200 and seen_b[1]["totalItems"] == 0,
+               and seen_b[0] == 200 and all(r["affectedTenantId"] == bten["id"] for r in seen_b[1]["items"]),
                f"T1 sees {len(rows_t1)} actions ({len(writes)} writes, {len(reads)} reads); the vehicle edit: actor {one_write.get('actorEmail')} from tenant {one_write.get('actorTenantId')} into {one_write.get('affectedTenantId')} {one_write.get('operation')} at {one_write.get('occurredAt')}; "
-               f"the actor T lists {seen_t[1]['totalItems'] if seen_t[0] == 200 else seen_t[0]}; the sibling B sees {seen_b[1]['totalItems'] if seen_b[0] == 200 else seen_b[0]}")
+               f"the actor T lists {seen_t[1]['totalItems'] if seen_t[0] == 200 else seen_t[0]}; the sibling B sees {seen_b[1]['totalItems'] if seen_b[0] == 200 else seen_b[0]} (only what was done in B: the platform's own entry to seed its owner)")
     finally:
         b.cleanup()
     bad = [k for k, v in b.RESULTS.items() if v["status"] != "PASS"]

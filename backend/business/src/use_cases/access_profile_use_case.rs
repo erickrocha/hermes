@@ -1,6 +1,6 @@
 use crate::commons::functions::normalize_name;
 use crate::domain::access_profile::AccessProfile;
-use crate::domain::authorization::{can_assign_profile_in, can_grant, is_platform_actor, profile_fits_in};
+use crate::domain::authorization::{can_assign_profile_in, can_grant, profile_fits_in};
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::ProfileScope;
 use crate::domain::permission::{self, Grants};
@@ -95,8 +95,8 @@ impl<S: AccessProfileStore> AccessProfileUseCase<S> {
         if name_key.is_empty() {
             return Err(BusinessError::new(NAME_REQUIRED.to_string()));
         }
-        // A profile of the tenant's own is made inside it; the system administrator may name any tenant.
-        if !(profile.tenant_id.is_some() && (is_platform_actor(actor) || profile.tenant_id == actor.tenant_id)) {
+        // A profile of the tenant's own is made inside it; another tenant's is made by acting inside that tenant.
+        if !(profile.tenant_id.is_some() && profile.tenant_id == actor.tenant_id) {
             return Err(BusinessError::new(SCOPE_NOT_ALLOWED.to_string()));
         }
         let permissions = permission::normalise_grants(&profile.permissions)

@@ -120,6 +120,7 @@ describe('ProfileEditorPage', () => {
   it('has no scope for anyone: the system administrator sees the same form and the platform codes the server offers', async () => {
     signIn('SystemAdministrator'); mockEditor(null)
     at('/profiles/new', '/profiles/new', <ProfileEditorPage />)
+    fireEvent.click(await screen.findByRole('tab', { name: /Platform/ }))
     expect(await screen.findByText('business-plan.read')).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: /scope|alcance/i })).not.toBeInTheDocument()
   })
@@ -129,8 +130,9 @@ describe('ProfileEditorPage', () => {
     at('/profiles/new', '/profiles/new', <ProfileEditorPage />)
     const start = await screen.findByRole('combobox', { name: /start from|começar por/i })
     fireEvent.change(start, { target: { value: 'Mechanic' } })
-    expect((screen.getByRole('checkbox', { name: /^work-order\.read$/ }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: /^vehicle\.create$/ }) as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(screen.getByRole('tab', { name: /Maintenance/ }))
+    expect((screen.getByRole('checkbox', { name: /^work-order\.read$/ }) as HTMLInputElement).checked).toBe(true)
   })
 })
 
@@ -150,9 +152,11 @@ describe('UserProfilePicker', () => {
     at('/users/u-1/edit', '/users/:uuid/edit', <UserProfilePicker userUuid="u-1" />)
     expect(await screen.findByPlaceholderText(/Fleet operator/)).toBeInTheDocument()
     const extras = within(screen.getByTestId('extraPermissions'))
-    expect((extras.getByRole('checkbox', { name: /^work-order\.read$/ }) as HTMLInputElement).checked).toBe(true)
     // what the profile already grants is not offered again
     expect(extras.queryByRole('checkbox', { name: /^vehicle\.read$/ })).not.toBeInTheDocument()
+    fireEvent.click(extras.getByRole('tab', { name: /Maintenance/ }))
+    expect((extras.getByRole('checkbox', { name: /^work-order\.read$/ }) as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(extras.getByRole('tab', { name: /Fleet/ }))
     fireEvent.click(extras.getByRole('checkbox', { name: /^vehicle\.create$/ }))
     fireEvent.click(screen.getByRole('button', { name: /apply access|aplicar acesso/i }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/access-profile/user/uuid/u-1', { profileUuid: 'profile-1', extraPermissions: ['work-order.read', 'vehicle.create'] }))

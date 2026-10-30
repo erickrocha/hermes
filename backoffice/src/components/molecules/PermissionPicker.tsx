@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { grantCode, isOwnGrant, ownGrant } from '../../features/access'
 import type { Grant, Permission } from '../../types'
@@ -29,9 +29,17 @@ export function PermissionPicker({ catalogue, value, onChange, readOnly = false,
   const groups = useMemo(() => groupByModule(catalogue.filter((permission) => !excluded.has(permission.code))), [catalogue, excluded])
   const replace = (code: string, next: Grant | null) => onChange([...value.filter((grant) => grantCode(grant) !== code), ...(next ? [next] : [])])
   const entries = Object.entries(groups)
+  const [chosen, setChosen] = useState('')
+  const active = groups[chosen] ? chosen : entries[0]?.[0]
   if (!entries.length) return <p className="form-hint span-2">{t('noPermissionsToPick')}</p>
   return <div className="permission-picker span-2" data-testid={name}>
-    {entries.map(([module, perms]) => <fieldset className="permission-group" key={module} disabled={readOnly}>
+    <div className="permission-tabs" role="tablist">
+      {entries.map(([module, perms]) => {
+        const count = perms.filter((p) => grantFor(value, p.code)).length
+        return <button type="button" role="tab" key={module} aria-selected={module === active} className={module === active ? 'active' : ''} onClick={() => setChosen(module)}>{module}<small>{count}/{perms.length}</small></button>
+      })}
+    </div>
+    {entries.filter(([module]) => module === active).map(([module, perms]) => <fieldset className="permission-group" key={module} disabled={readOnly}>
       <legend>{module}</legend>
       {perms.map((permission) => {
         const held = grantFor(value, permission.code)

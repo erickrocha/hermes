@@ -225,7 +225,7 @@ impl<S: GarageDeviceStore> GarageDeviceUseCase<S> {
 }
 
 fn tenant_owner_id(owner: &User) -> Result<i64, BusinessError> {
-    if owner.is_platform() || !owner.allows(GARAGE_DEVICE_MANAGE) {
+    if !owner.allows(GARAGE_DEVICE_MANAGE) {
         return Err(BusinessError::new(DEVICE_OWNER_REQUIRED.to_string()));
     }
     owner

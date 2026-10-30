@@ -21,12 +21,14 @@ import argparse, base64, hashlib, hmac, json, os, re, subprocess, sys, threading
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 PROVIDER_PORT = int(os.environ.get("HERMES_FUEL_STANDIN_PORT", "18090"))
 PROVIDER_TOKEN = "qa-fu-token"
@@ -69,6 +71,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from scheduling_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -250,6 +253,7 @@ def cleanup():
     sql(f"DELETE FROM vehicle_assignment WHERE vehicle_id IN ({vehicles})")
     sql(f"DELETE FROM vehicle WHERE id IN ({vehicles})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAFU%'")
 
 
@@ -263,7 +267,7 @@ def activate(fx, email):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QAFU0000000001"), ("B", "QAFU0000000002"), ("C", "QAFU0000000003"), ("D", "QAFU0000000004")):
@@ -274,7 +278,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -556,8 +560,8 @@ def fu013(fx):
     Provider.fetches = 0
     res = {who: http("POST", "/fuel-entry/sync", token=u["token"])[0] for who, u in fx.readers.items()}
     res["unbound sysadmin"] = http("POST", "/fuel-entry/sync", token=adm)[0]
-    check("FU-013", all(c == 403 for c in res.values()) and Provider.fetches == 0,
-          "a tenant user, a driver and an unbound SysAdmin get 403 syncing and the provider is never called",
+    check("FU-013", all(c == 403 for who, c in res.items() if who != "unbound sysadmin") and res["unbound sysadmin"] in (403, 503) and Provider.fetches == 0,
+          "a tenant user and a driver get 403 syncing; the SysAdmin, an account of the root tenant, reaches the provider's door (503 when none is configured); the provider is never called",
           f"codes {res}; provider fetches {Provider.fetches}")
 
 
@@ -973,7 +977,8 @@ def fu054(fx):
     g_iso = http("GET", "/fuel-gauge-settings", token=oa)[1] == gauge_default
     roles = {who: (http("GET", "/tenant-rule-settings", token=u["token"])[0], rule_settings_as(u["token"], oc, avgMaxSegmentKm=1)[0], http("GET", "/fuel-gauge-settings", token=u["token"])[0], gauge_settings_as(u["token"], oc, setAsideRatio=0.1)[0])
              for who, u in [("mechanic", fx.mechA)] + list(fx.readers.items())}
-    sysadmin = http("PUT", "/fuel-gauge-settings", token=fx.adm, body={**strip(http("GET", f"/fuel-gauge-settings?tenantId={fx.C['id']}", token=fx.adm)[1]), "tenantId": fx.C["id"], "setAsideRatio": 0.4})[0]
+    with profile_compat.acting_in(fx.C["id"]):  # C-036: the administrator enters the tenant
+        sysadmin = http("PUT", "/fuel-gauge-settings", token=fx.adm, body={**strip(http("GET", "/fuel-gauge-settings", token=fx.adm)[1]), "setAsideRatio": 0.4})[0]
     snap_r = http("GET", "/tenant-rule-settings", token=oc)[1]
     snap_g = http("GET", "/fuel-gauge-settings", token=oc)[1]
     bad_r = {"zero distance": rule_settings(oc, avgMaxSegmentKm=0)[0], "zero window": rule_settings(oc, avgRecentWindowDays=0)[0],
@@ -983,7 +988,7 @@ def fu054(fx):
              "share 0": gauge_settings(oc, setAsideRatio=0)[0], "share above 1": gauge_settings(oc, largeFuellingRatio=1.2)[0]}
     untouched = http("GET", "/tenant-rule-settings", token=oc)[1] == snap_r and http("GET", "/fuel-gauge-settings", token=oc)[1] == snap_g
     check("FU-054", rules_ok and gauge_ok and s1 == 200 and s2 == 200 and one_row and isolated and g1 == 200 and g2 == 200 and g_one and g_iso
-          and all(x == (403, 403, 403, 403) for x in roles.values()) and sysadmin == 200
+          and all(x == (403, 403, 403, 403) for x in roles.values()) and sysadmin == 403  # C-036: a tenant's fuel-gauge settings are administration, not the parent's operational data
           and all(c in (400, 422) for c in bad_r.values()) and all(c in (400, 422) for c in bad_g.values()) and untouched,
           "a tenant with no setting reads the documented defaults (no uuid) for both the rule thresholds and the gauge; the owner sets either and a second "
           "PUT updates the same single row; other tenants are unchanged; a mechanic, tenant user and driver get 403 reading and setting (D-27 8: the configuration is the owner's); a SysAdmin naming "
@@ -1034,8 +1039,9 @@ def fu060(fx):
     for who, u in (("mechanic A", fx.mechA), ("tenant user A", fx.userA), ("driver A", fx.driverA)):
         members[who] = tank(u["token"])[0]
     b_get = http("GET", "/internal-tank", token=ob)[0]
-    sa_get = http("GET", f"/internal-tank?tenantId={fx.C['id']}", token=adm)
-    sa_put = tank(adm, tenantId=fx.C["id"], alertLevelLiters=2600)
+    with profile_compat.acting_in(fx.C["id"]):
+        sa_get = http("GET", "/internal-tank", token=adm)
+        sa_put = tank(adm, alertLevelLiters=2600)
     check("FU-060", pre == 404 and shaped and one and all(c in (400, 422) for c in bad.values()) and unchanged
           and all(c == 403 for c in members.values()) and b_get == 404 and sa_get[0] == 200 and sa_put[0] == 200,
           "before configuration the tank is 404; the owner configures it and it round-trips; a second PUT updates the same single row; a non-positive "
@@ -1131,7 +1137,7 @@ def main():
 
 
 def _driver_c(fx):
-    s, p = http("POST", "/user", body={"email": f"{TAG}-driver-c@hermes.test", "name": "qa-fu-driver-c", "role": "Driver", "enabled": True}, token=fx.ownerC["token"])
+    s, p = http("POST", "/user", body={"email": f"{TAG}-driver-c@hermes.test", "name": "qa-fu-driver-c", "profileUuid": system_profile("Driver"), "enabled": True}, token=fx.ownerC["token"])
     if s != 201:
         raise RuntimeError(f"driver C -> {s} {ek(p)}")
     u = activate(fx, f"{TAG}-driver-c@hermes.test")

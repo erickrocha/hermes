@@ -16,6 +16,8 @@ country US) and only those rows are deleted on exit. The SysAdmin row is never w
 """
 import argparse, base64, hashlib, hmac, json, os, re, shutil, socket, statistics, subprocess
 import sys, tempfile, time, traceback, urllib.error, urllib.parse, urllib.request, uuid
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -23,7 +25,7 @@ BACKEND = os.path.join(REPO, "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 API_LOG = os.environ.get("HERMES_API_LOG", "/tmp/claude-1000/hermes-api.log")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc_ia"
 SCRATCH_PORT = int(os.environ.get("HERMES_IA_SCRATCH_PORT", "8094"))
@@ -73,6 +75,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing
 def http(method, path, body=None, token=None, form=None, headers=None, base=None, timeout=20):
+    headers = profile_compat.enter(method, path, body, token, headers)
     url = (base or BASE) + path
     h = dict(headers or {})
     data = None
@@ -171,7 +174,7 @@ def pw_hash(email, db=DB_NAME):
 
 
 def user_row(uid):
-    r = sql(f"SELECT email, name, role, IFNULL(tenant_id,'NULL'), enabled, password FROM user WHERE id={uid}")
+    r = sql(f"SELECT email, name, (SELECT `key` FROM access_profile WHERE id=user.profile_id), IFNULL(tenant_id,'NULL'), enabled, password FROM user WHERE id={uid}")
     return r[0] if r else None
 
 
@@ -199,8 +202,16 @@ class Fx:
     pass
 
 
+_KNOWN = {"SysAdmin", "SystemAdministrator", "TenantOwner", "TenantUser", "Driver", "Mechanic"}
+
+
+def profile_for(role):
+    """The profile that replaced a role; a name that was never a role stays something that matches no profile."""
+    return system_profile(role) if role in _KNOWN else str(uuid.uuid4())
+
+
 def mk_user(fx, creator_token, name, role, tenant=None, enabled=True, extra=None):
-    body = {"email": em(name), "name": name, "role": role, "enabled": enabled}
+    body = {"email": em(name), "name": name, "profileUuid": profile_for(role), "enabled": enabled}
     if tenant is not None:
         body["tenantId"] = tenant
     body.update(extra or {})
@@ -218,7 +229,7 @@ def activate(fx, email, password=PW):
 
 
 def seed(fx):
-    fx.secret = dotenv()["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or dotenv()["ACCESS_TOKEN_SECRET"]
     a = token_for(ADMIN_EMAIL, ADMIN_PASSWORD)
     fx.admin = {"email": ADMIN_EMAIL, "token": a["accessToken"], "id": a["userId"], "uuid": a["uuid"]}
     fx.tenants = {}
@@ -255,6 +266,7 @@ def cleanup():
     sql(f"DELETE FROM city WHERE name LIKE '{TAG}-%'")
     sql(f"DELETE FROM province WHERE name LIKE '{TAG}-%'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
     sql(f"DELETE FROM business_plan WHERE name LIKE '{TAG}-%'")
 
@@ -292,49 +304,56 @@ def hierarchy(fx):
         bad[f"sysadmin:{r}"] = mk_user(fx, adm["token"], f"role-{r.lower()}-sa", r, fx.tA)[0]
     stored = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-role-%'")[0][0]
     ops = {r: mk_user(fx, A["token"], f"ops-{r.lower()}", r)[0] for r in ("Driver", "Mechanic")}
-    ops_rows = {r[0]: r[1] for r in sql(f"SELECT role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-ops-%'")}
+    ops_rows = {r[0]: r[1] for r in sql(f"SELECT (SELECT `key` FROM access_profile WHERE id=user.profile_id), IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-ops-%'")}
     ops_ok = all(c == 201 for c in ops.values()) and ops_rows == {"Driver": str(fx.tA), "Mechanic": str(fx.tA)}
-    roles = {r[0] for r in sql(f"SELECT DISTINCT role FROM user WHERE email LIKE '{TAG}-%'")}
-    check("IA-001", ok3 and ops_ok and all(c == 403 for c in bad.values()) and stored == "0"
-          and roles <= {"SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic"},
-          f"SysAdmin/TenantOwner/TenantUser each created (201); owner A creates Driver/Mechanic {ops} in tenant A; "
-          f"unknown roles and SysAdmin-created operational roles {bad} all 403, none stored; roles in DB {sorted(roles)}",
+    roles = {r[0] for r in sql(f"SELECT DISTINCT (SELECT `key` FROM access_profile WHERE id=user.profile_id) FROM user WHERE email LIKE '{TAG}-%'")}
+    # C-036: the vocabulary is the profiles. A name that matches no profile is a 404; the system administrator may hand out the
+    # operational profiles inside a tenant it names (the owner holds every grant, the administrator holds more).
+    unknown = {k: v for k, v in bad.items() if not k.startswith("sysadmin:")}
+    by_admin = {k: v for k, v in bad.items() if k.startswith("sysadmin:")}
+    check("IA-001", ok3 and ops_ok and all(c == 404 for c in unknown.values()) and all(c == 201 for c in by_admin.values()) and stored == "2"
+          and roles <= {"SystemAdministrator", "TenantOwner", "TenantUser", "Driver", "Mechanic"},
+          f"system administrator/owner/tenant user each created (201); owner A creates Driver/Mechanic {ops} in tenant A; "
+          f"a profile that does not exist {unknown} is 404, none stored; the system administrator creates Driver/Mechanic in a named tenant {by_admin}; profiles in DB {sorted(roles)}",
           f"3 roles created={ok3} (SysAdmin {s_sa}); owner ops roles {ops} rows {ops_rows}; refused {bad}; "
           f"stored={stored}; roles={sorted(roles)}")
 
     # IA-002 -- every non-administrator has a tenant
     s1, p1 = mk_user(fx, adm["token"], "owner-notenant", "TenantOwner")
     no_row = sql(f"SELECT COUNT(*) FROM user WHERE email='{em('owner-notenant')}'")[0][0]
-    rows = sql(f"SELECT email, role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-%' AND role<>'SysAdmin'")
+    rows = sql(f"SELECT email, (SELECT `key` FROM access_profile WHERE id=user.profile_id), IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-%' AND (SELECT `key` FROM access_profile WHERE id=user.profile_id)<>'SystemAdministrator'")
     unbound = [r[0] for r in rows if r[2] == "NULL"]
     # SysAdmin tries to strip an owner's tenant through an edit
     s2, _ = http("PUT", f"/user/uuid/{B['uuid']}", token=adm["token"],
-                 body={"email": B["email"], "name": "owner-b", "role": "TenantOwner", "enabled": True})
+                 body={"email": B["email"], "name": "owner-b", "profileUuid": system_profile("TenantOwner"), "enabled": True})
     tB_after = user_row(B["id"])[3]
-    check("IA-002", s1 == 400 and no_row == "0" and not unbound and tB_after == str(fx.tB),
-          f"TenantOwner without tenantId -> {s1}, not stored; all {len(rows)} qa-ia non-admin accounts bound to a tenant; "
-          f"SysAdmin PUT owner with no tenantId -> {s2}, tenant kept ({tB_after})",
+    root = sql("SELECT id FROM tenant WHERE parent_tenant_id IS NULL")[0][0]
+    stored_in = sql(f"SELECT IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('owner-notenant')}'")
+    check("IA-002", s1 == 201 and stored_in and stored_in[0][0] == str(root) and not unbound and s2 == 404 and tB_after == str(fx.tB),
+          f"TenantOwner without tenantId -> {s1}, placed in the administrator's own tenant (the root, {root}); all {len(rows)} qa-ia non-admin accounts bound to a tenant; "
+          f"SysAdmin PUT owner B without entering B -> {s2}, tenant kept ({tB_after})",
           f"no-tenant owner -> {s1} {p1} stored={no_row}; unbound={unbound}; owner B tenant after PUT={tB_after}")
 
     # IA-003 -- a platform administrator exists without a tenant
     admin_claim = jwt_payload(adm["token"]).get("tenant_id", "absent")
     admin_db = sql(f"SELECT IFNULL(tenant_id,'NULL') FROM user WHERE email='{ADMIN_EMAIL}'")[0][0]
     sa2 = sql(f"SELECT IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('sysadmin2')}'")
-    check("IA-003", admin_claim is None and admin_db == "NULL" and sa2 == [["NULL"]],
-          f"seeded SysAdmin: tenant claim null, DB tenant NULL; API-created SysAdmin stored with tenant NULL",
+    root = sql("SELECT id FROM tenant WHERE parent_tenant_id IS NULL")[0][0]
+    check("IA-003", admin_claim == int(root) and admin_db == root and sa2 == [[root]],
+          f"C-036: the seeded system administrator belongs to the root tenant ({root}): tenant claim and DB; the API-created one is stored in the root too",
           f"admin claim={admin_claim} db={admin_db}; created SysAdmin tenant={sa2}")
 
     # IA-004 -- one email, one account, platform-wide
     probes = {
         "same email, other tenant (owner B)": http("POST", "/user", token=B["token"], body={
-            "email": A1["email"], "name": "dup", "role": "TenantUser", "enabled": True})[0],
+            "email": A1["email"], "name": "dup", "profileUuid": system_profile("TenantUser"), "enabled": True})[0],
         "upper-case variant (SysAdmin)": http("POST", "/user", token=adm["token"], body={
-            "email": A["email"].upper(), "name": "dup", "role": "TenantOwner", "enabled": True, "tenantId": fx.tB})[0],
+            "email": A["email"].upper(), "name": "dup", "profileUuid": system_profile("TenantOwner"), "enabled": True, "tenantId": fx.tB})[0],
         "admin address (owner A)": http("POST", "/user", token=A["token"], body={
-            "email": ADMIN_EMAIL, "name": "dup", "role": "TenantUser", "enabled": True})[0],
+            "email": ADMIN_EMAIL, "name": "dup", "profileUuid": system_profile("TenantUser"), "enabled": True})[0],
     }
     s_put, _ = http("PUT", f"/user/uuid/{A2['uuid']}", token=A["token"], body={
-        "email": A1["email"], "name": "user-a2", "role": "TenantUser", "enabled": True})
+        "email": A1["email"], "name": "user-a2", "profileUuid": system_profile("TenantUser"), "enabled": True})
     probes["PUT email -> existing"] = s_put
     n = {e: sql(f"SELECT COUNT(*) FROM user WHERE email='{e}'")[0][0] for e in (A1["email"], A["email"], ADMIN_EMAIL)}
     a2_email = user_row(A2["id"])[0]
@@ -355,21 +374,21 @@ def hierarchy(fx):
     # IA-012 -- SysAdmin creates a TenantOwner bound to a named tenant
     s, u = fx.owner_create["a"]
     s_ghost, _ = mk_user(fx, adm["token"], "owner-ghost", "TenantOwner", 99999999)
-    ok = s == 201 and u.get("role") == "TenantOwner" and u.get("tenantId") == fx.tA
+    ok = s == 201 and u.get("profileKey") == "TenantOwner" and u.get("tenantId") == fx.tA
     claim = jwt_payload(A["token"])
-    check("IA-012", ok and claim.get("tenant_id") == fx.tA and claim.get("role") == "TenantOwner" and s_ghost == 400,
+    check("IA-012", ok and claim.get("tenant_id") == fx.tA and "role" not in claim and s_ghost == 400,
           f"POST /user TenantOwner tenantId={fx.tA} -> 201 bound to A; the owner signs in with tenant claim {fx.tA}; unknown tenant -> {s_ghost}",
           f"create -> {s} {u}; claim={claim}; unknown tenant -> {s_ghost}")
 
     # IA-013/014 -- a tenant owner staffs their tenant
     s, u = fx.user_create["user-a1"]
-    ok = s == 201 and u.get("role") == "TenantUser" and u.get("tenantId") == fx.tA
+    ok = s == 201 and u.get("profileKey") == "TenantUser" and u.get("tenantId") == fx.tA
     check("IA-013", ok, f"owner A POST /user TenantUser -> 201, role TenantUser, tenant A",
           f"owner A POST /user TenantUser -> {s} {u}")
     s_list, seen = users_seen(A["token"])
     c = jwt_payload(A1["token"]) if A1 else {}
     st = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=A1["token"])[0] if A1 else None
-    check("IA-014", A1 and {A1["email"], A2["email"]} <= seen and c.get("role") == "TenantUser"
+    check("IA-014", A1 and {A1["email"], A2["email"]} <= seen and "role" not in c
           and c.get("tenant_id") == fx.tA and st == 200,
           f"owner A's list shows the new users; the tenant user activated, signed in (role TenantUser, tenant {fx.tA}) and reads its tenant (200)",
           f"list {s_list} {sorted(seen)}; claims {c}; GET own tenant -> {st}")
@@ -410,12 +429,17 @@ def hierarchy(fx):
         "SysAdmin->TenantUser": mk_user(fx, adm["token"], "x-a-tu", "TenantUser", fx.tA)[0],
     }
     stored = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-x-%'")[0][0]
-    check("IA-016", all(v == 403 for v in combos.values()) and stored == "0",
-          f"all refused with 403, nothing stored: {combos}", f"statuses {combos}; stored={stored}")
+    # C-036 (D-36/D-37): nobody grants what they do not hold. The owner holds every grant of the owner profile, so they may hand it out in
+    # their own tenant; a tenant user holds none of the user-administration grants; the system administrator holds all.
+    expected = {"owner->SysAdmin": 403, "owner->TenantOwner": 201, "user->TenantUser": 403, "user->TenantOwner": 403,
+                "user->SysAdmin": 403, "SysAdmin->TenantUser": 201}
+    check("IA-016", combos == expected and stored == "2",
+          f"outside what the caller holds -> 403, nothing stored; what they hold -> 201 (the owner's owner profile, the administrator's tenant user): {combos}",
+          f"statuses {combos}; stored={stored}")
 
     # IA-017 -- the remaining malformed combinations at creation
     s_sa_t, u_sa_t = mk_user(fx, adm["token"], "sysadmin-bound", "SysAdmin", fx.tA)
-    stored_sa = sql(f"SELECT role, IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('sysadmin-bound')}'")
+    stored_sa = sql(f"SELECT (SELECT `key` FROM access_profile WHERE id=user.profile_id), IFNULL(tenant_id,'NULL') FROM user WHERE email='{em('sysadmin-bound')}'")
     ok = s1 == 400 and s_ghost == 400 and 400 <= s_sa_t < 500 and not stored_sa
     check("IA-017", ok,
           f"TenantOwner without tenant -> {s1}; TenantOwner for unknown tenant -> {s_ghost}; SysAdmin with tenantId -> {s_sa_t}; nothing stored",
@@ -427,12 +451,12 @@ def hierarchy(fx):
     g = http("GET", f"/user/uuid/{B1['uuid']}", token=A["token"])[0]
     before_b1 = user_row(B1["id"])
     p = http("PUT", f"/user/uuid/{B1['uuid']}", token=A["token"], body={
-        "email": B1["email"], "name": "pwned", "role": "TenantUser", "enabled": False})[0]
+        "email": B1["email"], "name": "pwned", "profileUuid": system_profile("TenantUser"), "enabled": False})[0]
     after_b1 = user_row(B1["id"])
     _, seen = users_seen(A["token"])
     own_get = http("GET", f"/user/uuid/{A1['uuid']}", token=A["token"])[0]
     s_mv, _ = http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body={
-        "email": A1["email"], "name": "user-a1", "role": "TenantOwner", "enabled": True, "tenantId": fx.tB})
+        "email": A1["email"], "name": "user-a1", "profileUuid": system_profile("TenantOwner"), "enabled": True, "tenantId": fx.tB})
     a1 = user_row(A1["id"])
     check("IA-018", g == 404 and p == 404 and before_b1 == after_b1 and B1["email"] not in seen
           and ADMIN_EMAIL not in seen and own_get == 200 and a1[2] == "TenantUser" and a1[3] == str(fx.tA),
@@ -446,12 +470,12 @@ def hierarchy(fx):
         "GET /user/uuid/{peer}": http("GET", f"/user/uuid/{A2['uuid']}", token=A1["token"])[0],
         "GET /user/uuid/{owner}": http("GET", f"/user/uuid/{A['uuid']}", token=A1["token"])[0],
         "PUT /user/uuid/{peer}": http("PUT", f"/user/uuid/{A2['uuid']}", token=A1["token"], body={
-            "email": A2["email"], "name": "pwned", "role": "TenantUser", "enabled": False})[0],
+            "email": A2["email"], "name": "pwned", "profileUuid": system_profile("TenantUser"), "enabled": False})[0],
     }
     s_l, p_l = http("GET", "/user?page=0&pageSize=200", token=A1["token"])
     listed = [u["email"] for u in p_l.get("items", [])] if s_l == 200 and isinstance(p_l, dict) else []
     a2 = user_row(A2["id"])
-    check("IA-020", probes["POST /user"] == 403 and all(probes[k] == 404 for k in list(probes)[1:])
+    check("IA-020", probes["POST /user"] == 403 and probes["PUT /user/uuid/{peer}"] == 403 and all(probes[k] == 404 for k in list(probes)[1:] if k != "PUT /user/uuid/{peer}")
           and (s_l == 403 or (s_l == 200 and not listed)) and a2[1] == "user-a2" and a2[4] == "1",
           f"TenantUser: {probes}; GET /user -> {s_l} with {len(listed)} users; peer untouched",
           f"TenantUser: {probes}; GET /user -> {s_l} listed {listed}; peer row {a2[:5]}")
@@ -459,7 +483,7 @@ def hierarchy(fx):
     # IA-021 -- not even their own record through the administration route
     h0 = pw_hash(A2["email"])
     s_self, p_self = http("PUT", f"/user/uuid/{A2['uuid']}", token=A2["token"], body={
-        "email": A2["email"], "name": f"{TAG}-renamed-by-self", "role": "TenantUser", "enabled": True,
+        "email": A2["email"], "name": f"{TAG}-renamed-by-self", "profileUuid": system_profile("TenantUser"), "enabled": True,
         "password": "QaSelfAdmin#2026"})
     a2 = user_row(A2["id"])
     changed_pw = pw_hash(A2["email"]) != h0
@@ -477,11 +501,11 @@ def hierarchy(fx):
     if fx.sysadmin2_created:
         sa2 = activate(fx, em("sysadmin2"))
         res["SysAdmin"] = http("PUT", f"/user/uuid/{sa2['uuid']}", token=sa2["token"], body={
-            "email": sa2["email"], "name": "sysadmin2", "role": "SysAdmin", "enabled": False})[0]
+            "email": sa2["email"], "name": "sysadmin2", "profileUuid": system_profile("SysAdmin"), "enabled": False})[0]
     res["TenantOwner"] = http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
-        "email": A["email"], "name": "owner-a", "role": "TenantOwner", "enabled": False, "tenantId": fx.tA})[0]
+        "email": A["email"], "name": "owner-a", "profileUuid": system_profile("TenantOwner"), "enabled": False, "tenantId": fx.tA})[0]
     res["TenantUser"] = http("PUT", f"/user/uuid/{A1['uuid']}", token=A1["token"], body={
-        "email": A1["email"], "name": "user-a1", "role": "TenantUser", "enabled": False})[0]
+        "email": A1["email"], "name": "user-a1", "profileUuid": system_profile("TenantUser"), "enabled": False})[0]
     en = {k: sql(f"SELECT enabled FROM user WHERE email='{e}'")[0][0]
           for k, e in (("SysAdmin", em("sysadmin2")), ("TenantOwner", A["email"]), ("TenantUser", A1["email"]))}
     logins = {k: login(e, p)[0] for k, e, p in (("SysAdmin", em("sysadmin2"), PW), ("TenantOwner", A["email"], A["pw"]))}
@@ -492,13 +516,13 @@ def hierarchy(fx):
 
     # IA-023/024 -- business-plan catalogue: unbound SysAdmin only
     s_bp, bp = http("POST", "/business-plan", token=adm["token"], body={
-        "name": f"{TAG}-plan", "priceInCents": 1000, "availableUsers": 5, "periodDays": 30, "paymentDate": "2026-10-01"})
+        "name": f"{TAG}-plan", "priceInCents": 1000, "pricePerExtraUserInCents": 0, "availableUsers": 5, "periodDays": 30})
     if s_bp != 201 and s_bp != 200:
         record("IA-023", "BLOCKED", f"could not create a fixture plan: {s_bp} {bp}")
         record("IA-024", "BLOCKED", f"could not create a fixture plan: {s_bp} {bp}")
     else:
         pid, puuid = bp["id"], bp["uuid"]
-        upd = {"name": f"{TAG}-plan-hacked", "priceInCents": 1, "availableUsers": 999, "periodDays": 30, "paymentDate": "2026-10-01"}
+        upd = {"name": f"{TAG}-plan-hacked", "priceInCents": 1, "pricePerExtraUserInCents": 0, "availableUsers": 999, "periodDays": 30}
         denied = {}
         for who, tok in (("owner", A["token"]), ("user", A1["token"])):
             for m, path, body in (("GET", "/business-plan", None), ("GET", f"/business-plan/uuid/{puuid}", None),
@@ -536,7 +560,8 @@ def hierarchy(fx):
     own = http("GET", f"/tenant/uuid/{tenant_uuid(fx.tA)}", token=A["token"])[0]
     stat = {w: {k: v[0] for k, v in d.items()} for w, d in out.items()}
     same = all(d["GET B"] == d["GET missing"] and d["GET B uuid"][0] == d["GET missing uuid"][0] for d in out.values())
-    ok = all(v == 404 for d in stat.values() for v in d.values()) and put_b[0] == 404 and b_name == f"{TAG}-tenant-B" \
+    # C-035: the permission is asked first, so a tenant user (no `tenant.plan`) reading a plan is 403 whatever tenant it names
+    ok = all(v == (403 if (who_ == "user" and k == "GET B plan") else 404) for who_, d in stat.items() for k, v in d.items()) and put_b[0] == 404 and b_name == f"{TAG}-tenant-B" \
         and ids == [fx.tA] and own == 200 and same
     check("IA-025", ok,
           f"foreign tenant answered exactly like a missing one (status+body): {stat}; PUT B -> {put_b[0]} (untouched); owner's list = [A]; own tenant 200",
@@ -585,15 +610,17 @@ def sessions(fx):
           f"own record with token -> {good}; empty password -> {missing}; JSON body -> {json_body}")
 
     # IA-032 -- identity, role and tenant in the claims
-    exp = {"admin": (adm["token"], ADMIN_EMAIL, "SysAdmin", None, adm["id"]),
-           "owner": (A["token"], A["email"], "TenantOwner", fx.tA, A["id"]),
-           "user": (A1["token"], A1["email"], "TenantUser", fx.tA, A1["id"])}
+    root = int(sql("SELECT id FROM tenant WHERE parent_tenant_id IS NULL")[0][0])
+    exp = {"admin": (adm["token"], ADMIN_EMAIL, root, adm["id"]),
+           "owner": (A["token"], A["email"], fx.tA, A["id"]),
+           "user": (A1["token"], A1["email"], fx.tA, A1["id"])}
     bad = {}
-    for k, (tok, e, role, tid, uid) in exp.items():
+    for k, (tok, e, tid, uid) in exp.items():
         c = jwt_payload(tok)
-        if not (c.get("sub") == e and c.get("role") == role and c.get("tenant_id") == tid and c.get("user_id") == uid):
+        # C-036: the claims carry identity and tenant; there is no role -- the profile is read with the account
+        if not (c.get("sub") == e and "role" not in c and c.get("tenant_id") == tid and c.get("user_id") == uid):
             bad[k] = c
-    check("IA-032", not bad, "sub=email, user_id, role and tenant_id present and correct for SysAdmin (tenant null), TenantOwner, TenantUser",
+    check("IA-032", not bad, "sub=email, user_id and tenant_id present and correct for the system administrator (the root tenant), TenantOwner, TenantUser; no role claim",
           f"claims wrong: {bad}")
 
     # IA-033/034/035 -- disabling ends every path, including the live session
@@ -602,7 +629,7 @@ def sessions(fx):
     pre = (http("GET", f"/user/uuid/{victim['uuid']}", token=t_live)[0],
            http("POST", "/refresh", body={"refreshToken": r_live})[0])
     s_dis, _ = http("PUT", f"/user/uuid/{victim['uuid']}", token=A["token"], body={
-        "email": victim["email"], "name": "user-a3", "role": "TenantUser", "enabled": False})
+        "email": victim["email"], "name": "user-a3", "profileUuid": system_profile("TenantUser"), "enabled": False})
     lg = login(victim["email"], PW)[0]
     acc = http("GET", f"/user/uuid/{victim['uuid']}", token=t_live)[0]
     acc2 = http("PUT", "/user/change-password", token=t_live, body={"currentPassword": PW, "newPassword": "Whatever#2026"})[0]
@@ -622,7 +649,7 @@ def sessions(fx):
     if s_c == 201:
         inv = mint_invite(em("invitee-disabled"), pw_hash(em("invitee-disabled")), fx.secret)  # as mailed at creation
         s_d, _ = http("PUT", f"/user/uuid/{u_c['uuid']}", token=A["token"], body={
-            "email": em("invitee-disabled"), "name": "invitee-disabled", "role": "TenantUser", "enabled": False})
+            "email": em("invitee-disabled"), "name": "invitee-disabled", "profileUuid": system_profile("TenantUser"), "enabled": False})
         s_acc, _ = http("POST", "/accept-invite", body={"token": inv, "newPassword": "QaReopened#2026"})
         en = sql(f"SELECT enabled FROM user WHERE id={u_c['id']}")[0][0]
         lg2 = login(em("invitee-disabled"), "QaReopened#2026")[0]
@@ -677,9 +704,14 @@ def sessions(fx):
     bodies = [login(A1["email"], A1["pw"])[1], http("GET", f"/user/uuid/{A1['uuid']}", token=A["token"])[1],
               http("GET", f"/user?page=0&pageSize=200&search={TAG}", token=adm["token"])[1],
               http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body={"email": A1["email"], "name": "user-a1",
-                   "role": "TenantUser", "enabled": True})[1],
+                   "profileUuid": system_profile("TenantUser"), "enabled": True})[1],
               mk_user(fx, A["token"], "user-a4", "TenantUser", extra={"password": "QaEcho#Plain2026"})[1]]
-    text = json.dumps(bodies)
+    # the responses name the holder's permissions, one of which is `user.change-own-password`: a code, not a secret
+    def without_grants(node):
+        if isinstance(node, dict):
+            return {k: without_grants(v) for k, v in node.items() if k not in ("permissions", "extraPermissions")}
+        return [without_grants(v) for v in node] if isinstance(node, list) else node
+    text = json.dumps(without_grants(bodies))
     leaked = [w for w in ("password", "$argon2", A1["pw"], "QaEcho#Plain2026") if w.lower() in text.lower()]
     check("IA-040", all_argon and not leaked,
           f"{len(hashes)} qa-ia accounts stored as $argon2id$; login/GET/list/PUT/POST responses carry no password field, hash or plaintext",
@@ -694,9 +726,9 @@ def sessions(fx):
     except Exception as e:  # noqa
         legacy = None
     if legacy and legacy.startswith("$2"):
-        sql(f"INSERT INTO user (uuid, name, email, password, enabled, tenant_id, role, created_at, updated_at) "
+        sql(f"INSERT INTO user (uuid, name, email, password, enabled, tenant_id, profile_id, extra_permissions, created_at, updated_at) "
             f"VALUES (UNHEX(REPLACE(UUID(),'-','')), 'legacy', '{em('legacy')}', '{legacy}', 1, {fx.tA}, "
-            f"'TenantUser', NOW(), NOW())")
+            f"(SELECT id FROM access_profile WHERE `key`='TenantUser'), '[]', NOW(), NOW())")
         s_l = login(em("legacy"), "QaLegacy#2026")[0]
         after = pw_hash(em("legacy"))
         s_l2 = login(em("legacy"), "QaLegacy#2026")[0]
@@ -709,7 +741,7 @@ def sessions(fx):
     # IA-041 -- an edit without a password leaves the password alone
     h0 = pw_hash(A1["email"])
     r = [http("PUT", f"/user/uuid/{A1['uuid']}", token=A["token"], body=dict(
-        {"email": A1["email"], "name": f"user-a1", "role": "TenantUser", "enabled": True}, **extra))[0]
+        {"email": A1["email"], "name": f"user-a1", "profileUuid": system_profile("TenantUser"), "enabled": True}, **extra))[0]
         for extra in ({}, {"password": ""}, {"password": None}, {"password": "   "})]
     check("IA-041", r == [200] * 4 and pw_hash(A1["email"]) == h0 and login(A1["email"], A1["pw"])[0] == 200,
           "owner edits the user with password omitted / \"\" / null / blanks -> 200 x4; hash unchanged; old password signs in",
@@ -742,7 +774,7 @@ def sessions(fx):
     short = "Ab#4567"   # 7 characters
     hash_before = pw_hash(em("user-a5"))
     put_status = http("PUT", f"/user/uuid/{u_n['uuid']}", token=A["token"], body={
-        "email": em("user-a5"), "name": "user-a5", "role": "TenantUser", "enabled": True, "password": short})[0]
+        "email": em("user-a5"), "name": "user-a5", "profileUuid": system_profile("TenantUser"), "enabled": True, "password": short})[0]
     put_ignored = pw_hash(em("user-a5")) == hash_before
     res = {
         "POST /accept-invite": http("POST", "/accept-invite", body={
@@ -780,7 +812,7 @@ def sessions(fx):
     # IA-051 -- no other door replaces your own password without the current one
     h_o = pw_hash(A["email"])
     s_o, _ = http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
-        "email": A["email"], "name": "owner-a", "role": "TenantOwner", "enabled": True, "tenantId": fx.tA,
+        "email": A["email"], "name": "owner-a", "profileUuid": system_profile("TenantOwner"), "enabled": True, "tenantId": fx.tA,
         "password": "QaNoCurrent#2026"})
     owner_changed = pw_hash(A["email"]) != h_o
     if owner_changed:
@@ -796,7 +828,7 @@ def sessions(fx):
     if s_u == 201:
         U = activate(fx, em("reuse-u"))
         s_mv = http("PUT", f"/user/uuid/{U['uuid']}", token=A["token"], body={
-            "email": em("reuse-u-renamed"), "name": "reuse-u", "role": "TenantUser", "enabled": False})[0]
+            "email": em("reuse-u-renamed"), "name": "reuse-u", "profileUuid": system_profile("TenantUser"), "enabled": False})[0]
         dead = (http("GET", f"/user/uuid/{U['uuid']}", token=U["token"])[0], http("POST", "/refresh", body={"refreshToken": U["refresh"]})[0])
         s_v = mk_user(fx, fx.ownerB["token"], "reuse-u", "TenantUser")[0]      # a new person, tenant B, same address
         V = activate(fx, em("reuse-u"), "QaNewcomer#2026") if s_v == 201 else None
@@ -892,7 +924,7 @@ def invitations(fx):
     outcome = {}
     for n in (50, 51, 70):
         addr = f"{TAG}-long{n}-".ljust(n - len("@hermes.test"), "x") + "@hermes.test"
-        s_c, _ = http("POST", "/user", token=A["token"], body={"email": addr, "name": "long", "role": "TenantUser", "enabled": True})
+        s_c, _ = http("POST", "/user", token=A["token"], body={"email": addr, "name": "long", "profileUuid": system_profile("TenantUser"), "enabled": True})
         s_a = http("POST", "/accept-invite", body={"token": mint_invite(addr, pw_hash(addr), fx.secret),
                                                    "newPassword": "QaLongMail#2026"})[0] if s_c == 201 else None
         outcome[len(addr)] = (s_c, s_a, login(addr, "QaLongMail#2026")[0])
@@ -956,7 +988,7 @@ def invitations(fx):
     check("IA-070", all(v == 404 for v in probes.values()), f"all 404: {len(probes)} probes", f"{probes}")
     s_doc, doc = http("GET", "/api-docs/openapi.json")
     public = sorted(f"{m.upper()} {p}" for p, ops in doc["paths"].items() for m, o in ops.items() if not o.get("security"))
-    check("IA-071", public == ["POST /accept-invite", "POST /login", "POST /refresh"],
+    check("IA-071", public == ["POST /accept-invite", "POST /garage-device/pair", "POST /login", "POST /refresh"],
           f"documented public operations = {public}", f"documented public operations = {public}")
 
 
@@ -983,19 +1015,19 @@ def operational_roles(fx):
     created = {r: mk_user(fx, A["token"], f"op-{r.lower()}-a", r) for r in ("Driver", "Mechanic")}
     created["Driver-B"] = mk_user(fx, B["token"], "op-driver-b", "Driver")
     rows = {r[0]: (r[1], r[2]) for r in sql(
-        f"SELECT email, role, IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-op-%'")}
+        f"SELECT email, (SELECT `key` FROM access_profile WHERE id=user.profile_id), IFNULL(tenant_id,'NULL') FROM user WHERE email LIKE '{TAG}-op-%'")}
     want = {em("op-driver-a"): ("Driver", str(fx.tA)), em("op-mechanic-a"): ("Mechanic", str(fx.tA)),
             em("op-driver-b"): ("Driver", str(fx.tB))}
-    body_ok = all(created[r][0] == 201 and created[r][1].get("role") == r and created[r][1].get("tenantId") == fx.tA
+    body_ok = all(created[r][0] == 201 and created[r][1].get("profileKey") == r and created[r][1].get("tenantId") == fx.tA
                   for r in ("Driver", "Mechanic"))
     s_doc, doc = http("GET", "/api-docs/openapi.json")
-    enum = doc.get("components", {}).get("schemas", {}).get("Role", {}).get("enum", []) if s_doc == 200 else []
-    check("IA-090", body_ok and rows == want
-          and set(enum) == {"SysAdmin", "TenantOwner", "TenantUser", "Driver", "Mechanic"},
-          f"owner A POST /user Driver/Mechanic -> 201/201, returned and stored with role as sent and tenant A; "
-          f"owner B's driver stored in B; OpenAPI Role enum {enum}",
-          f"create {({k: (v[0], v[1].get('role') if isinstance(v[1], dict) else v[1]) for k, v in created.items()})}; "
-          f"rows {rows}; OpenAPI Role enum {enum}")
+    schemas = doc.get("components", {}).get("schemas", {}) if s_doc == 200 else {}
+    # C-036: there is no Role enum in the contract; a user names a profile
+    check("IA-090", body_ok and rows == want and "Role" not in schemas and "profileUuid" in schemas.get("UserJson", {}).get("properties", {}),
+          f"owner A POST /user Driver/Mechanic profiles -> 201/201, returned and stored with the profile sent and tenant A; "
+          f"owner B's driver stored in B; the contract has no Role enum and UserJson carries profileUuid",
+          f"create {({k: (v[0], v[1].get('profileKey') if isinstance(v[1], dict) else v[1]) for k, v in created.items()})}; "
+          f"rows {rows}; Role schema present {'Role' in schemas}")
 
     D = activate(fx, em("op-driver-a")) if created["Driver"][0] == 201 else None
     M = activate(fx, em("op-mechanic-a")) if created["Mechanic"][0] == 201 else None
@@ -1016,37 +1048,32 @@ def operational_roles(fx):
         "Mechanic->TenantOwner": mk_user(fx, M["token"], "op-x-m-to", "TenantOwner", fx.tA)[0],
     }
     stray = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-op-x%'")[0][0]
-    claims = {k: (jwt_payload(u["token"]).get("role"), jwt_payload(u["token"]).get("tenant_id")) for k, u in
-              (("driver", D), ("mechanic", M))}
+    claims = {k: (http("GET", "/access-profile/mine", token=u["token"])[1].get("profileKey"), jwt_payload(u["token"]).get("tenant_id"))
+              for k, u in (("driver", D), ("mechanic", M))}
     check("IA-093", s_x == 400 and all(v == 403 for k, v in refused.items() if k != "owner A Driver tenantId=B")
           and stray == "0" and claims == {"driver": ("Driver", fx.tA), "mechanic": ("Mechanic", fx.tA)},
-          f"accounts activated through /accept-invite sign in with claims {claims}; "
+          f"accounts activated through /accept-invite sign in with profile and tenant {claims}; "
           f"outside the hierarchy refused {refused}, nothing stored",
           f"refused {refused}; stored {stray}; claims {claims}")
 
-    # IA-094 -- the SysAdmin does not create them (403) and no edit reassigns onto (or off) them
+    # IA-094 (C-036) -- the system administrator hands out the operational profiles inside a tenant it names (and names none: 400);
+    # an edit that changes a profile is a real change (200), never a change of tenant
     sa = {r: mk_user(fx, adm["token"], f"op-sa-{r.lower()}", r, fx.tA)[0] for r in ("Driver", "Mechanic")}
     sa_none = {f"{r} no tenant": mk_user(fx, adm["token"], f"op-sa-{r.lower()}-nt", r)[0] for r in ("Driver", "Mechanic")}
     sa_stored = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-op-sa-%'")[0][0]
+    tenants_before = {k: user_row(u["id"])[3] for k, u in (("user-a2", A2), ("driver", D), ("mechanic", M))}
     edits = {}
-    for who, tok, extra in (("SysAdmin", adm["token"], {"tenantId": fx.tA}), ("owner A", A["token"], {})):
-        # (a SysAdmin promoting anyone to TenantOwner is the existing PD-019 hierarchy, not asked here)
-        targets = [(A2, "Driver"), (A2, "Mechanic"), (D, "TenantUser"), (D, "Mechanic"), (M, "Driver")]
-        if who == "owner A":
-            targets.append((M, "TenantOwner"))
-        for target, new_role in targets:
+    for who, tok, extra in (("system administrator", adm["token"], {"tenantId": fx.tA}), ("owner A", A["token"], {})):
+        for target, new_role in [(A2, "Driver"), (A2, "TenantUser"), (D, "Driver"), (M, "Mechanic")]:
             name = user_row(target["id"])[1]
-            body = dict({"email": target["email"], "name": name, "role": new_role, "enabled": True}, **extra)
-            s = http("PUT", f"/user/uuid/{target['uuid']}", token=tok, body=body)[0]
-            edits[f"{who}: {target['email'].split('@')[0][len(TAG) + 1:]}->{new_role}"] = s
-    after = {k: user_row(u["id"])[2:4] for k, u in (("user-a2", A2), ("driver", D), ("mechanic", M))}
-    expect_after = {"user-a2": ["TenantUser", str(fx.tA)], "driver": ["Driver", str(fx.tA)], "mechanic": ["Mechanic", str(fx.tA)]}
-    check("IA-094", all(v == 403 for v in sa.values()) and all(400 <= v < 500 for v in sa_none.values())
-          and sa_stored == "0" and after == expect_after,
-          f"SysAdmin POST /user Driver/Mechanic in tenant A -> {sa}, without tenant -> {sa_none}, nothing stored; "
-          f"{len(edits)} edits requesting a role change onto/off the operational roles answered {sorted(set(edits.values()))} "
-          f"and every role and tenant is unchanged {after}",
-          f"SysAdmin create {sa} / {sa_none}, stored {sa_stored}; edits {edits}; roles after {after} (expected {expect_after})")
+            body = dict({"email": target["email"], "name": name, "profileUuid": profile_for(new_role), "enabled": True}, **extra)
+            edits[f"{who}: {target['email'].split('@')[0][len(TAG) + 1:]}->{new_role}"] = http("PUT", f"/user/uuid/{target['uuid']}", token=tok, body=body)[0]
+    tenants_after = {k: user_row(u["id"])[3] for k, u in (("user-a2", A2), ("driver", D), ("mechanic", M))}
+    check("IA-094", all(v == 201 for v in sa.values()) and all(400 <= v < 500 for v in sa_none.values())
+          and sa_stored == "2" and all(v == 200 for v in edits.values()) and tenants_after == tenants_before,
+          f"system administrator POST /user Driver/Mechanic in tenant A -> {sa}, without tenant -> {sa_none}, 2 stored; "
+          f"{len(edits)} profile edits answered {sorted(set(edits.values()))} and no tenant changed",
+          f"create {sa} / {sa_none}, stored {sa_stored}; edits {edits}; tenants before {tenants_before} after {tenants_after}")
 
     # Fixtures for the capability matrix: a vehicle in each tenant, and a plan to aim at
     vA = _vehicle(A["token"], "QAIA9A01")
@@ -1057,7 +1084,7 @@ def operational_roles(fx):
         if s_asg != 201:
             raise RuntimeError(f"assigning {drv.get('email')} to {veh['plate']} -> {s_asg} {p_asg}")
     s_bp, bp = http("POST", "/business-plan", token=adm["token"], body={
-        "name": f"{TAG}-plan-op", "priceInCents": 1000, "availableUsers": 5, "periodDays": 30, "paymentDate": "2026-10-01"})
+        "name": f"{TAG}-plan-op", "priceInCents": 1000, "pricePerExtraUserInCents": 0, "availableUsers": 5, "periodDays": 30})
     plan_id = bp.get("id") if isinstance(bp, dict) else 0
     plan_uuid = bp.get("uuid") if isinstance(bp, dict) else str(uuid.uuid4())
     province_id = (sql("SELECT id FROM province ORDER BY id LIMIT 1") or [["1"]])[0][0]
@@ -1089,7 +1116,7 @@ def operational_roles(fx):
             "GET /user/uuid/{peer}": (http("GET", f"/user/uuid/{A2['uuid']}", token=t)[0], None),
             "GET /user/uuid/{owner}": (http("GET", f"/user/uuid/{A['uuid']}", token=t)[0], None),
             "PUT /user/uuid/{peer}": (http("PUT", f"/user/uuid/{A2['uuid']}", token=t, body={
-                "email": A2["email"], "name": "user-a2", "role": "TenantUser", "enabled": False})[0], None),
+                "email": A2["email"], "name": "user-a2", "profileUuid": system_profile("TenantUser"), "enabled": False})[0], None),
             "POST /user/uuid/{peer}/invite": (http("POST", f"/user/uuid/{A2['uuid']}/invite", token=t)[0], None),
             "GET /tenant": lst("/tenant?page=0&pageSize=200"),
             "POST /tenant": (http("POST", "/tenant", token=t, body={
@@ -1100,10 +1127,10 @@ def operational_roles(fx):
             "GET /business-plan": lst("/business-plan"),
             "GET /business-plan/uuid/{p}": (http("GET", f"/business-plan/uuid/{plan_uuid}", token=t)[0], None),
             "POST /business-plan": (http("POST", "/business-plan", token=t, body={
-                "name": f"{TAG}-plan-x-{tag}", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
+                "name": f"{TAG}-plan-x-{tag}", "priceInCents": 1, "pricePerExtraUserInCents": 0, "availableUsers": 1, "periodDays": 30,
                 "paymentDate": "2026-10-01"})[0], None),
             "PUT /business-plan/uuid/{p}": (http("PUT", f"/business-plan/uuid/{plan_uuid}", token=t, body={
-                "name": f"{TAG}-plan-op", "priceInCents": 1, "availableUsers": 1, "periodDays": 30,
+                "name": f"{TAG}-plan-op", "priceInCents": 1, "pricePerExtraUserInCents": 0, "availableUsers": 1, "periodDays": 30,
                 "paymentDate": "2026-10-01"})[0], None),
             "DELETE /business-plan/uuid/{p}": (http("DELETE", f"/business-plan/uuid/{plan_uuid}", token=t)[0], None),
             "POST /province": (http("POST", "/province", token=t, body={
@@ -1183,14 +1210,14 @@ def operational_roles(fx):
     lists = {k: sorted(v["id"] for v in (http("GET", "/tenant?page=0&pageSize=200", token=u["token"])[1] or {}).get("items", []))
              if http("GET", "/tenant?page=0&pageSize=200", token=u["token"])[0] == 200 else "refused"
              for k, u in (("driver A", D), ("mechanic A", M), ("driver B", DB_))}
-    no_tenant = sql(f"SELECT COUNT(*) FROM user WHERE role IN ('Driver','Mechanic') AND tenant_id IS NULL")[0][0]
+    no_tenant = sql(f"SELECT COUNT(*) FROM user WHERE tenant_id IS NULL")[0][0]
     cb = jwt_payload(DB_["token"])
     vlist_B = (http("GET", "/vehicle?page=0&pageSize=200", token=DB_["token"])[1] or {}).get("items", [])
     check("IA-096", no_tenant == "0" and cb.get("tenant_id") == fx.tB
           and [v["uuid"] for v in vlist_B] == [vB["uuid"]]
           and all(v in ("refused",) or set(v) <= {fx.tA} for k, v in lists.items() if "A" in k)
           and (lists["driver B"] == "refused" or set(lists["driver B"]) <= {fx.tB}),
-          f"no Driver/Mechanic in the database without a tenant; driver B's token carries tenant {fx.tB} and B's "
+          f"no user in the database without a tenant (C-036); driver B's token carries tenant {fx.tB} and B's "
           f"vehicle list is exactly B's vehicle; tenant lists {lists}",
           f"tenant-less operational accounts {no_tenant}; driver B claims {cb}; B vehicles {[v.get('plate') for v in vlist_B]}; "
           f"tenant lists {lists}")
@@ -1215,10 +1242,10 @@ def operational_roles(fx):
     put_b = http("PUT", f"/vehicle/uuid/{vB['uuid']}", token=D["token"], body={
         "plate": vB["plate"], "model": f"{TAG}-pwned", "status": "Inactive"})[0]
     b_row = sql(f"SELECT model, status FROM vehicle WHERE uuid=UNHEX(REPLACE('{vB['uuid']}','-',''))")
-    check("IA-097", same and all(v == 404 for d in st.values() for v in d.values()) and put_b == 404
+    check("IA-097", same and all(v == 404 for d in st.values() for v in d.values()) and put_b == 403
           and b_row == [[f"{TAG}-truck", "Active"]],
           f"tenant B's vehicle, its assignment, tenant B and B's driver answered 404, byte-identical to an unknown "
-          f"uuid, for driver A and mechanic A; PUT B's vehicle -> 404, row unchanged",
+          f"uuid, for driver A and mechanic A; PUT B's vehicle -> 403 (the permission comes first), row unchanged",
           f"statuses {st}; identical-to-missing={same}; PUT B vehicle {put_b}; row {b_row}")
 
     # IA-098 -- the names in every language the console speaks, and in the contract
@@ -1226,12 +1253,14 @@ def operational_roles(fx):
     labels = {}
     for f in ("en.json", "pt.json", "es.json"):
         d = json.load(open(os.path.join(loc_dir, f)))
-        labels[f[:2]] = (d.get("roleDriver"), d.get("roleMechanic"))
+        labels[f[:2]] = (d.get("profileDriver"), d.get("profileMechanic"))
     translated = all(all(labels[l]) for l in labels) and labels["pt"] != labels["en"] and labels["es"] != labels["en"]
-    check("IA-098", translated and set(enum) >= {"Driver", "Mechanic"},
-          f"console labels {labels}; OpenAPI Role enum carries Driver and Mechanic (vitest ManagementPages.test.tsx "
-          f"covers the role picker and the hidden Tenants/Users menu; recorded in the log)",
-          f"labels {labels}; enum {enum}")
+    s_pf, pf = http("GET", "/access-profile", token=adm["token"])
+    keys = {p.get("key") for p in (pf or {}).get("items", [])} if s_pf == 200 else set()
+    check("IA-098", translated and keys >= {"Driver", "Mechanic"},
+          f"console labels of the Driver and Mechanic profiles {labels}; the system profiles the API lists include them (vitest "
+          f"ProfilePages.test.tsx covers the profile picker; recorded in the log)",
+          f"labels {labels}; system profile keys {sorted(k for k in keys if k)}")
 
     # IA-095 -- EPIC-IA-09-S04: every operation states who may reach it (HRMS-132). Checks the marker is
     # present; whether the named roles are right is what the matrix above (IA-091/092/096/097) probes.
@@ -1312,7 +1341,7 @@ def scratch(fx):
         tok = p_l["accessToken"]
         s, t = http("POST", "/tenant", token=tok, base=B, body={"businessName": f"{TAG}-s", "taxId": "QAIA0000000009", "countryCode": "US"})
         own = f"{TAG}-s-owner@hermes.test"
-        http("POST", "/user", token=tok, base=B, body={"email": own, "role": "TenantOwner", "enabled": True,
+        http("POST", "/user", token=tok, base=B, body={"email": own, "profileUuid": system_profile("TenantOwner"), "enabled": True,
                                                          "tenantId": t.get("id") if isinstance(t, dict) else None,
                                                          "password": "QaPlainLeak#0"})
         h = pw_hash(own, SCRATCH_DB)
@@ -1324,7 +1353,7 @@ def scratch(fx):
             steps.append(http("PUT", "/user/change-password", base=B, token=p_o["accessToken"],
                               body={"currentPassword": "QaPlainLeak#1", "newPassword": "QaPlainLeak#2"})[0])
             steps.append(http("PUT", f"/user/uuid/{p_o['uuid']}", base=B, token=tok, body={
-                "email": own, "role": "TenantOwner", "enabled": True, "tenantId": t["id"], "password": "QaPlainLeak#3"})[0])
+                "email": own, "profileUuid": system_profile("TenantOwner"), "enabled": True, "tenantId": t["id"], "password": "QaPlainLeak#3"})[0])
         time.sleep(1)
         logf.flush()
         text = open(logf.name, errors="replace").read()
@@ -1404,7 +1433,7 @@ def main():
     stories = {}
     for story, sids in STORIES.items():
         st = [RESULTS.get(s, ("NOT RUN", ""))[0] for s in sids]
-        if story in SUPERSEDED:
+        if story in SUPERSEDED or (st and all(x == "SUPERSEDED" for x in st)):
             res = "SUPERSEDED"
         elif story in NOT_BUILT:
             res = "NOT BUILT"

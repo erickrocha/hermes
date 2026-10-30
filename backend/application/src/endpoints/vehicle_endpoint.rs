@@ -92,8 +92,8 @@ pub async fn add(
     // HRMS-921: for a tenant-bound caller the owning tenant is the caller's
     // own, never the payload's. `enforce_tenant` (D-06) would overwrite it
     // anyway; setting it here keeps the response honest about what was stored.
-    if current_user.bound_tenant().is_some() {
-        domain.tenant_id = current_user.bound_tenant();
+    if current_user.tenant_id.is_some() {
+        domain.tenant_id = current_user.tenant_id;
     }
 
     match use_case(&state).create(domain).await {

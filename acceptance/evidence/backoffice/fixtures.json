@@ -1,25 +1,25 @@
 {
-  "console": "http://localhost:5173",
+  "console": "http://localhost:5180",
   "password": "QaBackoffice#2026",
-  "admin": "admin@hermes.dev",
-  "adminPassword": "9e374511",
+  "admin": "admin@hermes.test",
+  "adminPassword": "Local-test-only-Hermes-123!",
   "plan": {
-    "id": 30,
-    "uuid": "5791e355-ace1-4663-8b11-e9ee86b461a1",
+    "id": 22,
+    "uuid": "ff8a1b15-161d-45fd-8916-4da06c58fe48",
     "name": "qa-bo-flat",
     "priceInCents": 1234567,
+    "pricePerExtraUserInCents": 0,
     "availableUsers": 10,
     "periodDays": 30,
-    "paymentDate": "2026-10-10",
-    "createdAt": "2026-10-10T15:51:25",
-    "createdBy": "admin@hermes.dev",
-    "updatedAt": "2026-10-10T15:51:25",
-    "updatedBy": "admin@hermes.dev"
+    "createdAt": "2026-10-29T19:50:30",
+    "createdBy": "admin@hermes.test",
+    "updatedAt": "2026-10-29T19:50:30",
+    "updatedBy": "admin@hermes.test"
   },
   "tenants": {
     "tm": {
-      "id": 173,
-      "uuid": "afb7f2eb-6dbf-4841-a2cd-e46569984cdd",
+      "id": 84,
+      "uuid": "ced84f3c-368e-428e-9689-58d57314e850",
       "businessName": "qa-bo-Transmega",
       "companyName": "qa-bo-Transmega Ltda",
       "taxId": "QABO0000000001",
@@ -35,14 +35,15 @@
       "province": "TX",
       "city": "Austin",
       "zipcode": null,
-      "createdAt": "2026-10-10T15:51:25",
-      "createdBy": "admin@hermes.dev",
-      "updatedAt": "2026-10-10T15:51:25",
-      "updatedBy": "admin@hermes.dev"
+      "parentTenantId": 1,
+      "createdAt": "2026-10-29T19:50:31",
+      "createdBy": "admin@hermes.test",
+      "updatedAt": "2026-10-29T19:50:31",
+      "updatedBy": "admin@hermes.test"
     },
     "acme": {
-      "id": 174,
-      "uuid": "b96ee515-d473-4a6f-a96d-6063ccb48e9a",
+      "id": 85,
+      "uuid": "dd63d279-4cf8-41da-95df-e0f019d0b430",
       "businessName": "qa-bo-acme",
       "companyName": "qa-bo-acme Ltda",
       "taxId": "QABO0000000002",
@@ -58,10 +59,11 @@
       "province": "TX",
       "city": "Austin",
       "zipcode": null,
-      "createdAt": "2026-10-10T15:51:25",
-      "createdBy": "admin@hermes.dev",
-      "updatedAt": "2026-10-10T15:51:25",
-      "updatedBy": "admin@hermes.dev"
+      "parentTenantId": 1,
+      "createdAt": "2026-10-29T19:50:31",
+      "createdBy": "admin@hermes.test",
+      "updatedAt": "2026-10-29T19:50:31",
+      "updatedBy": "admin@hermes.test"
     }
   },
   "ownerTm": "qa-bo-owner-tm@hermes.test",
@@ -71,6 +73,6 @@
   "userTm": "qa-bo-user-tm@hermes.test",
   "invite": {
     "email": "qa-bo-pg-00@hermes.test",
-    "token": "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJIUzUxMiJ9.eyJzdWIiOiAicWEtYm8tcGctMDBAaGVybWVzLnRlc3QiLCAiZXhwIjogMTc5MTY0ODA5OSwgInR5cCI6ICJpbnZpdGUifQ.ek6Y8PNIfwxVHbSrceeOxlVjS2qZMx74XwP028Tt-EUH4HVi6GKh0o-VUnXM0Nmaio4JUBb8q2dhtW7SUvuILQ"
+    "token": "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJIUzUxMiJ9.eyJzdWIiOiAicWEtYm8tcGctMDBAaGVybWVzLnRlc3QiLCAiZXhwIjogMTc5MzMwNDAzNCwgInR5cCI6ICJpbnZpdGUifQ.lREahDhaSWY5daq86-UhNU8TJZVJNWo2gGtIdaigM5nJq16zC_-jO3t_y5bBAAL9mG8NJ9GMgKOnYLMN8vby_g"
   }
 }

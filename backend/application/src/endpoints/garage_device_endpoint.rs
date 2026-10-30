@@ -41,7 +41,7 @@ fn use_case(state: &AppState) -> GarageDeviceUseCase<GarageDeviceGateway> {
     tag = "GarageDevice",
     path = "/garage-device",
     responses(
-        (status = 200, description = "The caller tenant's wall display devices. **Roles:** TenantOwner only.", body = [GarageDeviceJson]),
+        (status = 200, description = "The caller tenant's wall display devices. **Roles:** `garage.device.manage` -- the TenantOwner by default; the system administrator holds every permission.", body = [GarageDeviceJson]),
         (status = 403, description = "Only a tenant owner may manage devices", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson)
     ),
     security(("bearer_auth" = []))
@@ -64,7 +64,7 @@ pub async fn list(
     path = "/garage-device/pairing-code",
     request_body = IssueGarageDeviceJson,
     responses(
-        (status = 201, description = "A short-lived, one-time code to pair a wall display. **Roles:** TenantOwner only.", body = GarageDevicePairingCodeJson),
+        (status = 201, description = "A short-lived, one-time code to pair a wall display. **Roles:** `garage.device.manage` -- the TenantOwner by default; the system administrator holds every permission.", body = GarageDevicePairingCodeJson),
         (status = 400, description = "Invalid device name", body = crate::endpoints::json::error_response_json::BadRequestErrorJson),
         (status = 403, description = "Only a tenant owner may manage devices", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson)
     ),
@@ -89,7 +89,7 @@ pub async fn issue_pairing_code(
     path = "/garage-device/uuid/{uuid}/pairing-code",
     params(("uuid" = String, Path, description = "Public device uuid")),
     responses(
-        (status = 201, description = "A replacement one-time pairing code. Previous credentials are invalidated. **Roles:** TenantOwner only.", body = GarageDevicePairingCodeJson),
+        (status = 201, description = "A replacement one-time pairing code. Previous credentials are invalidated. **Roles:** `garage.device.manage` -- the TenantOwner by default; the system administrator holds every permission.", body = GarageDevicePairingCodeJson),
         (status = 404, description = "Device not found", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
         (status = 403, description = "Only a tenant owner may manage devices", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson)
     ),
@@ -136,7 +136,7 @@ pub async fn pair(
     path = "/garage-device/uuid/{uuid}",
     params(("uuid" = String, Path, description = "Public device uuid")),
     responses(
-        (status = 204, description = "Device credential revoked. **Roles:** TenantOwner only."),
+        (status = 204, description = "Device credential revoked. **Roles:** `garage.device.manage` -- the TenantOwner by default; the system administrator holds every permission."),
         (status = 404, description = "Device not found", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
         (status = 403, description = "Only a tenant owner may manage devices", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson)
     ),

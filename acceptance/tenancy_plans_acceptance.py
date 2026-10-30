@@ -12,12 +12,14 @@ slices' suites: it never deletes rows it did not create and never resets counter
 """
 import argparse, base64, hashlib, hmac, json, os, random, re, subprocess, sys, time, traceback
 import urllib.error, urllib.parse, urllib.request
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 ADMIN_PASSWORD = os.environ.get("HERMES_ADMIN_PASSWORD", "LocalDevOnly123!")
 TAG = "qa-tp"
@@ -62,6 +64,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from foundation_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, raw_body=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -227,7 +230,7 @@ def activate(fx, email):
 
 
 def seed(fx):
-    fx.secret = dotenv()["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or dotenv()["ACCESS_TOKEN_SECRET"]
     fx.adm = token_for(ADMIN_EMAIL, ADMIN_PASSWORD)
     s, a = create_tenant(fx.adm, {"businessName": f"{TAG}-tenant-A", "taxId": "QATP0000000001", "countryCode": "US"})
     s2, b = create_tenant(fx.adm, {"businessName": f"{TAG}-tenant-B", "companyName": f"{TAG} B Inc",
@@ -237,7 +240,7 @@ def seed(fx):
     fx.A, fx.B = a, b
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -262,6 +265,13 @@ def seed(fx):
 def cleanup():
     ids = ",".join(map(str, CREATED_TENANTS)) or "0"
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    # what a tenant's billing (C-015) and the audit trail between tenants (C-036) hold refers to the tenant
+    mine = f"(SELECT id FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QATP%')"
+    for table, column in (("billing_charge", "tenant_id"), ("tenant_billing", "tenant_id"),
+                          ("cross_tenant_action", "actor_tenant_id"), ("cross_tenant_action", "affected_tenant_id")):
+        sql(f"DELETE FROM {table} WHERE {column} IN {mine}")
+    sql(f"UPDATE tenant SET parent_tenant_id = NULL WHERE id IN {mine}")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QATP%'")
     pids = ",".join(map(str, CREATED_PLANS)) or "0"
     sql(f"DELETE FROM business_plan WHERE id IN ({pids}) OR name LIKE '{TAG}-%'")

@@ -786,7 +786,6 @@ async fn a_sysadmin_token_carries_no_tenant() {
         .await
         .unwrap();
     assert_eq!((caller.access.scope, caller.tenant_id), (ProfileScope::Platform, None));
-    assert!(caller.is_platform());
     assert_eq!(caller.access.profile_key.as_deref(), Some(SYS_ADMIN));
 }
 

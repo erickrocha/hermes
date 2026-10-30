@@ -12,6 +12,7 @@ use business::domain::authorization::can_publish_presence;
 use business::domain::enums::{PresenceEventKind, PresenceSource};
 use business::domain::user::User;
 use business::gateway::vehicle_gateway::VehicleGateway;
+use business::use_cases::vehicle_use_case::VehicleUseCase;
 use business::gateway::vehicle_presence_event_gateway::VehiclePresenceEventGateway;
 use business::use_cases::vehicle_presence_use_case::{
     ESTIMATE_CANNOT_STAMP, IN_THE_FUTURE, OUT_OF_ORDER, PresenceSnapshot, VehiclePresenceUseCase,
@@ -64,15 +65,27 @@ pub async fn record(
         Some(s) => PresenceSource::from_str(s)
             .map_err(|_| ExceptionResponse::BadRequest(locale.clone(), ErrorKey::InvalidParameterValue))?,
     };
-    let vehicle = find_visible(&state, &locale, &current_user, payload.vehicle_uuid).await?;
+    // The stamp is the platform integration's, for any tenant's vehicle: `vehicle-presence.publish` is the authority,
+    // not a reach into the tenant (`C-036`). The vehicle is found platform-wide and the stamp written as its tenant.
+    let vehicle = entity::audit::run_as_platform(VehicleUseCase::new(VehicleGateway::new(state.conn.as_ref().clone())).find_by_uuid(payload.vehicle_uuid))
+        .await
+        .map_err(|_| ExceptionResponse::NotFound(locale.clone(), ErrorKey::VehicleNotFound))?;
+    let Some(tenant_id) = vehicle.tenant_id else {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::VehicleNotFound));
+    };
     let at = payload.occurred_at.unwrap_or_else(|| chrono::Utc::now().naive_utc());
-    match use_case(&state).record(vehicle.tenant_id, vehicle.id.unwrap_or_default(), kind, at, source).await {
-        Ok((recorded, snapshot)) => {
-            if recorded && kind == PresenceEventKind::Arrival {
-                open_triage_on_arrival(&state, vehicle.tenant_id, vehicle.id.unwrap_or_default(), &snapshot, at).await;
-            }
-            Ok(Json(body(recorded, snapshot)))
+    let recorded = entity::audit::run_for_tenant(tenant_id, "vehicle-presence", async {
+        let result = use_case(&state).record(vehicle.tenant_id, vehicle.id.unwrap_or_default(), kind, at, source).await;
+        if let Ok((true, snapshot)) = &result
+            && kind == PresenceEventKind::Arrival
+        {
+            open_triage_on_arrival(&state, vehicle.tenant_id, vehicle.id.unwrap_or_default(), snapshot, at).await;
         }
+        result
+    })
+    .await;
+    match recorded {
+        Ok((recorded, snapshot)) => Ok(Json(body(recorded, snapshot))),
         Err(e) if e.message == OUT_OF_ORDER => Err(ExceptionResponse::Conflict(locale, ErrorKey::PresenceOutOfOrder)),
         Err(e) if e.message == ESTIMATE_CANNOT_STAMP || e.message == IN_THE_FUTURE => {
             Err(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))

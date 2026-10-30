@@ -15,13 +15,15 @@ See README.md for usage.
 """
 import argparse, base64, hashlib, hmac, json, os, re, shutil, socket, subprocess
 import sys, tempfile, time, traceback, urllib.error, urllib.parse, urllib.request, uuid
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 BACKEND = os.path.join(REPO, "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 DB_ROOT_PASS = os.environ.get("HERMES_DB_ROOT_PASSWORD", "brutal")
 SCRATCH_DB = "hermes_acc"
 SCRATCH_PORT = int(os.environ.get("HERMES_SCRATCH_PORT", "8091"))
@@ -71,6 +73,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing
 def http(method, path, body=None, token=None, form=None, headers=None, base=None, timeout=15):
+    headers = profile_compat.enter(method, path, body, token, headers)
     url = (base or BASE) + path
     h = dict(headers or {})
     data = None
@@ -180,28 +183,26 @@ def seed_fixtures():
     fails on the migrated schema (see DEF in the execution log); users are
     activated through the real invite-acceptance endpoint."""
     fx = Fx()
-    fx.secret = dotenv()["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or dotenv()["ACCESS_TOKEN_SECRET"]
     fx.api_tenant_create = http("POST", "/tenant", token=token_for(ADMIN_EMAIL, ADMIN_PASSWORD),
                                 body={"businessName": f"{TAG}-api", "taxId": "11222333000181",
                                       "countryCode": "BR"})
     ids = {}
     for key, tax in (("A", "QAACC000000001"), ("B", "QAACC000000002")):
-        sql(f"INSERT INTO tenant (uuid, business_name, tax_id, country_code, created_at, updated_at) "
-            f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{TAG}-tenant-{key}', '{tax}', 'US', NOW(), NOW())")
+        sql(f"INSERT INTO tenant (uuid, business_name, tax_id, country_code, parent_tenant_id, created_at, updated_at) "
+            f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{TAG}-tenant-{key}', '{tax}', 'US', (SELECT id FROM (SELECT id FROM tenant WHERE parent_tenant_id IS NULL LIMIT 1) r), NOW(), NOW())")
         ids[key] = int(sql(f"SELECT id FROM tenant WHERE business_name='{TAG}-tenant-{key}'")[0][0])
     fx.tA, fx.tB = ids["A"], ids["B"]
 
-    def add_user(name, role, tenant):
+    def add_user(name, profile_key, tenant):
         email = f"{TAG}-{name}@hermes.test"
-        t = "NULL" if tenant is None else tenant
-        sql(f"INSERT INTO user (uuid, name, email, password, enabled, tenant_id, role, created_at, updated_at) "
-            f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{name}', '{email}', 'qa-fixture-placeholder', 1, {t}, "
-            f"'{role}', NOW(), NOW())")
+        sql(f"INSERT INTO user (uuid, name, email, password, enabled, tenant_id, profile_id, extra_permissions, created_at, updated_at) "
+            f"VALUES (UNHEX(REPLACE(UUID(),'-','')), '{name}', '{email}', 'qa-fixture-placeholder', 1, {tenant}, "
+            f"(SELECT id FROM access_profile WHERE `key`='{profile_key}'), '[]', NOW(), NOW())")
         return activate(fx, email)
 
     fx.ownerA = add_user("owner-a", "TenantOwner", fx.tA)
     fx.ownerB = add_user("owner-b", "TenantOwner", fx.tB)
-    fx.orphan = add_user("orphan-owner", "TenantOwner", None)
     ADMIN_AUDIT[:] = sql(f"SELECT updated_at, updated_by, name FROM user WHERE email='{ADMIN_EMAIL}'")[0]
     fx.admin = {"email": ADMIN_EMAIL, "token": token_for(ADMIN_EMAIL, ADMIN_PASSWORD)}
     fx.admin["id"] = jwt_payload(fx.admin["token"])["user_id"]
@@ -226,6 +227,8 @@ def cleanup_dev_db():
         at, by, name = ADMIN_AUDIT
         sql(f"UPDATE user SET updated_at='{at}', updated_by='{by}', name='{name}' WHERE email='{ADMIN_EMAIL}'")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator's entries into the fixture tenants
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE business_name LIKE '{TAG}-%'")
     sql(f"DELETE FROM business_plan WHERE name LIKE '{TAG}-%'")
     for table in ("user", "tenant", "business_plan"):  # hand the counters back as found
@@ -242,8 +245,14 @@ def api_scenarios(fx):
 
     # XF-001/002 scope from caller
     s, seen = emails(adm["token"])
-    check("XF-001", s == 200 and {A["email"], B["email"]} <= seen,
-          f"SysAdmin GET /user -> {s}, sees both tenants' owners", f"SysAdmin GET /user -> {s}, saw {sorted(seen)}")
+    s_in, seen_in = None, set()
+    st, _, pg = http("GET", "/user?page=0&pageSize=200", token=adm["token"], headers={"X-Tenant-Uuid": profile_compat.tenant_uuid(fx.tA)})
+    if st == 200:
+        s_in, seen_in = st, {u["email"] for u in pg.get("items", [])}
+    check("XF-001", s == 200 and ADMIN_EMAIL in seen and not ({A["email"], B["email"]} & seen)
+          and s_in == 200 and A["email"] in seen_in and B["email"] not in seen_in,
+          f"SysAdmin GET /user -> {s}, sees its own tenant only; entering tenant A (X-Tenant-Uuid) -> {s_in}, sees A's owner and not B's",
+          f"SysAdmin GET /user -> {s}, saw {sorted(seen)}; entering A -> {s_in}, saw {sorted(seen_in)}")
     s, seen = emails(A["token"])
     ok = s == 200 and A["email"] in seen and B["email"] not in seen and ADMIN_EMAIL not in seen
     claims = jwt_payload(A["token"])
@@ -274,10 +283,10 @@ def api_scenarios(fx):
     # happened.
     fake_uuid = str(uuid.uuid4())
     claimed_b = http("POST", "/user", token=A["token"], body={
-        "email": f"{TAG}-user-bclaim@hermes.test", "name": "claim b", "role": "TenantUser",
+        "email": f"{TAG}-user-bclaim@hermes.test", "name": "claim b", "profileUuid": system_profile("TenantUser"),
         "enabled": True, "tenantId": fx.tB})[0]
     s, _, u = http("POST", "/user", token=A["token"], body={
-        "email": f"{TAG}-user-a@hermes.test", "name": "user a", "role": "TenantUser", "enabled": True,
+        "email": f"{TAG}-user-a@hermes.test", "name": "user a", "profileUuid": system_profile("TenantUser"), "enabled": True,
         "uuid": fake_uuid, "createdBy": "forged@evil", "updatedBy": "forged@evil",
         "createdAt": "2000-01-01T00:00:00"})
     fx.userA = None
@@ -296,7 +305,7 @@ def api_scenarios(fx):
         fx.userA = activate(fx, f"{TAG}-user-a@hermes.test")
         # update by SysAdmin: updated_by moves, created_by stays
         s2, _, u2 = http("PUT", f"/user/uuid/{u['uuid']}", token=adm["token"], body={
-            "email": f"{TAG}-user-a@hermes.test", "name": "user a renamed", "role": "TenantUser",
+            "email": f"{TAG}-user-a@hermes.test", "name": "user a renamed", "profileUuid": system_profile("TenantUser"),
             "enabled": True, "tenantId": fx.tA, "createdBy": "forged@evil"})
         row2 = sql(f"SELECT created_by, updated_by, name FROM user WHERE id={u['id']}")[0]
         check("XF-009", audit_ok and s2 == 200 and row2[0] == A["email"] and row2[1] == ADMIN_EMAIL,
@@ -315,7 +324,7 @@ def api_scenarios(fx):
     # XF-005: an edit cannot move a record to another tenant
     if fx.userA:
         s, _, p = http("PUT", f"/user/uuid/{fx.userA['uuid']}", token=A["token"], body={
-            "email": fx.userA["email"], "name": "user a", "role": "TenantUser", "enabled": True,
+            "email": fx.userA["email"], "name": "user a", "profileUuid": system_profile("TenantUser"), "enabled": True,
             "tenantId": fx.tB})
         t = sql(f"SELECT tenant_id FROM user WHERE id={fx.userA['id']}")[0][0]
         check("XF-005", int(t) == fx.tA, f"PUT /user/uuid/{{uuid}} as owner A with tenantId=B -> {s}; tenant stays A",
@@ -324,7 +333,7 @@ def api_scenarios(fx):
     # XF-006: cross-tenant reads are invisible (404, not 403)
     r1 = http("GET", f"/user/uuid/{B['uuid']}", token=A["token"])[0]
     r2 = http("PUT", f"/user/uuid/{B['uuid']}", token=A["token"], body={
-        "email": B["email"], "name": "pwned", "role": "TenantOwner", "enabled": False})[0]
+        "email": B["email"], "name": "pwned", "profileUuid": system_profile("TenantOwner"), "enabled": False})[0]
     nm = sql(f"SELECT name, enabled FROM user WHERE id={B['id']}")[0]
     s, seen = emails(A["token"])
     check("XF-006", r1 == 404 and r2 == 404 and nm == ["owner-b", "1"] and B["email"] not in seen,
@@ -332,15 +341,15 @@ def api_scenarios(fx):
           f"GET -> {r1}, PUT -> {r2}, B row={nm}, B in list={B['email'] in seen}")
     # XF-007 (delete) has no HTTP route for tenant-scoped rows -> cargo evidence (see cargo_scenarios)
 
-    # XF-008: tenant role with no tenant claim is refused before any handler
-    orphan = fx.orphan
-    probes = [("GET", "/user", None), ("GET", f"/user/uuid/{orphan['uuid']}", None),
-              ("PUT", "/user/change-password", {"currentPassword": FIXTURE_PW, "newPassword": "Changed#12345"})]
-    codes = [http(m, p, body=b, token=orphan["token"])[0] for m, p, b in probes]
-    still = login(orphan["email"], FIXTURE_PW)[0]
-    check("XF-008", all(c == 403 for c in codes) and still == 200,
-          f"TenantOwner with no tenant: {codes} (all 403), change-password handler never ran (old password still logs in)",
-          f"codes={codes}, old-password login={still}")
+    # XF-008 (C-036): a user with no tenant cannot exist -- the schema refuses it, and the API names the tenant itself
+    ok_null, msg_null = sql_try(f"INSERT INTO user (uuid, name, email, password, enabled, tenant_id, profile_id, extra_permissions, created_at, updated_at) "
+                                f"VALUES (UNHEX(REPLACE(UUID(),'-','')), 'x', '{TAG}-notenant@hermes.test', 'x', 1, NULL, "
+                                f"(SELECT id FROM access_profile WHERE `key`='TenantOwner'), '[]', NOW(), NOW())")
+    nullable = sql("SELECT is_nullable FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='user' AND column_name='tenant_id'")[0][0]
+    stray = sql(f"SELECT COUNT(*) FROM user WHERE tenant_id IS NULL")[0][0]
+    check("XF-008", not ok_null and nullable == "NO" and stray == "0",
+          "every user has a tenant: user.tenant_id is NOT NULL, an INSERT with none is refused by the database, and no row has none",
+          f"insert without tenant ok={ok_null} ({msg_null[:90]}), tenant_id nullable={nullable}, users with no tenant={stray}")
 
     # XF-020/021: role rules enforced by the API whatever the client shows
     #
@@ -358,7 +367,7 @@ def api_scenarios(fx):
     else:
         matrix = [
             ("TenantUser POST /tenant", U, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
-            ("TenantUser POST /user", U, "POST", "/user", {"email": f"{TAG}-x1@hermes.test", "role": "TenantUser", "enabled": True}),
+            ("TenantUser POST /user", U, "POST", "/user", {"email": f"{TAG}-x1@hermes.test", "profileUuid": system_profile("TenantUser"), "enabled": True}),
             ("TenantUser GET /business-plan", U, "GET", "/business-plan", None),
             ("TenantOwner POST /tenant", A, "POST", "/tenant", {"businessName": "x", "taxId": "1", "countryCode": "US"}),
             ("TenantOwner POST /business-plan", A, "POST", "/business-plan",
@@ -374,53 +383,55 @@ def api_scenarios(fx):
               "every out-of-role call refused server-side: " + ", ".join(f"{k}={v}" for k, v in got.items()),
               "out-of-role call accepted: " + ", ".join(f"{k}={v}" for k, v in got.items()))
         esc = {
-            "owner creates SysAdmin": http("POST", "/user", token=A["token"], body={
-                "email": f"{TAG}-esc1@hermes.test", "role": "SysAdmin", "enabled": True})[0],
-            "owner creates TenantOwner": http("POST", "/user", token=A["token"], body={
-                "email": f"{TAG}-esc2@hermes.test", "role": "TenantOwner", "enabled": True, "tenantId": fx.tA})[0],
+            "owner creates the system administrator": http("POST", "/user", token=A["token"], body={
+                "email": f"{TAG}-esc1@hermes.test", "profileUuid": system_profile("SystemAdministrator"), "enabled": True})[0],
             "user creates TenantUser": http("POST", "/user", token=U["token"], body={
-                "email": f"{TAG}-esc3@hermes.test", "role": "TenantUser", "enabled": True})[0],
+                "email": f"{TAG}-esc3@hermes.test", "profileUuid": system_profile("TenantUser"), "enabled": True})[0],
         }
+        # C-036 (D-36/D-37): the owner holds every grant of the owner profile, so they may hand it out in their own tenant.
+        owner_hands_owner = http("POST", "/user", token=A["token"], body={
+            "email": f"{TAG}-esc2@hermes.test", "profileUuid": system_profile("TenantOwner"), "enabled": True})[0]
         http("PUT", f"/user/uuid/{A['uuid']}", token=A["token"], body={
-            "email": A["email"], "name": "owner-a", "role": "SysAdmin", "enabled": True, "tenantId": None})
-        role_after = sql(f"SELECT role, tenant_id FROM user WHERE id={A['id']}")[0]
-        leaked = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-esc%' OR email LIKE '{TAG}-x1%'")[0][0]
-        check("XF-021", all(c == 403 for c in esc.values()) and role_after == ["TenantOwner", str(fx.tA)] and leaked == "0",
-              f"privilege escalation refused: {esc}; owner self-promotion to SysAdmin via PUT left role={role_after[0]}",
-              f"escalation results={esc}, owner row after self-promotion={role_after}, leaked rows={leaked}")
+            "email": A["email"], "name": "owner-a", "profileUuid": system_profile("SystemAdministrator"), "enabled": True})
+        role_after = sql(f"SELECT p.`key`, u.tenant_id FROM user u JOIN access_profile p ON p.id=u.profile_id WHERE u.id={A['id']}")[0]
+        leaked = sql(f"SELECT COUNT(*) FROM user WHERE email LIKE '{TAG}-esc1%' OR email LIKE '{TAG}-esc3%' OR email LIKE '{TAG}-x1%'")[0][0]
+        sql(f"DELETE FROM user WHERE email LIKE '{TAG}-esc2%'")
+        check("XF-021", all(c == 403 for c in esc.values()) and owner_hands_owner == 201 and role_after == ["TenantOwner", str(fx.tA)] and leaked == "0",
+              f"privilege escalation refused: {esc}; the owner may hand out their own profile in their tenant ({owner_hands_owner}); "
+              f"owner self-promotion to the system administrator via PUT left the profile {role_after[0]}",
+              f"escalation results={esc}, owner->owner={owner_hands_owner}, owner row after self-promotion={role_after}, leaked rows={leaked}")
 
-    # XF-023: roles are a closed named set carried in the token
-    roles = {jwt_payload(t)["role"] for t in (adm["token"], A["token"], U["token"])}
+    # XF-023 (C-036): there is no role; the profile a user holds is one of a closed set of system profiles or a tenant's own,
+    # and the token carries the profile's key; a profile that does not exist is refused
+    keys = {http("GET", "/access-profile/mine", token=t)[2].get("profileKey") for t in (adm["token"], A["token"], U["token"])}
+    claims = [set(jwt_payload(t)) for t in (adm["token"], A["token"], U["token"])]
     bad = http("POST", "/user", token=adm["token"], body={
-        "email": f"{TAG}-wizard@hermes.test", "role": "Wizard", "enabled": True})[0]
-    # Owner decision 2026-09-18 (DEF-XF-06): an unknown role is refused with 403.
-    check("XF-023", roles <= {"SysAdmin", "TenantOwner", "TenantUser"} and bad == 403,
-          f"token 'role' claims seen={sorted(roles)}; unknown role 'Wizard' -> {bad}",
-          f"roles={roles}, unknown role 'Wizard' -> "
-          + ("no HTTP response at all: connection closed (server-side panic)" if bad == 0 else str(bad)))
+        "email": f"{TAG}-wizard@hermes.test", "profileUuid": str(uuid.uuid4()), "enabled": True, "tenantId": fx.tA})[0]
+    check("XF-023", keys <= {"SystemAdministrator", "TenantOwner", "TenantUser"} and all("role" not in c for c in claims) and bad == 404,
+          f"profile keys seen={sorted(k for k in keys if k)}; no 'role' claim in any token; an unknown profile -> {bad}",
+          f"keys={keys}, role claims={[('role' in c) for c in claims]}, unknown profile -> {bad}")
 
     # XF-024: no permission/policy store exists
     tables = {r[0] for r in sql("SHOW TABLES")}
     perm = [t for t in tables if re.search(r"perm|polic|acl|grant|role", t)]
-    check("XF-024", not perm, f"no role/permission/policy tables in schema ({sorted(tables)})", f"found {perm}")
+    check("XF-024", not perm and "access_profile" in tables, f"the access model lives in one table, access_profile, and there is no role/permission/policy/grant table ({sorted(tables)})", f"found {perm}")
 
-    # XF-025: a tenant-bound SysAdmin is impossible, enforced once (D-08)
-    ok_db, msg = sql_try(f"UPDATE user SET tenant_id={fx.tA} WHERE role='SysAdmin'")
-    ok_ins, msg2 = sql_try(f"INSERT INTO user (uuid,email,password,enabled,tenant_id,role) VALUES "
-                           f"(UNHEX(REPLACE(UUID(),'-','')),'{TAG}-boundadmin@hermes.test','x',1,{fx.tA},'SysAdmin')")
+    # XF-025 (C-036, supersedes D-08): the system administrator belongs to the root tenant, and only the root's
+    root = sql("SELECT id FROM tenant WHERE parent_tenant_id IS NULL")[0][0]
+    ok_db, msg = sql_try(f"UPDATE user SET tenant_id=NULL WHERE id={adm['id']}")
     s, _, _ = http("PUT", f"/user/uuid/{adm['uuid']}", token=adm["token"], body={
-        "email": ADMIN_EMAIL, "name": "System Administrator", "role": "SysAdmin", "enabled": True, "tenantId": fx.tA})
+        "email": ADMIN_EMAIL, "name": "System Administrator", "profileUuid": system_profile("SystemAdministrator"), "enabled": True, "tenantId": fx.tA})
     adm_t = sql(f"SELECT tenant_id FROM user WHERE id={adm['id']}")[0][0]
-    check("XF-025", not ok_db and not ok_ins and "chk_sysadmin_has_no_tenant" in (msg + msg2) and adm_t == "NULL",
-          f"DB refuses UPDATE and INSERT of a tenant-bound SysAdmin (CHECK chk_sysadmin_has_no_tenant); "
-          f"API PUT with tenantId -> {s}, tenant stays NULL",
-          f"db update ok={ok_db} insert ok={ok_ins} ({msg} / {msg2}); API -> {s}, tenant={adm_t}")
+    check("XF-025", not ok_db and adm_t == str(root) and s in (400, 403, 404),
+          f"the DB refuses to take the system administrator out of a tenant (NOT NULL); an API PUT naming another tenant -> {s}, the tenant stays the root ({root})",
+          f"db update ok={ok_db} ({msg[:80]}); API -> {s}, tenant={adm_t}, root={root}")
 
     # XF-030/031/032/033: public surface
     doc = http("GET", "/api-docs/openapi.json")[2]
     ops = [(m.upper(), p) for p, v in doc["paths"].items() for m in v]
     concrete = lambda p: re.sub(r"\{[^}]+\}", "999999", p).replace("/uuid/1", f"/uuid/{uuid.uuid4()}")
-    public = {"/login", "/refresh", "/accept-invite"}
+    # C-018 added the wall monitor's pairing: the one more public door, by design (its code is the credential)
+    public = {"/login", "/refresh", "/accept-invite", "/garage-device/pair"}
     unauth = {f"{m} {p}": http(m, concrete(p), body=None if m == "GET" else {})[0] for m, p in ops if p not in public}
     leaks = {k: v for k, v in unauth.items() if v not in (401, 403)}
     pub = {p: http("POST", p, body={})[0] for p in sorted(public)}
@@ -774,8 +785,10 @@ def cargo_scenarios(coverage):
 # ---------------------------------------------------------------- docs
 def doc_scenarios():
     readme = open(os.path.join(REPO, "readme.md")).read()
-    stale = "Migrations run automatically" in readme
-    has = all(k in readme.lower() for k in ("hermes", "running", "configuration"))
+    stale = "Migrations run automatically" in readme or "Migrations run automatically".lower() in readme.lower()
+    low = readme.lower()
+    # the readme is in Portuguese now: "execut-" (running) and "configura-" (configuration) stand for the English words
+    has = "hermes" in low and ("running" in low or "execut" in low) and ("configuration" in low or "configura" in low)
     mentions_migrate = "migrate" in readme and not stale
     check("XF-080", has and mentions_migrate and not stale,
           "readme.md states what Hermes is, how to run and configure it, and the migrate deploy step",

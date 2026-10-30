@@ -7,24 +7,27 @@ export interface SubscriptionDetails {
   currentPlan: BusinessPlan | null
 }
 
-export const loadTenant = async (uuid: string): Promise<Tenant> => (await api.get<Tenant>(`/tenant/uuid/${uuid}`)).data
+// C-036: a tenant other than the signed-in one is reached by acting inside it, so its own calls name it.
+const acting = (uuid: string) => ({ headers: { 'X-Tenant-Uuid': uuid } })
+
+export const loadTenant = async (uuid: string): Promise<Tenant> => (await api.get<Tenant>(`/tenant/uuid/${uuid}`, acting(uuid))).data
 
 export const saveTenant = async ({ uuid, tenant }: { uuid?: string; tenant: Tenant }): Promise<void> => {
-  if (uuid) await api.put(`/tenant/uuid/${uuid}`, tenant)
+  if (uuid) await api.put(`/tenant/uuid/${uuid}`, tenant, acting(uuid))
   else await api.post('/tenant', tenant)
 }
 
 export const loadSubscription = async (uuid: string): Promise<SubscriptionDetails> => {
   const [tenant, plans, currentPlan] = await Promise.all([
-    api.get<Tenant>(`/tenant/uuid/${uuid}`),
+    api.get<Tenant>(`/tenant/uuid/${uuid}`, acting(uuid)),
     api.get<Page<BusinessPlan>>('/business-plan', { params: { page: 0, pageSize: 200 } }),
-    api.get<BusinessPlan | null>(`/tenant/uuid/${uuid}/plan`).catch(() => null),
+    api.get<BusinessPlan | null>(`/tenant/uuid/${uuid}/plan`, acting(uuid)).catch(() => null),
   ])
   return { tenant: tenant.data, plans: plans.data.items ?? [], currentPlan: currentPlan?.data ?? null }
 }
 
 export const saveSubscription = async ({ uuid, businessPlanId }: { uuid: string; businessPlanId: number }): Promise<void> => {
-  await api.post(`/tenant/uuid/${uuid}/plan`, { businessPlanId })
+  await api.post(`/tenant/uuid/${uuid}/plan`, { businessPlanId }, acting(uuid))
 }
 
 export const deletePlan = async (uuid: string): Promise<void> => { await api.delete(`/business-plan/uuid/${uuid}`) }

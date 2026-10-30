@@ -251,15 +251,20 @@ async fn the_system_administrator_creates_profiles_naming_the_tenant_and_holding
     let use_case = AccessProfileUseCase::new(MemoryStore::default());
     let platform = platform();
     let ops = use_case
-        .create(&platform, profile("Platform ops", Some(7), vec!["business-plan.read", "vehicle.read"]))
+        .create(&platform, profile("Platform ops", Some(ROOT), vec!["business-plan.read", "vehicle.read"]))
         .await
         .unwrap();
-    assert_eq!(ops.tenant_id, Some(7));
+    assert_eq!(ops.tenant_id, Some(ROOT));
     assert_eq!(ops.permissions, ["business-plan.read", "vehicle.read"]);
     assert_eq!(
         use_case.create(&platform, profile("Nowhere", None, vec![])).await.unwrap_err().message,
         SCOPE_NOT_ALLOWED,
         "a profile belongs to a tenant; only the system ones belong to none"
+    );
+    assert_eq!(
+        use_case.create(&platform, profile("Elsewhere", Some(7), vec![])).await.unwrap_err().message,
+        SCOPE_NOT_ALLOWED,
+        "another tenant's profile is made by acting inside that tenant"
     );
 }
 
@@ -563,7 +568,7 @@ async fn every_profile_is_guarded_by_what_the_actor_holds_the_operational_ones_i
             .await
             .unwrap_err()
             .message,
-        GRANT_EXCEEDS_ACTOR
+        PROFILE_DOES_NOT_FIT
     );
 }
 
@@ -574,8 +579,8 @@ async fn a_profile_the_parent_made_is_assignable_in_its_child_and_nowhere_else()
     let (store, use_case) = seeded().await;
     // tenant 42 is the child of tenant 7; tenant 50 is unrelated
     store.above.lock().unwrap().insert(42, vec![7]);
-    let parents = use_case.create(&platform(), profile("Parent's dispatch", Some(7), vec!["vehicle.read"])).await.unwrap();
-    let sibling = use_case.create(&platform(), profile("Elsewhere", Some(50), vec!["vehicle.read"])).await.unwrap();
+    let parents = use_case.create(&user(Some(3), TENANT_OWNER, Some(7)), profile("Parent's dispatch", Some(7), vec!["vehicle.read"])).await.unwrap();
+    let sibling = use_case.create(&user(Some(4), TENANT_OWNER, Some(50)), profile("Elsewhere", Some(50), vec!["vehicle.read"])).await.unwrap();
     let child_owner = owner(); // a tenant-42 owner holding every tenant grant
 
     let (placed, _) = use_case.placeable(&child_owner, parents.uuid.clone().unwrap(), Some(42), &[]).await.expect("inherited from the parent");

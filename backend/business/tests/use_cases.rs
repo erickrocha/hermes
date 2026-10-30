@@ -1137,7 +1137,7 @@ async fn seeding_creates_the_sysadmin_once_under_platform_scope() {
         .await
         .expect("seeded");
     assert_eq!(first.profile_id, Some(profile_id_of(SYS_ADMIN)));
-    assert!(first.is_platform());
+    assert_eq!(first.access.profile_key.as_deref(), Some(SYS_ADMIN));
     assert_eq!(first.tenant_id, None);
     let again = run_as_platform(use_case.seed_sysadmin(profile_id_of(SYS_ADMIN), 5))
         .await

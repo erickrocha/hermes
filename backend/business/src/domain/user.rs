@@ -7,10 +7,9 @@ use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
 
-/// `C-036`: an account reaches every tenant it names -- the legacy platform reach -- only through the system
-/// administrator's profile, placed in the root tenant. Nothing else about a profile is a "scope"; any other
-/// account acts in its own tenant, or in a descendant through `X-Tenant-Uuid` and the `tenant.child.*` grants.
-fn reach_of(profile: &AccessProfile) -> ProfileScope {
+/// Echoed to the console (`scope` in the session): `Platform` for the system administrator's profile, `Tenant`
+/// otherwise. Informational only since `C-036` -- nothing in the backend decides on it; reach is the tenant tree.
+fn echoed_scope(profile: &AccessProfile) -> ProfileScope {
     if profile.system && profile.key.as_deref() == Some(crate::domain::permission::SYS_ADMIN) {
         ProfileScope::Platform
     } else {
@@ -33,6 +32,9 @@ pub struct Access {
     /// `C-036`: the caller's own tenant while a request acts inside a descendant (`X-Tenant-Uuid`), where `tenant_id`
     /// is the descendant's; `None` otherwise. Moving a tenant in the tree is judged from here.
     pub acting_from: Option<i64>,
+    /// `C-036`: the caller's own grants while `grants` hold only what the descendant lets them do; what they may hand
+    /// out is judged against these (nobody grants what they do not hold). `None` outside a descendant.
+    pub held: Option<Grants>,
 }
 
 impl Default for Access {
@@ -44,6 +46,7 @@ impl Default for Access {
             profile_key: None,
             grants: Grants::effective(&[], &[]),
             acting_from: None,
+            held: None,
         }
     }
 }
@@ -54,12 +57,13 @@ impl Access {
     pub fn resolve(profile: &AccessProfile, extras: &[String]) -> Self {
         let held: &[String] = if profile.active { &profile.permissions } else { &[] };
         Self {
-            scope: reach_of(profile),
+            scope: echoed_scope(profile),
             profile_uuid: profile.uuid.clone(),
             profile_name: Some(profile.name.clone()),
             profile_key: profile.key.clone(),
             grants: Grants::effective(held, extras),
             acting_from: None,
+            held: None,
         }
     }
 
@@ -82,7 +86,7 @@ impl Access {
         S: AsRef<str>,
     {
         let codes: Vec<String> = grants.into_iter().map(|g| g.as_ref().to_string()).collect();
-        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]), acting_from: None }
+        Self { scope, profile_uuid: None, profile_name: None, profile_key: None, grants: Grants::effective(&codes, &[]), acting_from: None, held: None }
     }
 }
 
@@ -109,20 +113,6 @@ pub struct User {
 }
 
 impl User {
-    /// The tenant a request acts in: the platform actor names one (`requested`, `None` when it did not), everyone
-    /// else acts in their own. `C-036` gave the platform actor the root tenant, so `self.tenant_id.or(requested)`
-    /// would silently ignore the tenant it named.
-    pub fn target_tenant(&self, requested: Option<i64>) -> Option<i64> {
-        if self.access.scope == ProfileScope::Platform { requested } else { self.tenant_id }
-    }
-
-    /// The tenant a request is confined to: the account's own, except for the platform actor, who is not
-    /// confined to one (it reaches every tenant it names). Before `C-036` this was just `tenant_id`, which was
-    /// `None` for the platform actor; the root tenant it now belongs to must not read as a confinement.
-    pub fn bound_tenant(&self) -> Option<i64> {
-        if self.access.scope == ProfileScope::Platform { None } else { self.tenant_id }
-    }
-
     pub fn allows(&self, code: &str) -> bool {
         self.access.grants.allows(code)
     }
@@ -138,10 +128,6 @@ impl User {
 
     pub fn grant_scope(&self, code: &str) -> Option<GrantScope> {
         self.access.grants.scope(code)
-    }
-
-    pub fn is_platform(&self) -> bool {
-        self.access.scope == ProfileScope::Platform
     }
 }
 

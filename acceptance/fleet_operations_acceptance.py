@@ -23,12 +23,14 @@ import argparse, base64, hashlib, hmac, json, os, re, socket, subprocess, sys, t
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(os.path.dirname(HERE), "backend")
 BASE = os.environ.get("HERMES_API", "http://127.0.0.1:8081")
 DB_CONTAINER = os.environ.get("HERMES_DB_CONTAINER", "dev-mariadb-1")
-DB_USER, DB_PASS, DB_NAME = "hermes", os.environ.get("HERMES_DB_PASSWORD", "brutal"), "hermes"
+DB_USER, DB_PASS, DB_NAME = os.environ.get("HERMES_DB_USER", "hermes"), os.environ.get("HERMES_DB_PASSWORD", "brutal"), os.environ.get("HERMES_DB_NAME", "hermes")
 ADMIN_EMAIL = os.environ.get("HERMES_ADMIN_EMAIL", "admin@hermes.dev")
 TAG = "qa-fo"
 PLATE = "QAFO"
@@ -70,6 +72,7 @@ def check(sid, cond, ok, bad):
 
 # ---------------------------------------------------------------- plumbing (from tenancy_plans_acceptance.py)
 def http(method, path, body=None, token=None, form=None, headers=None, base=None):
+    headers = profile_compat.enter(method, path, body, token, headers)
     h = dict(headers or {})
     data = None
     if form is not None:
@@ -172,6 +175,7 @@ def cleanup():
     sql(f"DELETE FROM vehicle WHERE plate LIKE '{PLATE}%' OR model LIKE '{TAG}-%' OR tenant_id IN ({tenants})")
     sql(f"DELETE FROM user WHERE email LIKE '{TAG}-%'")
     sql(f"DELETE FROM tenant_tracking_setting WHERE tenant_id IN ({tenants})")
+    sql("DELETE FROM cross_tenant_action")  # C-036: the administrator\'s entries into the fixture tenants
     sql(f"DELETE FROM tenant WHERE id IN ({ids}) OR business_name LIKE '{TAG}-%' OR tax_id LIKE 'QAFO%'")
 
 
@@ -186,7 +190,7 @@ def activate(fx, email):
 
 def seed(fx):
     env = dotenv()
-    fx.secret = env["ACCESS_TOKEN_SECRET"]
+    fx.secret = os.environ.get("HERMES_ACCESS_TOKEN_SECRET") or env["ACCESS_TOKEN_SECRET"]
     # The SysAdmin password is read into memory only; it is never printed or written.
     fx.adm = token_for(ADMIN_EMAIL, os.environ.get("HERMES_ADMIN_PASSWORD") or env.get("SYSADMIN_PASSWORD", ""))
     for k, tax in (("A", "QAFO0000000001"), ("B", "QAFO0000000002")):
@@ -198,7 +202,7 @@ def seed(fx):
         setattr(fx, k, p)
 
     def user(creator, email, role, tenant):
-        body = {"email": email, "name": email.split("@")[0], "role": role, "enabled": True}
+        body = {"email": email, "name": email.split("@")[0], "profileUuid": system_profile(role), "enabled": True}
         if tenant:
             body["tenantId"] = tenant
         s, p = http("POST", "/user", body=body, token=creator)
@@ -309,16 +313,17 @@ def s02(fx):
     s2, p2 = post_vehicle(adm, veh(f"{PLATE}2B01", "Scania R450", tenantId=fx.B["id"]))
     fx.vB = p2 if s2 == 201 else None
     rowB = vrow(p2["uuid"]) if s2 == 201 else None
-    s3, p3 = post_vehicle(adm, veh(f"{PLATE}2X01"))  # SysAdmin must name the tenant
-    stray = one(f"SELECT COUNT(*) FROM vehicle WHERE plate='{PLATE}2X01'")
+    s3, p3 = post_vehicle(adm, veh(f"{PLATE}2X01"))  # C-036: with no tenant named it lands in the administrator's own (the root)
+    stray = one(f"SELECT COUNT(*) FROM vehicle WHERE plate='{PLATE}2X01' AND tenant_id={profile_compat.root_tenant_id()}")
+    sql(f"DELETE FROM vehicle WHERE plate='{PLATE}2X01'")
     # an edit never moves a vehicle between tenants
     s4, _ = edit(oa, fx.v1, tenantId=fx.B["id"]) if fx.v1 else (0, None)
     s5, _ = edit(adm, fx.v1, tenantId=fx.B["id"]) if fx.v1 else (0, None)
     stays = vrow(fx.v1["uuid"])[0] if fx.v1 else None
     check("FO-003", s1 in (400, 403) and inB == "0" and s2 == 201 and rowB and rowB[0] == str(fx.B["id"])
-          and s3 in (400, 403) and stray == "0" and s4 == 200 and s5 == 200 and stays == str(fx.A["id"]),
+          and s3 == 201 and stray == "1" and s4 == 200 and s5 in (200, 404) and stays == str(fx.A["id"]),
           f"owner A naming tenant B -> {s1} {ek(p1)}, nothing in B; SysAdmin naming B -> 201 stored in B; SysAdmin "
-          f"without tenant -> {s3} {ek(p3)}; PUT with tenantId=B by owner ({s4}) and SysAdmin ({s5}) leaves the row in A",
+          f"without tenant -> {s3} {ek(p3)}, stored in the root; PUT with tenantId=B by owner ({s4}) and SysAdmin ({s5}, A's vehicle is out of its reach) leaves the row in A",
           f"owner->B {s1} {ek(p1)} rows in B={inB}; admin->B {s2} row {rowB}; admin no tenant {s3} {ek(p3)} stray={stray}; "
           f"PUT owner {s4} admin {s5}; tenant now {stays}")
 
@@ -336,9 +341,9 @@ def s02(fx):
     dbB = one(f"SELECT COUNT(*) FROM vehicle WHERE tenant_id={fx.B['id']}")
     check("FO-004", sa == sb == su == sx == 200 and "QAFO1A01" in pa and f"{PLATE}2B01" not in pa
           and f"{PLATE}2B01" in pb and "QAFO1A01" not in pb and ta == int(dbA) and tb == int(dbB) and pu == pa
-          and {"QAFO1A01", f"{PLATE}2B01"} <= px and tsb == 0,
+          and not ({"QAFO1A01", f"{PLATE}2B01"} & px) and tsb == 0,
           f"owner A sees {sorted(pa)} (total {ta}=DB {dbA}); owner B sees {sorted(pb)} (total {tb}=DB {dbB}); "
-          f"user A sees A's list; SysAdmin sees both; owner B searching A's plate -> 0",
+          f"user A sees A's list; SysAdmin sees neither (its own tenant only); owner B searching A's plate -> 0",
           f"A {sa} {pa} {ta}/{dbA}; B {sb} {pb} {tb}/{dbB}; userA {su} {pu}; admin {sx} {px}; B search {ssb} {tsb}")
 
     # schema level: NOT NULL + FK on tenant_id; the scoping rule test.
@@ -425,11 +430,12 @@ def s04(fx):
           http("GET", f"/vehicle/uuid/{fx.v1['uuid']}")[0],
           http("PUT", f"/vehicle/uuid/{fx.v1['uuid']}", body=veh("QAFO1A01", status="Inactive"))[0],
           http("GET", "/vehicle", headers={"Authorization": "Bearer not-a-token"})[0]]
-    sa_put, pa_put = edit(adm, http("GET", f"/vehicle/uuid/{fx.vB['uuid']}", token=adm)[1], status="Reserved") if fx.vB else (0, {})
-    check("FO-008", su_post == 403 and ek(pu_post) == "VehicleForbidden" and before == after and su_get == 200
+    with profile_compat.acting_in(fx.B["id"]):
+        sa_put, pa_put = edit(adm, http("GET", f"/vehicle/uuid/{fx.vB['uuid']}", token=adm)[1], status="Reserved") if fx.vB else (0, {})
+    check("FO-008", su_post == 403 and ek(pu_post) == "PermissionNotInProfile" and before == after and su_get == 200
           and su_list == 200 and su_put == 403 and unchanged[2] == f"{TAG}-Volvo FH 540" and unchanged[3] == "Maintenance"
           and all(a in (401, 403) for a in an[:4]) and an[4] == 401 and sa_put == 200 and pa_put.get("status") == "Reserved",
-          f"TenantUser A: POST 403 VehicleForbidden (nothing stored), GET/list 200, PUT 403 (row unchanged); "
+          f"TenantUser A: POST 403 PermissionNotInProfile (nothing stored), GET/list 200, PUT 403 (row unchanged); "
           f"no token POST/GET/GET/PUT -> {an[:4]} (platform convention, as TP-064), bad token -> {an[4]}; SysAdmin amends a tenant-B vehicle -> 200",
           f"user POST {su_post} {ek(pu_post)} rows {before}->{after}; GET {su_get}; list {su_list}; PUT {su_put} {ek(pu_put)}; "
           f"row {unchanged}; anon {an}; admin PUT B {sa_put} {ek(pa_put)}")
@@ -449,9 +455,12 @@ def s05(fx):
     after = vrow(a_uuid)
     answers = [g1, p1, g2, g3, p3, unk, unk_put]
     same_body = ek(g1[1]) == ek(unk[1]) and (g1[1] or {}).get("message") == (unk[1] or {}).get("message")
-    check("FO-009", all(a[0] == 404 and ek(a[1]) == "VehicleNotFound" for a in answers) and before == after and same_body,
-          f"foreign vehicle: owner B GET/PUT A's, owner A GET B's, user A GET/PUT B's -> all 404 VehicleNotFound, never 403; "
-          f"A's row unchanged; the foreign 404 body is identical to an unknown uuid's",
+    # C-035/D-36: the permission is asked before the tenant, so a tenant user's PUT (no `vehicle.update`) is a 403 naming it,
+    # whatever vehicle it names; everything else about a foreign vehicle is the same 404 as an unknown one.
+    check("FO-009", all(a[0] == 404 and ek(a[1]) == "VehicleNotFound" for a in answers if a is not p3)
+          and p3[0] == 403 and ek(p3[1]) == "PermissionNotInProfile" and before == after and same_body,
+          f"foreign vehicle: owner B GET/PUT A's, owner A GET B's, user A GET B's -> 404 VehicleNotFound; user A PUT B's -> 403 "
+          f"PermissionNotInProfile (the permission comes first); A's row unchanged; the foreign 404 body is identical to an unknown uuid's",
           f"{[(a[0], ek(a[1])) for a in answers]}; row {before} -> {after}; same_body={same_body}")
 
     # FO-010: documented contract + PD-028 pagination.
@@ -739,6 +748,16 @@ def rows_with_device(dev):
     return one(f"SELECT COUNT(*) FROM vehicle WHERE tracker_device_id={int(dev)}")
 
 
+def _in_tenant_a(fn):
+    """The administrator's calls in `fn` enter tenant A unless a body names another (C-036)."""
+    def run(fx):
+        with profile_compat.acting_in(fx.A["id"]):
+            return fn(fx)
+    run.__doc__ = fn.__doc__
+    return run
+
+
+@_in_tenant_a
 def fo2_link(fx):
     """FO-020/FO-021 against the dev API: the link is the SysAdmin's, one device per vehicle platform-wide."""
     adm, oa, ob, ut = fx.adm, fx.ownerA["token"], fx.ownerB["token"], fx.userA["token"]
@@ -800,8 +819,9 @@ def fo2_link(fx):
     sd, pd = edit(ut, cur, trackerDeviceId=DEV["denied"])
     after = vrow(f["uuid"], "model, tracker_device_id")
     se1, pe1 = post_vehicle(adm, veh(f"{PLATE}TB2", "dup device into B", tenantId=fx.B["id"], trackerDeviceId=DEV["fresh"]))
-    b_cur = http("GET", f"/vehicle/uuid/{fx.tv['b']['uuid']}", token=adm)[1] if fx.tv["b"] else {}
-    se2, pe2 = edit(adm, b_cur, trackerDeviceId=DEV["fresh"]) if fx.tv["b"] else (0, None)
+    with profile_compat.acting_in(fx.B["id"]):
+        b_cur = http("GET", f"/vehicle/uuid/{fx.tv['b']['uuid']}", token=adm)[1] if fx.tv["b"] else {}
+        se2, pe2 = edit(adm, b_cur, trackerDeviceId=DEV["fresh"]) if fx.tv["b"] else (0, None)
     b_kept = dev_of(fx.tv["b"]["uuid"]) if fx.tv["b"] else None
     sq = sql(f"UPDATE vehicle SET tracker_device_id={DEV['fresh']} WHERE uuid=UNHEX(REPLACE('{fx.tv['b']['uuid']}','-',''))",
              check_rc=False) if fx.tv["b"] else None
@@ -1060,7 +1080,7 @@ def fo3_seed(fx):
     def person(owner, name, role, enabled=True, activate_it=True):
         email = f"{TAG}-{name}@hermes.test"
         s, p = http("POST", "/user", token=owner["token"],
-                    body={"email": email, "name": name, "role": role, "enabled": enabled})
+                    body={"email": email, "name": name, "profileUuid": system_profile(role), "enabled": enabled})
         if s != 201:
             raise RuntimeError(f"POST /user {name} ({role}) -> {s} {ek(p)}")
         u = activate(fx, email) if activate_it else {"email": email, "id": int(p["id"])}
@@ -1144,9 +1164,10 @@ def fo3(fx):
           f"end {e_s} {e_p}; current after end {none_s} {ek(none_p)}; re-assign {r_s} {ek(r_p)}; history {h_s} "
           f"total={h_p.get('totalItems') if isinstance(h_p, dict) else h_p} order={order}; rows {all_rows(vA1)} live {live_rows(vA1)}")
 
-    # FO-042: only an enabled Driver of the vehicle's own tenant; one answer for every reason
+    # FO-042: only an enabled driver (who holds `driver.act`) of the vehicle's own tenant; one answer for every reason --
+    # the owner holds every tenant permission, so since C-035/D-36 they may be named too and are not in this list.
     who = {"TenantUser A": fx.userA["uuid"], "Mechanic A": fx.mA["uuid"], "Driver B (other tenant)": fx.dB["uuid"],
-           "disabled Driver A": fx.dAoff["uuid"], "owner A (self)": fx.ownerA["uuid"], "SysAdmin": fx.adm_uuid,
+           "disabled Driver A": fx.dAoff["uuid"], "SysAdmin": fx.adm_uuid,
            "unknown uuid": ghost}
     res = {k: asg("POST", vA3, oa, u) for k, u in who.items()}
     bodies = {json.dumps(v[1], sort_keys=True) for v in res.values()}
@@ -1160,17 +1181,18 @@ def fo3(fx):
           f"rows {all_rows(vA3)}")
 
     # FO-043: the tenant rule binds the SysAdmin too; the enabled flag is read at assignment time
-    sa_cross = asg("POST", vA3, adm, fx.dB["uuid"])
-    sa_mech = asg("POST", vA3, adm, fx.mA["uuid"])
+    with profile_compat.acting_in(fx.A["id"]):  # C-036: the administrator enters tenant A
+        sa_cross = asg("POST", vA3, adm, fx.dB["uuid"])
+        sa_mech = asg("POST", vA3, adm, fx.mA["uuid"])
     same = json.dumps(sa_cross[1], sort_keys=True) in bodies and json.dumps(sa_mech[1], sort_keys=True) in bodies
     # a driver disabled by the owner stops being assignable
     row = sql(f"SELECT email, name FROM user WHERE id={fx.dA2['id']}")[0]
     free_driver = fx.dA1  # not live anywhere now
     s_dis = http("PUT", f"/user/uuid/{free_driver['uuid']}", token=oa,
-                 body={"email": free_driver["email"], "name": "driver-a1", "role": "Driver", "enabled": False})[0]
+                 body={"email": free_driver["email"], "name": "driver-a1", "profileUuid": system_profile("Driver"), "enabled": False})[0]
     after_dis = asg("POST", vA3, oa, free_driver["uuid"])
     s_en = http("PUT", f"/user/uuid/{free_driver['uuid']}", token=oa,
-                body={"email": free_driver["email"], "name": "driver-a1", "role": "Driver", "enabled": True})[0]
+                body={"email": free_driver["email"], "name": "driver-a1", "profileUuid": system_profile("Driver"), "enabled": True})[0]
     fx.dA1["token"] = token_for(free_driver["email"], FIXTURE_PW)   # disabling ended the old session
     check("FO-043", sa_cross[0] == 400 and ek(sa_cross[1]) == "NotADriver" and sa_mech[0] == 400 and same
           and s_dis == 200 and after_dis[0] == 400 and ek(after_dis[1]) == "NotADriver" and s_en == 200
@@ -1192,11 +1214,13 @@ def fo3(fx):
             "PUT end": asg("PUT", vA1, None, suffix="assignment/end")[0],
             "GET history": asg("GET", vA1, None, suffix="assignments")[0]}
     bad_tok = asg("GET", vA1, "not.a.token")[0]
-    sa_assign = asg("POST", vB, adm, fx.dB["uuid"])
-    sa_read = asg("GET", vB, adm)[0]
-    sa_end = asg("PUT", vB, adm, suffix="assignment/end")[0]
-    # C-032: a driver reaches only the vehicle assigned to them (vA1); another vehicle (vA3) is 404, not 403
-    roles_ok = all(m == {"GET current": 200, "GET history": 200, "POST assign": 404 if who == "Driver" else 403, "PUT end": 403} for who, m in matrix.items())
+    with profile_compat.acting_in(fx.B["id"]):
+        sa_assign = asg("POST", vB, adm, fx.dB["uuid"])
+    with profile_compat.acting_in(fx.B["id"]):
+        sa_read = asg("GET", vB, adm)[0]
+        sa_end = asg("PUT", vB, adm, suffix="assignment/end")[0]
+    # C-032/C-035: a driver reaches only the vehicle assigned to them (vA1); without `vehicle.assign-driver` the POST is a 403 naming it
+    roles_ok = all(m == {"GET current": 200, "GET history": 200, "POST assign": 403, "PUT end": 403} for who, m in matrix.items())
     paths = fx.openapi.get("paths", {})
     want = {("/vehicle/uuid/{uuid}/assignment", "post"): ("201", "400", "404", "409"),
             ("/vehicle/uuid/{uuid}/assignment", "get"): ("200", "404"),
@@ -1227,7 +1251,9 @@ def fo3(fx):
             f = asg(m, foreign, tok, drv if m == "POST" else None, suffix=suf)
             u = asg(m, ghost, tok, drv if m == "POST" else None, suffix=suf)
             out[f"{who_} {route}"] = (f[0], ek(f[1]), f == u)
-    check("FO-045", all(v[0] == 404 and v[1] == "VehicleNotFound" and v[2] for v in out.values())
+    # C-035: the permission precedes the tenant -- a driver's POST/PUT end (no `vehicle.assign-driver`) is a 403 naming it
+    expected_45 = lambda k: (403, "PermissionNotInProfile") if k in ("driver B POST", "driver B PUT end") else (404, "VehicleNotFound")
+    check("FO-045", all((v[0], v[1]) == expected_45(k) and v[2] for k, v in out.items())
           and live_rows(vA1) == live_before and all_rows(vB) == 1,
           f"{len(out)} calls (owner B and driver B on A's vehicle, owner A on B's; all four routes) -> 404 VehicleNotFound, "
           f"body identical to an unknown uuid; nothing changed",

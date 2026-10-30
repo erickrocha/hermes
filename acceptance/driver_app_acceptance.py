@@ -9,6 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import garage_monitor_acceptance as b  # noqa: E402
 import driver_scope_acceptance as d  # noqa: E402
 import role_matrix_audit as audit  # noqa: E402
+from profile_compat import system_profile  # noqa: E402  (C-036: users hold a profile, not a role)
+import profile_compat  # noqa: E402
 
 http, record = b.http, b.record
 NIL = "00000000-0000-4000-8000-000000000000"
@@ -38,7 +40,7 @@ def second_tenant(admin):
     st, tenant = http("POST", "/tenant", {"businessName": "qa-ga-tenant-b", "taxId": f"QAGB{int(b.time.time()) % 100000000:08d}", "countryCode": "US"}, admin)
     assert st == 201, (st, tenant)
     email = "qa-ga-owner-b@hermes.test"
-    st, user = http("POST", "/user", {"email": email, "name": "qa-ga-owner-b", "role": "TenantOwner", "enabled": True, "tenantId": int(tenant["id"])}, admin)
+    st, user = http("POST", "/user", {"email": email, "name": "qa-ga-owner-b", "profileUuid": system_profile("TenantOwner"), "enabled": True, "tenantId": int(tenant["id"])}, admin)
     assert st == 201, (st, user)
     pw = b.rows(f"SELECT password FROM user WHERE email='{email}'")[0][0]
     assert http("POST", "/accept-invite", {"token": b.invite_token(email, pw, b.load_env()["ACCESS_TOKEN_SECRET"]), "newPassword": b.PASSWORD})[0] == 204
@@ -98,7 +100,8 @@ def run():
         tu, _ = d.make_user(owner, "qa-ga-da-tu@hermes.test", "TenantUser")
         ok.append(refuse("non-driver named as the driver", 400, "NotADriver", run_body(dep, tu, v2, "Standalone", 1100.0), token=owner))
         _, dep_b = second_tenant(admin)
-        ok.append(refuse("template of another tenant", 400, "ChecklistNotATenantTemplate", run_body(dep_b, da, v2, "Standalone", 1100.0), token=admin))
+        with profile_compat.acting_in(b.TENANT_ID):  # C-036: the administrator enters the vehicle's tenant
+            ok.append(refuse("template of another tenant", 400, "InvalidParameterValue", run_body(dep_b, da, v2, "Standalone", 1100.0), token=admin))
         s_close, close = http("POST", "/checklist-run", run_body(ret, da, v1, "Return", 1100.0, opening=dep1["uuid"]), da_t)
         ok.append(s_close == 201)
         ok.append(refuse("opening already closed", 400, "OpeningChecklistAlreadyClosed", run_body(ret, da, v1, "Return", 1200.0, opening=dep1["uuid"])))

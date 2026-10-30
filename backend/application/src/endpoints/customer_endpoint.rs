@@ -81,8 +81,8 @@ pub async fn add(
 
     // HRMS-921's rule, applied to customers: for a tenant-bound caller the
     // owning tenant is the caller's own, never the payload's.
-    if current_user.bound_tenant().is_some() {
-        domain.tenant_id = current_user.bound_tenant();
+    if current_user.tenant_id.is_some() {
+        domain.tenant_id = current_user.tenant_id;
     }
 
     default_country(&state, &mut domain).await;

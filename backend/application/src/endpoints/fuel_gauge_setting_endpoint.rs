@@ -5,9 +5,8 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, UnauthorizedErrorJson,
 };
 use crate::endpoints::json::fuel_gauge_setting_json::FuelGaugeSettingJson;
-use crate::endpoints::json::internal_tank_json::InternalTankQuery;
 use axum::Json;
-use axum::extract::{Extension, Query, State};
+use axum::extract::{Extension, State};
 use business::domain::authorization::{can_configure_fuel_gauge, can_read_tenant_configuration};
 use business::domain::fuel_gauge_setting::FuelGaugeSetting;
 use business::domain::user::User;
@@ -53,7 +52,7 @@ pub async fn configure(
     if !can_configure_fuel_gauge(&current_user, payload.tenant_id) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let tenant_id = current_user.target_tenant(payload.tenant_id);
+    let tenant_id = current_user.tenant_id;
     let setting = FuelGaugeSetting {
         id: None,
         uuid: None,
@@ -85,7 +84,6 @@ pub async fn configure(
     get,
     tag = "FuelGaugeSetting",
     path = "/fuel-gauge-settings",
-    params(InternalTankQuery),
     responses(
         (status = 200, description = "The caller's own tenant's tank-gauge thresholds, or the platform defaults (no `uuid`) while it has set none. `tenantId` names the tenant for an unbound `SysAdmin`. **Roles:** SysAdmin, TenantOwner (own tenant only). Other roles are refused with 403 (`D-27` 8).", body = FuelGaugeSettingJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -96,14 +94,13 @@ pub async fn configure(
 )]
 pub async fn get_current(
     state: State<AppState>,
-    Query(query): Query<InternalTankQuery>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<FuelGaugeSettingJson>> {
     if !can_read_tenant_configuration(&current_user) {
         return Err(ExceptionResponse::Forbidden(locale, ErrorKey::FuelGaugeSettingsForbidden));
     }
-    let target = current_user.target_tenant(query.tenant_id);
+    let target = current_user.tenant_id;
     match use_case(&state).current(target).await {
         Ok(settings) => Ok(Json(json(target, None, settings))),
         Err(_) => Err(ExceptionResponse::InternalServerError(locale, ErrorKey::UnexpectedError)),

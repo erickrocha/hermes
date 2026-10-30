@@ -185,7 +185,7 @@ pub async fn add(
     }
     // HRMS-921's rule, applied here: for a tenant-bound caller the owning
     // tenant is the caller's own, never the payload's.
-    let tenant_id = current_user.target_tenant(payload.tenant_id);
+    let tenant_id = current_user.tenant_id;
 
     let (customer_id, specific_driver_id, specific_vehicle_id) =
         resolve_all(&state, &locale, tenant_id, &payload).await?;

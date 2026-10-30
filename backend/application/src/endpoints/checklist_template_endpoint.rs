@@ -114,8 +114,8 @@ pub async fn add(
     reject_unknown_checklist_type(&payload.checklist_type, &locale)?;
 
     let mut tenant_id = payload.tenant_id;
-    if current_user.bound_tenant().is_some() {
-        tenant_id = current_user.bound_tenant();
+    if current_user.tenant_id.is_some() {
+        tenant_id = current_user.tenant_id;
     }
 
     let template = ChecklistTemplate {

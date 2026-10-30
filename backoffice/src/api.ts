@@ -28,7 +28,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   }
   // C-036 (`DS-1`): while the console acts inside a descendant tenant, every request names it.
   const target = readTarget()
-  if (target) config.headers['X-Tenant-Uuid'] = target.uuid
+  if (target && !config.headers['X-Tenant-Uuid']) config.headers['X-Tenant-Uuid'] = target.uuid
   config.headers['Accept-Language'] = localStorage.getItem('i18nextLng') || 'pt-BR'
   return config
 })

@@ -5,9 +5,9 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::internal_tank_json::{InternalTankJson, InternalTankQuery, TankStockJson};
+use crate::endpoints::json::internal_tank_json::{InternalTankJson, TankStockJson};
 use axum::Json;
-use axum::extract::{Extension, Query, State};
+use axum::extract::{Extension, State};
 use business::domain::authorization::{can_configure_internal_tank, can_read_internal_tank};
 use business::domain::internal_tank::InternalTank;
 use business::domain::user::User;
@@ -74,8 +74,8 @@ pub async fn configure(
     }
 
     let mut tenant_id = payload.tenant_id;
-    if current_user.bound_tenant().is_some() {
-        tenant_id = current_user.bound_tenant();
+    if current_user.tenant_id.is_some() {
+        tenant_id = current_user.tenant_id;
     }
 
     let tank = InternalTank {
@@ -103,7 +103,6 @@ pub async fn configure(
     get,
     tag = "InternalTank",
     path = "/internal-tank",
-    params(InternalTankQuery),
     responses(
         (status = 200, description = "The caller's own tenant's internal tank configuration. `tenantId` names the tenant for an unbound `SysAdmin`; ignored for a tenant-bound caller. **Roles:** SysAdmin, TenantOwner, TenantUser, Driver, Mechanic (any authenticated role; own tenant only).", body = InternalTankJson),
         (status = 404, description = "The internal tank has not been configured for this tenant (TRM-1543)", body = NotFoundErrorJson),
@@ -114,11 +113,10 @@ pub async fn configure(
 )]
 pub async fn get_current(
     state: State<AppState>,
-    Query(query): Query<InternalTankQuery>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<InternalTankJson>> {
-    let target_tenant_id = current_user.target_tenant(query.tenant_id);
+    let target_tenant_id = current_user.tenant_id;
     let tank = use_case(&state)
         .get_current(target_tenant_id)
         .await
@@ -139,7 +137,6 @@ pub async fn get_current(
     get,
     tag = "InternalTank",
     path = "/internal-tank/stock",
-    params(InternalTankQuery),
     responses(
         (status = 200, description = "The tank's current stock: the reference stock less every provider-posted fuelling after the reference instant, floored at zero (TRM-1541/1542), with `deliveryAlert` once it reaches the alert level (TRM-1544). When no fuelling record exists at all the figure is withheld and `suppressed` says why (TRM-1543). **Roles:** any authenticated role; own tenant only.", body = TankStockJson),
         (status = 404, description = "The internal tank has not been configured for this tenant", body = NotFoundErrorJson),
@@ -150,11 +147,10 @@ pub async fn get_current(
 )]
 pub async fn stock(
     state: State<AppState>,
-    Query(query): Query<InternalTankQuery>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<TankStockJson>> {
-    let target_tenant_id = current_user.target_tenant(query.tenant_id);
+    let target_tenant_id = current_user.tenant_id;
     let (tank, stock) = use_case(&state).stock(target_tenant_id).await.map_err(|e| {
         if e.message == INTERNAL_TANK_NOT_CONFIGURED {
             ExceptionResponse::NotFound(locale.clone(), ErrorKey::InternalTankNotConfigured)

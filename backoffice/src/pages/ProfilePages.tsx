@@ -47,7 +47,7 @@ export function ProfilesPage() {
     {error && <p className="form-error">{error}</p>}
     {!items ? <Loading /> : !items.length ? <Empty /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>{t('name')}</th><th>{t('permissions')}</th><th>{t('status')}</th><th /></tr></thead>
       <tbody>{items.map((p) => <tr key={p.uuid}><td><b>{profileLabelOf(p, t)}</b>{p.system && <small><span className="badge yellow"><Lock size={12} />{t('systemProfile')} · <span className="profile-key">{p.key}</span></span></small>}</td><td>{p.permissions.length}</td><td>{p.active ? t('active') : t('inactive')}</td>
-        <td>{p.uuid && <Link to={`/profiles/${p.uuid}/edit`}>{editable(p) ? <><Pencil size={15} />{t('edit')}</> : <><Eye size={15} />{t('view')}</>}</Link>}</td></tr>)}</tbody></table></div></div>}</>
+        <td>{p.uuid && <Link to={`/profiles/${p.uuid}/edit`}>{editable(p) ? <><Pencil size={15} />{t('edit')}</> : <Eye size={15} aria-label={t('view')} />}</Link>}</td></tr>)}</tbody></table></div></div>}</>
 }
 
 export function ProfileEditorPage() {
