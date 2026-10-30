@@ -210,7 +210,7 @@ pub fn can_assign_profile_in(actor: &User, profile: &AccessProfile, ancestors: &
     if administrator {
         return holds_system_administrator(actor).then_some(CreationTenant::Fixed(Some(tenant_id)));
     }
-    ( (profile.system || profile.tenant_id == Some(tenant_id) || inherited(profile, ancestors)))
+    (profile.system || profile.tenant_id == Some(tenant_id) || inherited(profile, ancestors))
         .then_some(CreationTenant::Fixed(Some(tenant_id)))
 }
 
